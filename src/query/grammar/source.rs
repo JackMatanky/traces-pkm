@@ -13,14 +13,13 @@
 use std::{borrow::Cow, collections::BTreeSet, path::Path};
 
 use logos::{Lexer, Logos};
-use miette::SourceSpan;
 use regex::Regex;
 
 use super::expr::{
     AtomParser, BooleanExpr, LogicalControl, LogicalOp, parse_boolean_expr,
 };
 use crate::{
-    LexTokenStream, LexedToken, Tag, TokenSpec,
+    LexTokenStream, Spanned, Tag, TokenSpec,
     index::FileEntry,
     lexical_unquote,
     note::{Note, NoteFieldValue},
@@ -115,7 +114,7 @@ impl SourceExpr {
     ///
     /// - [`QueryBuilderError::Syntax`] if tokenizing or parsing `input` fails.
     pub(crate) fn parse(input: &str) -> Result<Self, QueryBuilderError> {
-        let tokens = LexTokenStream::<LexedToken<SourceToken>>::tokenize(input)
+        let tokens = LexTokenStream::<Spanned<SourceToken>>::tokenize(input)
             .map_err(|e| {
                 QuerySyntaxError::from_lex(QueryDialect::Source, input, e)
             })?;
@@ -324,8 +323,8 @@ impl PartialEq for GlobPattern {
 /// | `Children`    | Named class and its direct sub-classes     | `@C+` | `class(C, children)`    |
 /// | `Descendants` | Named class and all transitive sub-classes | `@C*` | `class(C, descendants)` |
 ///
-/// Each variant stores resolved class names; the set is empty after parsing
-/// and populated before matching.
+/// Each variant stores resolved class names; the set is empty after parsing and
+/// populated before matching.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ClassExpansionMode {
     Exact(BTreeSet<String>),
@@ -377,13 +376,13 @@ impl SourceGrammar {
     fn parse_sigil(
         input: &str,
         sigil: &str,
-        span: SourceSpan,
+        span: std::ops::Range<usize>,
     ) -> Result<SourceAtom, QueryBuilderError> {
         let raw = sigil.strip_prefix('@').ok_or_else(|| {
             QuerySyntaxError::unexpected_end(
                 QueryDialect::Source,
                 input,
-                span,
+                span.clone(),
                 "a File Class name",
             )
         })?;
@@ -424,8 +423,8 @@ impl SourceGrammar {
     ///   are present.
     fn parse_class_function(
         input: &str,
-        tokens: &mut LexTokenStream<LexedToken<SourceToken>>,
-        class_span: SourceSpan,
+        tokens: &mut LexTokenStream<Spanned<SourceToken>>,
+        class_span: std::ops::Range<usize>,
     ) -> Result<SourceAtom, QueryBuilderError> {
         let lex =
             |e| QuerySyntaxError::from_lex(QueryDialect::Source, input, e);
@@ -558,7 +557,7 @@ impl AtomParser for SourceGrammar {
     fn parse_atom(
         &self,
         input: &str,
-        tokens: &mut LexTokenStream<LexedToken<Self::Token>>,
+        tokens: &mut LexTokenStream<Spanned<Self::Token>>,
     ) -> Result<Self::Atom, QueryBuilderError> {
         let next_span = tokens.next_span(input);
         match tokens.next() {
@@ -613,7 +612,7 @@ impl AtomParser for SourceGrammar {
     fn syntax_error(
         &self,
         input: &str,
-        span: SourceSpan,
+        span: std::ops::Range<usize>,
         expected: &'static str,
     ) -> QuerySyntaxError {
         QuerySyntaxError::unexpected_end(
@@ -667,11 +666,11 @@ enum SourceToken {
 /// Parses a `#tag`-shaped token starting at the already-consumed leading `#`.
 ///
 /// Delegates the character-class rules to [`Tag::prefix_len`], the same
-/// tag-token scanner the Markdown body lexer uses, so a query source
-/// expression accepts exactly the tag shapes a note can carry (including
-/// single-letter tags like `#a`). Errors (surfaced as
-/// [`LexError::UnexpectedToken`](crate::LexError::UnexpectedToken)) when `#`
-/// is not followed by a valid tag body.
+/// tag-token scanner the Markdown body lexer uses, so a query source expression
+/// accepts exactly the tag shapes a note can carry (including single-letter
+/// tags like `#a`). Errors (surfaced as
+/// [`LexError::UnexpectedToken`](crate::LexError::UnexpectedToken)) when `#` is
+/// not followed by a valid tag body.
 fn tag_callback(lex: &mut Lexer<'_, SourceToken>) -> Result<String, ()> {
     let tag_start = lex.span().start;
     let tail = lex.source().get(tag_start..).ok_or(())?;

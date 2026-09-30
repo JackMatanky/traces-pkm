@@ -11,10 +11,7 @@
 //! dates, priorities, and normalized clean text.
 use indexmap::IndexMap;
 
-use super::{
-    FlushedFields,
-    marker::{MarkerPrefix, scan_marker_at_line_end, scan_marker_prefix},
-};
+use super::{FlushedMetadata, marker::MarkerAccumulator};
 use crate::{
     FieldKey, SourceLine, Tag, TaskStatusMap,
     note::{ListItem, ListItemType, ListText, NoteFieldValue, TaskListItem},
@@ -84,7 +81,7 @@ impl ListTracker {
     /// Returns the inline fields and tags yielded by that buffer, or `None` if
     /// no item is active or the buffer is empty. Called before nested lists
     /// start and when an item closes, both to preserve document-order metadata.
-    fn flush_active_item_scan_buffer(&mut self) -> FlushedFields {
+    fn flush_active_item_scan_buffer(&mut self) -> Option<FlushedMetadata> {
         // The marker state must be decided before `has_marker` is read: a
         // pending `- [x]` item flushes when a nested list starts, with no
         // trailing-whitespace text chunk ever arriving.
@@ -94,7 +91,7 @@ impl ListTracker {
             return None;
         }
         let text = std::mem::take(&mut item.scan_buffer);
-        let shorthands = if item.classification.is_marked() {
+        let shorthands = if item.marker.is_marked() {
             super::lexer::TaskShorthands::Include
         } else {
             super::lexer::TaskShorthands::Exclude
@@ -108,23 +105,22 @@ impl ListTracker {
         // can borrow from the other.
         let mut item_fields: IndexMap<FieldKey, Vec<NoteFieldValue>> =
             IndexMap::new();
-        let mut page_fields: IndexMap<FieldKey, Vec<NoteFieldValue>> =
-            IndexMap::new();
-        for (key, value) in raw_fields {
-            // Clone needed for two-out pattern (item + page fields)
+        for (key, value) in &raw_fields {
             item_fields.entry(key.clone()).or_default().push(value.clone());
-            page_fields.entry(key).or_default().push(value);
         }
         item.fields = item_fields;
         let tags = super::tag::scan_tags(&text);
         item.tags.extend(tags.iter().cloned());
-        Some((page_fields, tags))
+        Some(FlushedMetadata::new(raw_fields, tags))
     }
 
     /// Pushes a list frame and flushes any active parent item's scan buffer.
     ///
     /// Returns the flushed inline fields and tags, if any.
-    pub(super) fn start_list(&mut self, is_ordered: bool) -> FlushedFields {
+    pub(super) fn start_list(
+        &mut self,
+        is_ordered: bool,
+    ) -> Option<FlushedMetadata> {
         let flushed = self.flush_active_item_scan_buffer();
         self.list_stack.push(ListFrame {
             is_ordered,
@@ -161,7 +157,8 @@ impl ListTracker {
             depth,
             parent,
             is_ordered,
-            classification: ItemClassificationState::Pending,
+            marker: MarkerAccumulator::new(),
+            subtask_completion: SubTaskCompletion::initial(),
             descendants: Vec::new(),
         });
     }
@@ -177,18 +174,18 @@ impl ListTracker {
         &mut self,
         tag_filters: &[Tag],
         statuses: &TaskStatusMap,
-    ) -> FlushedFields {
+    ) -> Option<FlushedMetadata> {
         let flushed = self.flush_active_item_scan_buffer();
         if let Some(item_frame) = self.item_stack.pop() {
-            // Borrowed before `text_buffer`/`fields` move out of the frame.
-            let fully_complete = item_frame.is_descendant_tree_complete();
+            let fully_complete =
+                item_frame.subtask_completion.is_fully_complete();
             let clean = super::task::clean_task_text(
                 &item_frame.text_buffer,
                 tag_filters,
             );
             let text = ListText::new(item_frame.text_buffer, clean);
-            let item_type = match item_frame.classification {
-                ItemClassificationState::Marked(symbol) => {
+            let item_type = match item_frame.marker.marker_symbol() {
+                Some(symbol) => {
                     let status = statuses.resolve(symbol);
                     if tag_filters.is_empty()
                         || item_frame
@@ -214,8 +211,13 @@ impl ListTracker {
                         ListItemType::Checkbox
                     }
                 }
-                ItemClassificationState::Plain
-                | ItemClassificationState::Pending => ListItemType::Plain,
+                None => ListItemType::Plain,
+            };
+            let (is_task, is_complete) = match &item_type {
+                ListItemType::Task(task) => {
+                    (true, task.status().kind().completed() != Some(false))
+                }
+                _ => (false, true),
             };
             let item = ListItem::new(item_frame.line, text, item_type)
                 .with_depth(item_frame.depth)
@@ -224,6 +226,11 @@ impl ListTracker {
                 .with_fields(item_frame.fields)
                 .with_tags(item_frame.tags);
             if let Some(parent_item) = self.item_stack.last_mut() {
+                parent_item.subtask_completion.observe_child(
+                    is_task,
+                    is_complete,
+                    item_frame.subtask_completion,
+                );
                 parent_item.descendants.push(item);
                 parent_item.descendants.extend(item_frame.descendants);
             } else {
@@ -272,24 +279,54 @@ impl ListTracker {
     }
 }
 
-/// The incremental classification state of an active list item during parsing.
+/// Tracks whether any descendant task within a list item's sub-tree is
+/// incomplete.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum ItemClassificationState {
-    /// The item's first chunks may still assemble into a marker; `text_buffer`
-    /// holds the candidate bytes so far.
-    Pending,
-    /// The item has no task marker (plain bullet / regular list item).
-    Plain,
-    /// A task marker was recognized, carrying its marker symbol character.
-    Marked(char),
+pub(super) enum SubTaskCompletion {
+    AllComplete,
+    HasIncomplete,
 }
 
-impl ItemClassificationState {
-    /// Returns `true` if a task marker was detected on this item.
+impl SubTaskCompletion {
+    /// Initial state for a newly opened item before any child tasks exist.
+    ///
+    /// A newly opened item contains zero child tasks, so its descendant tree
+    /// contains no incomplete tasks until a child task is observed.
     #[inline]
     #[must_use]
-    const fn is_marked(self) -> bool {
-        matches!(self, Self::Marked(_))
+    pub(super) const fn initial() -> Self {
+        Self::AllComplete
+    }
+
+    /// Observes a closed child item, transitioning to [`Self::HasIncomplete`]
+    /// if the child is an unresolved task or contains incomplete subtasks.
+    #[inline]
+    pub(super) fn observe_child(
+        &mut self,
+        is_task: bool,
+        is_complete: bool,
+        child_subtask_completion: Self,
+    ) {
+        if (is_task && !is_complete)
+            || child_subtask_completion == Self::HasIncomplete
+        {
+            *self = Self::HasIncomplete;
+        }
+    }
+
+    /// Returns `true` if all descendant tasks in the sub-tree are complete.
+    #[inline]
+    #[must_use]
+    pub(super) const fn is_fully_complete(self) -> bool {
+        matches!(self, Self::AllComplete)
+    }
+}
+
+impl Default for SubTaskCompletion {
+    /// Conservative fallback: unknown/default completion state is fail-closed.
+    #[inline]
+    fn default() -> Self {
+        Self::HasIncomplete
     }
 }
 
@@ -314,139 +351,43 @@ struct ItemFrame {
     depth: u8,
     parent: Option<SourceLine>,
     is_ordered: bool,
-    /// Classification decision state for the list item. Mirrors
-    /// pulldown-cmark's first-pass gating: the marker is only valid at the
-    /// item's content start, so the decision is finalized before any inline
-    /// content event or block boundary.
-    classification: ItemClassificationState,
+    marker: MarkerAccumulator,
+    subtask_completion: SubTaskCompletion,
     descendants: Vec<ListItem>,
 }
 
 impl ItemFrame {
-    /// Appends text to display text and, outside code blocks, the scan buffer.
-    /// While classification is [`ItemClassificationState::Pending`], the chunk
-    /// first feeds the incremental marker scan: Markdown splits a leading
-    /// `[<char>]` marker across several `Event::Text` runs (observed: `"["`,
-    /// `"x"`, `"]"`, `" Task"`), so each chunk extends the candidate and
-    /// re-classifies it. A recognized marker is trimmed from both buffers.
     fn push_text(&mut self, text: &str, in_code_block: bool) {
-        let pending =
-            matches!(self.classification, ItemClassificationState::Pending);
-        self.text_buffer.push_str(text);
-        if !in_code_block {
-            self.scan_buffer.push_str(text);
-        }
-        if pending {
-            match scan_marker_prefix(&self.text_buffer) {
-                MarkerPrefix::Incomplete => {}
-                MarkerPrefix::Rejected => {
-                    self.classification = ItemClassificationState::Plain;
-                }
-                MarkerPrefix::Complete(scan) => {
-                    let symbol = scan.symbol();
-                    let prefix_len = self
-                        .text_buffer
-                        .len()
-                        .saturating_sub(scan.remainder().len());
-                    self.trim_marker_prefix(prefix_len);
-                    self.classification =
-                        ItemClassificationState::Marked(symbol);
-                }
-            }
-        }
+        self.marker.push_text(
+            text,
+            &mut self.text_buffer,
+            &mut self.scan_buffer,
+            in_code_block,
+        );
     }
 
-    /// Appends a line break to both the display text and scan buffer.
-    ///
-    /// A pending marker is decided first: the break terminates the marker's
-    /// trailing-whitespace slot (`- [x]` wrapped over two lines still carries a
-    /// marker).
     fn push_break(&mut self) {
-        self.decide_pending_at_line_end();
+        self.marker
+            .resolve_at_line_end(&mut self.text_buffer, &mut self.scan_buffer);
         self.text_buffer.push('\n');
         self.scan_buffer.push('\n');
     }
 
-    /// Rejects a pending marker: inline content (emphasis, code, links, images,
-    /// inline HTML) occupies the item's leading slot, so the item does not
-    /// start with a marker.
     fn reject_marker(&mut self) {
-        if self.classification == ItemClassificationState::Pending {
-            self.classification = ItemClassificationState::Plain;
-        }
+        self.marker.reject(&mut self.text_buffer, &mut self.scan_buffer);
     }
 
-    /// Force-decides a pending marker as if the item's first line ended: a
-    /// complete `[<char>]` shape becomes a marker with empty text.
     fn resolve_pending_marker(&mut self) {
-        self.decide_pending_at_line_end();
+        self.marker
+            .resolve_at_line_end(&mut self.text_buffer, &mut self.scan_buffer);
     }
 
-    /// Decides a pending marker using end-of-line semantics. Always leaves the
-    /// classification non-pending.
-    fn decide_pending_at_line_end(&mut self) {
-        if self.classification == ItemClassificationState::Pending {
-            let decision = match scan_marker_at_line_end(&self.text_buffer) {
-                Some(scan) => {
-                    let symbol = scan.symbol();
-                    let prefix_len = self.text_buffer.len();
-                    self.trim_marker_prefix(prefix_len);
-                    ItemClassificationState::Marked(symbol)
-                }
-                None => ItemClassificationState::Plain,
-            };
-            self.classification = decision;
-        }
-    }
-
-    /// Drains the first `prefix_len` bytes from `text_buffer`, and from
-    /// `scan_buffer` only when it mirrors those bytes (inline code and link
-    /// brackets make the buffers diverge, in which case the scan buffer keeps
-    /// its own content).
-    fn trim_marker_prefix(&mut self, prefix_len: usize) {
-        if self.scan_buffer.as_bytes().get(..prefix_len)
-            == self.text_buffer.as_bytes().get(..prefix_len)
-        {
-            self.scan_buffer.drain(..prefix_len);
-        }
-        self.text_buffer.drain(..prefix_len);
-    }
-
-    /// Pushes a literal character into the scan buffer only.
-    ///
-    /// Used to reconstruct Markdown link brackets for visible-key inline field
-    /// scanning.
     fn push_scan_char(&mut self, ch: char) {
         self.scan_buffer.push(ch);
     }
 
-    /// Appends inline code text to display text only.
-    ///
-    /// Inline code is excluded from inline field and tag scanning.
     fn push_code(&mut self, text: &str) {
         self.text_buffer.push_str(text);
-    }
-
-    /// Returns `true` if every descendant task collected under this frame is
-    /// resolved (done or cancelled), or if there are no descendant tasks.
-    ///
-    /// Plain bullet items ([`ListItemType::Plain`]) and non-task checkboxes
-    /// ([`ListItemType::Checkbox`]) are ignored and do not block completion.
-    /// Short-circuits on the first incomplete task descendant.
-    fn is_descendant_tree_complete(&self) -> bool {
-        for item in self
-            .descendants
-            .iter()
-            .take_while(|child| child.depth() > self.depth)
-        {
-            if let ListItemType::Task(task) = item.kind()
-                && (task.status().kind().completed() == Some(false)
-                    || !task.is_fully_complete())
-            {
-                return false;
-            }
-        }
-        true
     }
 }
 
@@ -554,9 +495,11 @@ mod tests {
                 flushed.is_some(),
                 "start_list must flush active item scan buffer"
             );
-            let (fields, _) = flushed.unwrap();
-            let has_status =
-                fields.keys().any(|k| k.is_canonical_match("status"));
+            let metadata = flushed.unwrap();
+            let has_status = metadata
+                .fields()
+                .iter()
+                .any(|(k, _)| k.is_canonical_match("status"));
             assert!(has_status, "flushed fields must contain Status");
         }
 
@@ -569,9 +512,11 @@ mod tests {
 
             let flushed = tracker.end_item(&[], &TaskStatusMap::default());
             assert!(flushed.is_some(), "end_item must flush scan buffer");
-            let (fields, _) = flushed.unwrap();
-            let has_author =
-                fields.keys().any(|k| k.is_canonical_match("author"));
+            let metadata = flushed.unwrap();
+            let has_author = metadata
+                .fields()
+                .iter()
+                .any(|(k, _)| k.is_canonical_match("author"));
             assert!(has_author, "flushed fields must contain Author");
         }
 
@@ -594,10 +539,11 @@ mod tests {
 
         use super::*;
         #[test]
-        fn item_classification_state_accessors() {
-            assert!(!ItemClassificationState::Pending.is_marked());
-            assert!(!ItemClassificationState::Plain.is_marked());
-            assert!(ItemClassificationState::Marked('x').is_marked());
+        fn subtask_completion_accessors() {
+            let mut stc = SubTaskCompletion::initial();
+            assert!(stc.is_fully_complete());
+            stc.observe_child(true, false, SubTaskCompletion::AllComplete);
+            assert!(!stc.is_fully_complete());
         }
 
         #[rstest]

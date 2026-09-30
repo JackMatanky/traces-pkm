@@ -12,7 +12,21 @@ use crate::{
 
 /// An atom parsed at some position: its value and the exclusive byte offset
 /// immediately following it.
-type Atom = (NoteFieldValue, usize);
+#[derive(Clone, Debug, PartialEq)]
+struct ParsedAtom {
+    value: NoteFieldValue,
+    end: usize,
+}
+
+impl ParsedAtom {
+    #[inline]
+    const fn new(value: NoteFieldValue, end: usize) -> Self {
+        Self {
+            value,
+            end,
+        }
+    }
+}
 
 /// Parses raw inline value text into a [`NoteFieldValue`].
 #[inline]
@@ -42,8 +56,9 @@ impl<'a> InlineValueParser<'a> {
 
     /// Parses the whole (already-trimmed) value text into a [`NoteFieldValue`].
     ///
-    /// Tries [`Self::parse_comma_list`] first, then a single
-    /// [`Self::parse_atom_at`] spanning the whole text, falling back to
+    /// Parses the first atom once, returning it if it spans the whole text. If
+    /// followed by a comma, parses remaining atoms via
+    /// [`Self::parse_comma_list_from`]. Falls back to
     /// [`NoteFieldValue::String`] holding the raw text when neither matches.
     /// Empty text parses as [`NoteFieldValue::Null`].
     fn parse(&self) -> NoteFieldValue {
@@ -52,28 +67,34 @@ impl<'a> InlineValueParser<'a> {
             return NoteFieldValue::Null;
         }
         let sub_parser = Self::new(trimmed);
-        if let Some(values) = sub_parser.parse_comma_list() {
-            return NoteFieldValue::List(values.into_boxed_slice());
+        let Some(first) = sub_parser.parse_atom_at(0) else {
+            return NoteFieldValue::String(trimmed.to_owned());
+        };
+        let after_first = sub_parser.skip_whitespace(first.end);
+        if after_first == sub_parser.source.len() {
+            return first.value;
         }
-        if let Some((value, end)) = sub_parser.parse_atom_at(0)
-            && sub_parser.skip_whitespace(end) == sub_parser.source.len()
+        if sub_parser
+            .source
+            .from(after_first)
+            .is_some_and(|s| s.starts_with(','))
+            && let Some(values) =
+                sub_parser.parse_comma_list_from(first.value, after_first)
         {
-            return value;
+            return NoteFieldValue::List(values.into_boxed_slice());
         }
         NoteFieldValue::String(trimmed.to_owned())
     }
 
-    /// Parses one or more `,`-separated atoms starting at position `0`.
+    /// Parses `,`-separated atoms starting after the first atom at `pos`.
     ///
-    /// Returns `Some` only when a `,` follows the first atom (confirming this
-    /// is a list, not a single atom) and every subsequent atom parses
-    /// successfully. A trailing `,` followed by whitespace ends the list.
-    fn parse_comma_list(&self) -> Option<Vec<NoteFieldValue>> {
-        let (first, mut pos) = self.parse_atom_at(0)?;
-        pos = self.skip_whitespace(pos);
-        if !self.source.from(pos)?.starts_with(',') {
-            return None;
-        }
+    /// `pos` must point to the `,` following the first atom.
+    /// Returns `Some` if all subsequent items parse as valid atoms.
+    fn parse_comma_list_from(
+        &self,
+        first: NoteFieldValue,
+        mut pos: usize,
+    ) -> Option<Vec<NoteFieldValue>> {
         let mut values = vec![first];
         loop {
             pos = self.source.advance(pos, 1);
@@ -81,9 +102,9 @@ impl<'a> InlineValueParser<'a> {
             if pos == self.source.len() {
                 return Some(values);
             }
-            let (value, end) = self.parse_atom_at(pos)?;
-            values.push(value);
-            pos = self.skip_whitespace(end);
+            let atom = self.parse_atom_at(pos)?;
+            values.push(atom.value);
+            pos = self.skip_whitespace(atom.end);
             if pos == self.source.len() {
                 return Some(values);
             }
@@ -99,7 +120,7 @@ impl<'a> InlineValueParser<'a> {
     ///
     /// Returns the parsed value paired with the exclusive byte offset following
     /// it, or `None` if no kind matches at `pos`.
-    fn parse_atom_at(&self, pos: usize) -> Option<Atom> {
+    fn parse_atom_at(&self, pos: usize) -> Option<ParsedAtom> {
         let pos = self.skip_whitespace(pos);
         self.parse_quoted_string_at(pos)
             .or_else(|| self.parse_link_at(pos))
@@ -116,7 +137,7 @@ impl<'a> InlineValueParser<'a> {
     /// A backslash escapes the following character verbatim, so `\"` includes a
     /// literal quote. Returns `None` if `pos` is not a `"` or the string has no
     /// closing, unescaped `"`.
-    fn parse_quoted_string_at(&self, pos: usize) -> Option<Atom> {
+    fn parse_quoted_string_at(&self, pos: usize) -> Option<ParsedAtom> {
         let rest = self.source.from(pos)?.strip_prefix('"')?;
         let mut value = String::new();
         let mut escaped = false;
@@ -127,7 +148,7 @@ impl<'a> InlineValueParser<'a> {
             } else if ch == '\\' {
                 escaped = true;
             } else if ch == '"' {
-                return Some((
+                return Some(ParsedAtom::new(
                     NoteFieldValue::String(value),
                     self.source.advance(self.source.advance(pos, offset), 2),
                 ));
@@ -139,10 +160,13 @@ impl<'a> InlineValueParser<'a> {
     }
 
     /// Parses a wikilink or embed atom (`[[target]]`, `![[target]]`) at `pos`.
-    fn parse_link_at(&self, pos: usize) -> Option<Atom> {
+    fn parse_link_at(&self, pos: usize) -> Option<ParsedAtom> {
         let (link, consumed) =
             Link::parse_wikilink_prefix(self.source.from(pos)?)?;
-        Some((NoteFieldValue::Link(link), self.source.advance(pos, consumed)))
+        Some(ParsedAtom::new(
+            NoteFieldValue::Link(link),
+            self.source.advance(pos, consumed),
+        ))
     }
 
     /// Parses a duration atom at `pos`.
@@ -150,27 +174,28 @@ impl<'a> InlineValueParser<'a> {
     /// Recognizes one or more `<number><unit>` parts via
     /// [`DurationValue::parse_prefix`] and returns
     /// [`NoteFieldValue::Duration`].
-    fn parse_duration_at(&self, pos: usize) -> Option<Atom> {
+    fn parse_duration_at(&self, pos: usize) -> Option<ParsedAtom> {
         let tail = self.source.from(pos)?;
         let (dv, consumed) = DurationValue::parse_prefix(tail)?;
         let end = self.source.advance(pos, consumed);
-        Some((NoteFieldValue::Duration(dv), end))
+        Some(ParsedAtom::new(NoteFieldValue::Duration(dv), end))
     }
 
     /// Parses a case-insensitive `true`/`false` keyword atom at `pos`.
-    fn parse_bool_at(&self, pos: usize) -> Option<Atom> {
+    fn parse_bool_at(&self, pos: usize) -> Option<ParsedAtom> {
         self.parse_keyword_at(pos, "true")
-            .map(|end| (NoteFieldValue::Bool(true), end))
+            .map(|end| ParsedAtom::new(NoteFieldValue::Bool(true), end))
             .or_else(|| {
-                self.parse_keyword_at(pos, "false")
-                    .map(|end| (NoteFieldValue::Bool(false), end))
+                self.parse_keyword_at(pos, "false").map(|end| {
+                    ParsedAtom::new(NoteFieldValue::Bool(false), end)
+                })
             })
     }
 
     /// Parses a case-insensitive `null` keyword atom at `pos`.
-    fn parse_null_at(&self, pos: usize) -> Option<Atom> {
+    fn parse_null_at(&self, pos: usize) -> Option<ParsedAtom> {
         self.parse_keyword_at(pos, "null")
-            .map(|end| (NoteFieldValue::Null, end))
+            .map(|end| ParsedAtom::new(NoteFieldValue::Null, end))
     }
 
     /// Finds the end offset of `keyword` at `pos` on a case-insensitive match
@@ -183,23 +208,23 @@ impl<'a> InlineValueParser<'a> {
     }
 
     /// Parses an ISO `YYYY-MM-DD` date atom at `pos`.
-    fn parse_date_at(&self, pos: usize) -> Option<Atom> {
+    fn parse_date_at(&self, pos: usize) -> Option<ParsedAtom> {
         let end = self.source.advance(pos, 10);
         let date = self.source.get(pos..end)?;
         if !(DateValue::is_iso_shape(date) && self.is_atom_boundary(end)) {
             return None;
         }
         let value = DateValue::parse_iso(date).ok()?;
-        Some((NoteFieldValue::Date(value), end))
+        Some(ParsedAtom::new(NoteFieldValue::Date(value), end))
     }
 
     /// Parses a finite `f64` number atom at `pos`.
-    fn parse_number_at(&self, pos: usize) -> Option<Atom> {
+    fn parse_number_at(&self, pos: usize) -> Option<ParsedAtom> {
         let end = self.parse_number_end(pos)?;
         let raw = self.source.get(pos..end)?;
         let num = raw.parse::<f64>().ok()?;
         (num.is_finite() && self.is_atom_boundary(end))
-            .then_some((NoteFieldValue::Number(num), end))
+            .then_some(ParsedAtom::new(NoteFieldValue::Number(num), end))
     }
 
     /// Finds the end offset of a numeric token at `pos`: digits and the
@@ -221,12 +246,12 @@ impl<'a> InlineValueParser<'a> {
     /// Requires `#` followed by an alphabetic character. The match is returned
     /// as [`NoteFieldValue::String`] holding the tag text, including the
     /// leading `#`, since there's no dedicated tag value kind.
-    fn parse_tag_at(&self, pos: usize) -> Option<Atom> {
+    fn parse_tag_at(&self, pos: usize) -> Option<ParsedAtom> {
         let tail = self.source.from(pos)?;
         let tag_len = Tag::prefix_len(tail)?;
         let end = self.source.advance(pos, tag_len);
         let raw = self.source.get(pos..end)?;
-        Some((NoteFieldValue::String(raw.to_owned()), end))
+        Some(ParsedAtom::new(NoteFieldValue::String(raw.to_owned()), end))
     }
 
     /// Whether `pos` is at the end of the text, immediately before whitespace,
@@ -268,7 +293,13 @@ mod tests {
             let result = vp.parse_null_at(0);
 
             assert!(
-                matches!(result, Some((NoteFieldValue::Null, 4))),
+                matches!(
+                    result,
+                    Some(ParsedAtom {
+                        value: NoteFieldValue::Null,
+                        end: 4
+                    })
+                ),
                 "null must be recognized"
             );
         }
@@ -293,7 +324,8 @@ mod tests {
             assert!(
                 matches!(
                     &result,
-                    Some((NoteFieldValue::String(s), 5)) if s == "#book"
+                    Some(ParsedAtom { value: NoteFieldValue::String(s), end: 5 })
+                        if s == "#book"
                 ),
                 "#book must be parsed as a tag"
             );
@@ -307,7 +339,7 @@ mod tests {
             assert!(
                 matches!(
                     &result,
-                    Some((NoteFieldValue::String(s), _))
+                    Some(ParsedAtom { value: NoteFieldValue::String(s), .. })
                         if s == "#my-tag/project_a"
                 ),
                 "#my-tag/project_a must be parsed"
@@ -376,7 +408,7 @@ mod tests {
             assert!(
                 matches!(
                     &result,
-                    Some((NoteFieldValue::Duration(dv), _))
+                    Some(ParsedAtom { value: NoteFieldValue::Duration(dv), .. })
                         if dv.as_str() == "1h 30m"
                 ),
                 "1h 30m must parse as duration"
@@ -391,7 +423,7 @@ mod tests {
             assert!(
                 matches!(
                     &result,
-                    Some((NoteFieldValue::Duration(dv), _))
+                    Some(ParsedAtom { value: NoteFieldValue::Duration(dv), .. })
                         if dv.as_str() == "1h30m"
                 ),
                 "1h30m must parse as duration"
@@ -411,7 +443,10 @@ mod tests {
 
             let expected =
                 DateValue::parse_iso("2026-07-29").expect("valid date");
-            assert_eq!(result, Some((NoteFieldValue::Date(expected), 10)));
+            assert_eq!(
+                result,
+                Some(ParsedAtom::new(NoteFieldValue::Date(expected), 10))
+            );
         }
 
         #[test]

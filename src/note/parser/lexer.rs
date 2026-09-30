@@ -7,7 +7,10 @@
 use logos::{Filter, Lexer, Logos};
 
 use super::inline::parse_inline_value;
-use crate::{DateValue, DelimiterType, FieldKey, note::NoteFieldValue};
+use crate::{
+    DateValue, DelimiterType, FieldKey, Spanned, Tag, TaskDate, TaskDateType,
+    TaskPriority, note::NoteFieldValue,
+};
 
 /// Extracts inline fields from `text` in encounter order.
 #[inline]
@@ -16,14 +19,39 @@ pub(super) fn scan_fields(
     text: &str,
     shorthands: TaskShorthands,
 ) -> Vec<(FieldKey, NoteFieldValue)> {
-    let lexer = FieldToken::lexer_with_extras(text, shorthands);
+    let tokens = tokenize_item_text(text, shorthands);
     let mut fields = Vec::new();
-    for result in lexer {
-        if let Ok(FieldToken::Field(field)) = result {
-            fields.push(field);
+    for token in tokens {
+        match token.into_value() {
+            ItemToken::Field(field) => fields.push(field),
+            ItemToken::Date(date) if shorthands.is_included() => {
+                if let Ok(key) = FieldKey::try_new(date.kind().as_str()) {
+                    fields.push((key, NoteFieldValue::Date(date.date())));
+                }
+            }
+            _ => {}
         }
     }
     fields
+}
+
+/// Tokenizes `text` into spanned item tokens in a single pass.
+#[must_use]
+pub(super) fn tokenize_item_text(
+    text: &str,
+    shorthands: TaskShorthands,
+) -> Vec<Spanned<ItemToken>> {
+    let mut lexer = ItemToken::lexer_with_extras(text, shorthands);
+    let mut tokens = Vec::new();
+    while let Some(result) = lexer.next() {
+        let span = lexer.span();
+        if let Ok(token) = result
+            && !matches!(token, ItemToken::Ignored)
+        {
+            tokens.push(Spanned::new(token, span));
+        }
+    }
+    tokens
 }
 
 /// Returns the character immediately before the current match.
@@ -65,30 +93,45 @@ impl TaskShorthands {
     }
 }
 
-/// Token stream for inline fields in free-form Markdown text.
-///
-/// - [`Self::Field`] carries an emitted `(FieldKey, NoteFieldValue)`.
-/// - [`Self::Ignored`] skips ordinary prose that matches none of the field
-///   patterns.
-///
-/// Callbacks return [`Filter::Skip`] to discard non-matching candidates, such
-/// as unclosed wrapped fields, and keep scanning.
+/// Token stream for item components in free-form Markdown text.
 #[derive(Clone, Debug, PartialEq, Logos)]
 #[logos(extras = TaskShorthands)]
-enum FieldToken {
+pub(super) enum ItemToken {
+    // 1. Priority emojis
+    #[token("\u{1F53A}\u{FE0F}", |_| TaskPriority::Highest)]
+    #[token("\u{1F53A}", |_| TaskPriority::Highest)]
+    #[token("\u{23EB}\u{FE0F}", |_| TaskPriority::High)]
+    #[token("\u{23EB}", |_| TaskPriority::High)]
+    #[token("\u{1F53C}\u{FE0F}", |_| TaskPriority::Medium)]
+    #[token("\u{1F53C}", |_| TaskPriority::Medium)]
+    #[token("\u{1F53D}\u{FE0F}", |_| TaskPriority::Low)]
+    #[token("\u{1F53D}", |_| TaskPriority::Low)]
+    #[token("\u{23EC}\u{FE0F}", |_| TaskPriority::Lowest)]
+    #[token("\u{23EC}", |_| TaskPriority::Lowest)]
+    Priority(TaskPriority),
+
+    // 2. Tags
+    #[token("#", tag_callback)]
+    Tag(Tag),
+
+    // 3. Date emojis (when shorthands enabled)
+    #[token("\u{1F4C5}\u{FE0F}", |lex| task_date_callback(lex, TaskDateType::Due))]
+    #[token("\u{1F4C5}", |lex| task_date_callback(lex, TaskDateType::Due))]
+    #[token("\u{1F5D3}\u{FE0F}", |lex| task_date_callback(lex, TaskDateType::Due))]
+    #[token("\u{1F5D3}", |lex| task_date_callback(lex, TaskDateType::Due))]
+    #[token("\u{2795}", |lex| task_date_callback(lex, TaskDateType::Created))]
+    #[token("\u{1F6EB}", |lex| task_date_callback(lex, TaskDateType::Start))]
+    #[token("\u{23F3}", |lex| task_date_callback(lex, TaskDateType::Scheduled))]
+    #[token("\u{2705}", |lex| task_date_callback(lex, TaskDateType::Done))]
+    #[token("\u{274C}", |lex| task_date_callback(lex, TaskDateType::Cancelled))]
+    Date(TaskDate),
+
+    // 4. Wrapped & bare fields
     #[regex(r"[ \t]*[A-Za-z][A-Za-z0-9_-]*::", body_field_callback)]
     #[token("[", |lex| wrapped_field_callback(lex, DelimiterType::Bracket))]
     #[token("(", |lex| wrapped_field_callback(lex, DelimiterType::Parenthesis))]
-    #[token("\u{1F4C5}\u{FE0F}", |lex| task_field_callback(lex, "due"))]
-    #[token("\u{1F4C5}", |lex| task_field_callback(lex, "due"))]
-    #[token("\u{1F5D3}\u{FE0F}", |lex| task_field_callback(lex, "due"))]
-    #[token("\u{1F5D3}", |lex| task_field_callback(lex, "due"))]
-    #[token("\u{2795}", |lex| task_field_callback(lex, "created"))]
-    #[token("\u{1F6EB}", |lex| task_field_callback(lex, "start"))]
-    #[token("\u{23F3}", |lex| task_field_callback(lex, "scheduled"))]
-    #[token("\u{2705}", |lex| task_field_callback(lex, "done"))]
-    #[token("\u{274C}", |lex| task_field_callback(lex, "cancelled"))]
     Field((FieldKey, NoteFieldValue)),
+
     #[regex(r"[\s\S]", priority = 0)]
     Ignored,
 }
@@ -103,7 +146,7 @@ enum FieldToken {
 /// span rather than the rest of the line, unless it starts right after a
 /// newline or at the start of the text.
 fn body_field_callback(
-    lex: &mut Lexer<'_, FieldToken>,
+    lex: &mut Lexer<'_, ItemToken>,
 ) -> Filter<(FieldKey, NoteFieldValue)> {
     let at_line_start = char_before(lex).is_none_or(|ch| ch == '\n');
     if !at_line_start {
@@ -132,7 +175,7 @@ fn body_field_callback(
 ///   form (punctuation-only text), or
 /// - no matching closing delimiter is found.
 fn wrapped_field_callback(
-    lex: &mut Lexer<'_, FieldToken>,
+    lex: &mut Lexer<'_, ItemToken>,
     kind: DelimiterType,
 ) -> Filter<(FieldKey, NoteFieldValue)> {
     let remainder = lex.remainder();
@@ -168,10 +211,10 @@ fn wrapped_field_callback(
 /// [`ISO_DATE_LEN`] bytes forming a valid ISO date.
 ///
 /// Always skips when `lex.extras` is [`TaskShorthands::Exclude`].
-fn task_field_callback(
-    lex: &mut Lexer<'_, FieldToken>,
-    key: &'static str,
-) -> Filter<(FieldKey, NoteFieldValue)> {
+fn task_date_callback(
+    lex: &mut Lexer<'_, ItemToken>,
+    date_type: TaskDateType,
+) -> Filter<TaskDate> {
     if !lex.extras.is_included() {
         return Filter::Skip;
     }
@@ -196,9 +239,6 @@ fn task_field_callback(
     let Ok(value) = DateValue::parse_iso(candidate) else {
         return Filter::Skip;
     };
-    // Alphanumeric terminators reject the shorthand, mirroring
-    // `super::task::scan_date_after`: `📅 2025-01-15T12:00` is not a date and
-    // must stay plain text so both scanning paths agree.
     if after_ws
         .get(ISO_DATE_LEN..)
         .and_then(|tail| tail.chars().next())
@@ -206,11 +246,28 @@ fn task_field_callback(
     {
         return Filter::Skip;
     }
-    let Ok(key) = FieldKey::try_from(key) else {
+    lex.bump(var_len.saturating_add(ws_end).saturating_add(ISO_DATE_LEN));
+    Filter::Emit(TaskDate::new(date_type, value))
+}
+
+fn tag_callback(lex: &mut Lexer<'_, ItemToken>) -> Filter<Tag> {
+    let preceded_by_word_char =
+        char_before(lex).is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
+    if preceded_by_word_char {
+        return Filter::Skip;
+    }
+    let tag_start = lex.span().start;
+    let Some(tail) = lex.source().get(tag_start..) else {
         return Filter::Skip;
     };
-    lex.bump(var_len.saturating_add(ws_end).saturating_add(ISO_DATE_LEN));
-    Filter::Emit((key, NoteFieldValue::Date(value)))
+    let Some(tag_len) = Tag::prefix_len(tail) else {
+        return Filter::Skip;
+    };
+    lex.bump(tag_len.saturating_sub('#'.len_utf8()));
+    match Tag::parse(lex.slice()) {
+        Ok(tag) => Filter::Emit(tag),
+        Err(_) => Filter::Skip,
+    }
 }
 
 #[cfg(test)]
@@ -628,6 +685,40 @@ mod tests {
             let expected: Vec<Tag> =
                 expected.iter().map(|tag| Tag::parse(tag).unwrap()).collect();
             assert_eq!(tags, expected);
+        }
+    }
+
+    mod tokenize_item_text {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn extracts_item_tokens_in_single_pass() {
+            let text = "Task 🔺 #task 📅 2025-01-15 [priority:: high] end";
+            let tokens = tokenize_item_text(text, TaskShorthands::Include);
+            assert_eq!(tokens.len(), 4);
+            assert_eq!(
+                tokens.first().expect("token 0").value(),
+                &ItemToken::Priority(TaskPriority::Highest)
+            );
+            assert_eq!(
+                tokens.get(1).expect("token 1").value(),
+                &ItemToken::Tag(Tag::parse("#task").unwrap())
+            );
+            let date_val = DateValue::parse_iso("2025-01-15").unwrap();
+            assert_eq!(
+                tokens.get(2).expect("token 2").value(),
+                &ItemToken::Date(TaskDate::new(TaskDateType::Due, date_val))
+            );
+            let key = FieldKey::try_new("priority").unwrap();
+            assert_eq!(
+                tokens.get(3).expect("token 3").value(),
+                &ItemToken::Field((
+                    key,
+                    NoteFieldValue::String("high".to_owned())
+                ))
+            );
         }
     }
 }

@@ -1551,7 +1551,7 @@ mod tests {
                 source: QueryError::Syntax(QuerySyntaxError::unexpected_end(
                     QueryDialect::Source,
                     "#book and",
-                    (9, 0).into(),
+                    9..9,
                     "a source term",
                 )),
             };

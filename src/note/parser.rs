@@ -22,8 +22,7 @@
 //! - [`marker`]: custom task marker scanner that recognizes `[<symbol>]`
 //!   markers at item-leading positions with pulldown-cmark-compatible
 //!   whitespace rules.
-//! - [`tag`]: [`tag::scan_tags`] and [`tag::find_tag_filter_spans`] handle
-//!   Markdown tag extraction and configured task tag filter matching.
+//! - [`tag`]: [`tag::scan_tags`] extracts Markdown tags from text buffers.
 //! - [`task`]: [`task::extract_task_dates`], [`task::extract_task_priority`],
 //!   and [`task::clean_task_text`] handle task shorthand dates, priorities, and
 //!   display text normalization.
@@ -103,16 +102,15 @@ pub fn parse_markdown(input: &MarkdownParserInput<'_>) -> Note {
 
 /// Extracts and validates tags from the frontmatter value at `key`.
 ///
-/// Reuses [`Frontmatter::get_values`]'s scalar/list flattening: a list
-/// value yields one candidate per element, a scalar string yields one
-/// candidate. Every candidate, whether it came from a list element or the
-/// scalar itself, is then split on commas and each whitespace-trimmed
-/// segment becomes its own candidate, so a single list element containing
-/// a literal comma (`tags:\n  - "a, b"`) yields two candidates the same
-/// way a comma-separated scalar (`tags: a, b`) does. Each candidate is
-/// parsed leniently via [`Tag::parse_lenient_into`] (trims whitespace,
-/// treats a missing leading `#` as implicit); candidates that fail
-/// validation are silently dropped.
+/// Reuses [`Frontmatter::get_values`]'s scalar/list flattening: a list value
+/// yields one candidate per element, a scalar string yields one candidate.
+/// Every candidate, whether it came from a list element or the scalar itself,
+/// is then split on commas and each whitespace-trimmed segment becomes its own
+/// candidate, so a single list element containing a literal comma (`tags:\n -
+/// "a, b"`) yields two candidates the same way a comma-separated scalar (`tags:
+/// a, b`) does. Each candidate is parsed leniently via
+/// [`Tag::parse_lenient_into`] (trims whitespace, treats a missing leading `#`
+/// as implicit); candidates that fail validation are silently dropped.
 fn frontmatter_tags<'a>(
     frontmatter: &'a Frontmatter,
     key: &'a str,
@@ -139,9 +137,70 @@ enum BlockContext {
     Text,
 }
 
-/// Inline fields and tags flushed from a closed list item's scan buffer.
-type FlushedFields =
-    Option<(IndexMap<FieldKey, Vec<NoteFieldValue>>, Vec<Tag>)>;
+/// Inline fields list flushed from a list item.
+pub(super) type FlushedFieldsList = Vec<(FieldKey, NoteFieldValue)>;
+
+/// Metadata flushed from a closed list item's scan buffer.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(super) struct FlushedMetadata {
+    fields: FlushedFieldsList,
+    tags: Vec<Tag>,
+}
+
+impl FlushedMetadata {
+    /// Creates a new flushed metadata record.
+    #[inline]
+    #[must_use]
+    pub(super) const fn new(
+        fields: Vec<(FieldKey, NoteFieldValue)>,
+        tags: Vec<Tag>,
+    ) -> Self {
+        Self {
+            fields,
+            tags,
+        }
+    }
+
+    /// Returns a slice of the flushed inline fields.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "accessors used in unit suite")
+    )]
+    #[inline]
+    #[must_use]
+    pub(super) fn fields(&self) -> &[(FieldKey, NoteFieldValue)] {
+        &self.fields
+    }
+
+    /// Returns a slice of the flushed tags.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "accessors used in unit suite")
+    )]
+    #[inline]
+    #[must_use]
+    pub(super) fn tags(&self) -> &[Tag] {
+        &self.tags
+    }
+
+    /// Decomposes the record into its inner field and tag collections.
+    #[inline]
+    #[must_use]
+    pub(super) fn into_parts(self) -> (FlushedFieldsList, Vec<Tag>) {
+        (self.fields, self.tags)
+    }
+
+    /// Returns `true` if no fields and no tags were flushed.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "accessors used in unit suite")
+    )]
+    #[inline]
+    #[must_use]
+    pub(super) fn is_empty(&self) -> bool {
+        self.fields.is_empty() && self.tags.is_empty()
+    }
+}
 
 /// State accumulated while walking Markdown events for one note.
 struct ParserContext<'a> {
@@ -174,8 +233,7 @@ struct ParserContext<'a> {
 }
 
 impl<'a> ParserContext<'a> {
-    /// Starts a new context for `source`, precomputing its line-start
-    /// offsets.
+    /// Starts a new context for `source`, precomputing its line-start offsets.
     #[inline]
     #[must_use]
     fn new(
@@ -319,8 +377,8 @@ impl<'a> ParserContext<'a> {
     /// Starts tracking a Markdown or wikilink outlink.
     ///
     /// Standard Markdown links push `[` into the scan buffer (and `]` in
-    /// [`Self::end_link`]) so visible-key inline fields can be detected in
-    /// link text.
+    /// [`Self::end_link`]) so visible-key inline fields can be detected in link
+    /// text.
     fn start_link(&mut self, link_type: CmarkLinkType, dest_url: CowStr<'_>) {
         let kind = if matches!(link_type, CmarkLinkType::WikiLink { .. }) {
             LinkType::Wikilink
@@ -393,10 +451,11 @@ impl<'a> ParserContext<'a> {
 
     /// Folds a flushed item's inline fields and tags into this context's
     /// document-order streams, if any were flushed.
-    fn extend_from_flush(&mut self, flushed: FlushedFields) {
-        if let Some((fields, tags)) = flushed {
-            for (key, values) in fields {
-                self.inline_fields.entry(key).or_default().extend(values);
+    fn extend_from_flush(&mut self, flushed: Option<FlushedMetadata>) {
+        if let Some(metadata) = flushed {
+            let (fields, tags) = metadata.into_parts();
+            for (key, value) in fields {
+                self.inline_fields.entry(key).or_default().push(value);
             }
             self.tags.extend(tags);
         }
@@ -1546,6 +1605,36 @@ mod tests {
                 items.get(1).expect("item 1").kind(),
                 ListItemType::Task(_)
             ));
+        }
+    }
+
+    mod flushed_metadata {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn creates_and_accesses_properties() {
+            let key = FieldKey::try_new("status").unwrap();
+            let val = NoteFieldValue::String("active".to_owned());
+            let tag = Tag::parse("#urgent").unwrap();
+            let metadata =
+                FlushedMetadata::new(vec![(key.clone(), val.clone())], vec![
+                    tag.clone(),
+                ]);
+
+            assert!(!metadata.is_empty());
+            assert_eq!(metadata.fields(), &[(key.clone(), val.clone())]);
+            assert_eq!(metadata.tags(), std::slice::from_ref(&tag));
+            assert_eq!(metadata.into_parts(), (vec![(key, val)], vec![tag]));
+        }
+
+        #[test]
+        fn empty_metadata() {
+            let metadata = FlushedMetadata::default();
+            assert!(metadata.is_empty());
+            assert_eq!(metadata.fields(), []);
+            assert_eq!(metadata.tags(), []);
         }
     }
 }

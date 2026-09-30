@@ -4,9 +4,10 @@ use std::ops::Range;
 
 use indexmap::IndexMap;
 
+use super::lexer::{ItemToken, TaskShorthands, tokenize_item_text};
 use crate::{
     DateValue, FieldKey, FieldKeyRef, Tag, TaskDate, TaskDateSet, TaskDateType,
-    TaskPriority, delimiter::DelimiterType, note::NoteFieldValue,
+    TaskPriority, note::NoteFieldValue,
 };
 
 /// Scans `text` starting at byte offset `from` for `emoji` followed by an ISO
@@ -15,6 +16,7 @@ use crate::{
 /// Returns the byte range spanning the emoji, optional variation selector,
 /// whitespace, and the 10-byte ISO date string, paired with the parsed
 /// [`DateValue`].
+#[cfg_attr(not(test), expect(dead_code, reason = "tested in unit suite"))]
 pub(super) fn scan_date_after(
     text: &str,
     mut from: usize,
@@ -70,14 +72,13 @@ pub(super) fn extract_task_dates(
 ) -> TaskDateSet {
     let mut set = TaskDateSet::default();
 
-    // 1. Emoji dates (first-wins per slot; table order ranks spellings)
-    for &(base_emoji, kind) in TaskDateType::EMOJIS {
-        if set.get(kind).is_some() {
-            // An earlier table spelling already claimed this slot.
-            continue;
-        }
-        if let Some((_, date)) = scan_date_after(text, 0, base_emoji) {
-            set.insert(TaskDate::new(kind, date));
+    // 1. Emoji dates (first-wins per slot)
+    let tokens = tokenize_item_text(text, TaskShorthands::Include);
+    for token in tokens {
+        if let ItemToken::Date(task_date) = token.into_value()
+            && set.get(task_date.kind()).is_none()
+        {
+            set.insert(task_date);
         }
     }
 
@@ -122,20 +123,11 @@ pub(super) fn extract_task_priority(
     text: &str,
     fields: &IndexMap<FieldKey, Vec<NoteFieldValue>>,
 ) -> Option<TaskPriority> {
-    let mut first_priority = None;
-    let mut first_pos = usize::MAX;
-
-    for &(emoji, priority) in TaskPriority::EMOJIS {
-        if let Some(pos) = text.find(emoji)
-            && pos < first_pos
-        {
-            first_pos = pos;
-            first_priority = Some(priority);
+    let tokens = tokenize_item_text(text, TaskShorthands::Exclude);
+    for token in tokens {
+        if let ItemToken::Priority(priority) = token.into_value() {
+            return Some(priority);
         }
-    }
-
-    if let Some(priority) = first_priority {
-        return Some(priority);
     }
 
     for (key, values) in fields {
@@ -159,72 +151,42 @@ pub(super) fn extract_task_priority(
     None
 }
 
-/// Scans `text` for date shorthand emojis and records their removal byte spans.
-fn find_date_emoji_spans(text: &str, spans: &mut Vec<(usize, usize)>) {
-    for &(emoji, _) in TaskDateType::EMOJIS {
-        let mut from = 0;
-        while from < text.len() {
-            if let Some((range, _)) = scan_date_after(text, from, emoji) {
-                from = range.end;
-                spans.push((range.start, range.end));
-            } else {
-                break;
-            }
-        }
-    }
-}
-
-/// Scans `text` for priority emojis and records their removal byte spans.
-fn find_priority_emoji_spans(text: &str, spans: &mut Vec<(usize, usize)>) {
-    for &(emoji, _) in TaskPriority::EMOJIS {
-        let mut search_from = 0;
-        while let Some(pos) =
-            text.get(search_from..).and_then(|t| t.find(emoji))
-        {
-            let match_start = search_from.saturating_add(pos);
-            let mut match_end = match_start.saturating_add(emoji.len());
-            if text
-                .get(match_end..)
-                .is_some_and(|tail| tail.starts_with('\u{FE0F}'))
-            {
-                match_end = match_end.saturating_add('\u{FE0F}'.len_utf8());
-            }
-            spans.push((match_start, match_end));
-            search_from = match_end;
-        }
-    }
-}
-
 /// Computes normalized clean list text by stripping configured task tag
 /// filters, date syntax, priority emojis, and inline task fields.
 ///
 /// Expects `raw_text` to already have any leading task marker prefix removed.
 pub(super) fn clean_task_text(raw_text: &str, tag_filters: &[Tag]) -> String {
-    let mut remove_spans: Vec<(usize, usize)> = Vec::with_capacity(4);
+    let tokens = tokenize_item_text(raw_text, TaskShorthands::Include);
+    let mut remove_spans: Vec<(usize, usize)> =
+        Vec::with_capacity(tokens.len());
 
-    // 1. Tag filters (only if configured)
-    if !tag_filters.is_empty() {
-        super::tag::find_tag_filter_spans(
-            raw_text,
-            tag_filters,
-            &mut remove_spans,
-        );
+    for token in tokens {
+        let span = token.span();
+        match token.value() {
+            ItemToken::Priority(_) | ItemToken::Date(_) => {
+                remove_spans.push((span.start, span.end));
+            }
+            ItemToken::Tag(tag) => {
+                if tag_filters.contains(tag) {
+                    remove_spans.push((span.start, span.end));
+                }
+            }
+            ItemToken::Field((key, _)) => {
+                let bytes = raw_text.as_bytes();
+                let is_wrapped = bytes.get(span.start) == Some(&b'[')
+                    || bytes.get(span.start) == Some(&b'(');
+                if is_wrapped && TaskDateType::is_field_key(key.canonical()) {
+                    remove_spans.push((span.start, span.end));
+                }
+            }
+            ItemToken::Ignored => {}
+        }
     }
-
-    // 2. Date syntax (emoji dates)
-    find_date_emoji_spans(raw_text, &mut remove_spans);
-
-    // 3. Priority emojis
-    find_priority_emoji_spans(raw_text, &mut remove_spans);
-
-    // 4. Inline task fields: [field:: value] or (field:: value)
-    find_inline_task_field_spans(raw_text, &mut remove_spans);
 
     if remove_spans.is_empty() {
         return normalize_whitespace(raw_text);
     }
 
-    // Sort spans by start offset
     remove_spans.sort_unstable_by_key(|&(start, _)| start);
 
     // Merge overlapping spans in-place without secondary heap allocation
@@ -273,60 +235,6 @@ pub(super) fn clean_task_text(raw_text: &str, tag_filters: &[Tag]) -> String {
     }
 
     normalize_whitespace(&cleaned)
-}
-
-/// Scans `text` for Dataview-style inline task fields and records their removal
-/// byte spans.
-fn find_inline_task_field_spans(text: &str, spans: &mut Vec<(usize, usize)>) {
-    for kind in [DelimiterType::Bracket, DelimiterType::Parenthesis] {
-        let Some(open_char) = kind.open_char() else {
-            continue;
-        };
-        let mut search_from = 0;
-        while let Some(open_pos) =
-            text.get(search_from..).and_then(|t| t.find(open_char))
-        {
-            let match_start = search_from.saturating_add(open_pos);
-            let open_end = match_start.saturating_add(open_char.len_utf8());
-            let remainder = &text[open_end..];
-            if let Some(match_end) =
-                scan_inline_task_field(match_start, remainder, kind)
-            {
-                spans.push((match_start, match_end));
-                search_from = match_end;
-            } else {
-                search_from = open_end;
-            }
-        }
-    }
-}
-
-/// Scans a single bracketed or parenthesized inline task field starting at
-/// `match_start`.
-fn scan_inline_task_field(
-    match_start: usize,
-    remainder: &str,
-    kind: DelimiterType,
-) -> Option<usize> {
-    let open_char = kind.open_char()?;
-    let sep_pos = remainder.find("::")?;
-    let key = remainder.get(..sep_pos)?.trim();
-    if key.is_empty()
-        || key.chars().any(|ch| matches!(ch, '[' | ']' | '(' | ')'))
-        || !TaskDateType::is_field_key(key)
-    {
-        return None;
-    }
-    let after_sep = remainder.get(sep_pos.saturating_add(2)..)?;
-    let close_offset = kind.find_closing(after_sep)?;
-    Some(
-        match_start
-            .saturating_add(open_char.len_utf8())
-            .saturating_add(sep_pos)
-            .saturating_add(2)
-            .saturating_add(close_offset)
-            .saturating_add(kind.close_len()),
-    )
 }
 
 /// Collapses consecutive whitespace in `text` while preserving newlines.

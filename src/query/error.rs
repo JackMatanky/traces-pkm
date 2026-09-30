@@ -126,13 +126,14 @@ impl QuerySyntaxError {
     pub(crate) fn unexpected_end(
         dialect: QueryDialect,
         input: &str,
-        span: SourceSpan,
+        span: std::ops::Range<usize>,
         expected: &'static str,
     ) -> Self {
+        let source_span = SourceSpan::from((span.start, span.len()));
         Self {
             dialect,
             input: input.to_owned(),
-            span,
+            span: source_span,
             lex_error: Box::new(LexError::UnexpectedEndOfInput {
                 span,
                 expected,
@@ -140,17 +141,17 @@ impl QuerySyntaxError {
         }
     }
 
-    /// Preserves `lex_error`'s span as the diagnostic label.
     pub(crate) fn from_lex(
         dialect: QueryDialect,
         input: &str,
         lex_error: LexError,
     ) -> Self {
         let span = lex_error.span();
+        let source_span = SourceSpan::from((span.start, span.len()));
         Self {
             dialect,
             input: input.to_owned(),
-            span,
+            span: source_span,
             lex_error: Box::new(lex_error),
         }
     }
@@ -227,7 +228,7 @@ mod tests {
             let error = QuerySyntaxError::unexpected_end(
                 QueryDialect::Filter,
                 "rating >",
-                SourceSpan::from((7, 0)),
+                7..7,
                 "a literal value",
             );
 
@@ -235,7 +236,7 @@ mod tests {
             assert_eq!(error.input, "rating >");
             assert_eq!(error.span, SourceSpan::from((7, 0)));
             assert_eq!(*error.lex_error, LexError::UnexpectedEndOfInput {
-                span: SourceSpan::from((7, 0)),
+                span: 7..7,
                 expected: "a literal value",
             });
             assert_eq!(
@@ -265,7 +266,7 @@ mod tests {
             let error = QueryError::from(QuerySyntaxError::unexpected_end(
                 QueryDialect::Source,
                 "#book and",
-                SourceSpan::from((9, 0)),
+                9..9,
                 "a source term",
             ));
 

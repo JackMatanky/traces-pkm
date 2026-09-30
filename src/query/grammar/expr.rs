@@ -9,10 +9,8 @@
 //! allowing source selection ([`SourceAtom`](super::SourceAtom)) and row
 //! filtering ([`FilterAtom`](super::filter::FilterAtom)) to reuse identical
 //! operator semantics, associativity, and diagnostic span reporting.
-use miette::SourceSpan;
-
 use crate::{
-    LexTokenStream, LexedToken,
+    LexTokenStream, Spanned,
     query::error::{QueryBuilderError, QuerySyntaxError},
 };
 
@@ -75,21 +73,21 @@ pub(super) trait AtomParser {
     fn parse_atom(
         &self,
         input: &str,
-        tokens: &mut LexTokenStream<LexedToken<Self::Token>>,
+        tokens: &mut LexTokenStream<Spanned<Self::Token>>,
     ) -> Result<Self::Atom, QueryBuilderError>;
 
     /// Builds a span-aware syntax diagnostic for this domain.
     fn syntax_error(
         &self,
         input: &str,
-        span: SourceSpan,
+        span: std::ops::Range<usize>,
         expected: &'static str,
     ) -> QuerySyntaxError;
 }
 
 struct BooleanExprParser<'input, G: AtomParser> {
     input: &'input str,
-    tokens: LexTokenStream<LexedToken<G::Token>>,
+    tokens: LexTokenStream<Spanned<G::Token>>,
     grammar: G,
 }
 
@@ -155,7 +153,7 @@ impl<A> BooleanExpr<A> {
 impl<'input, G: AtomParser> BooleanExprParser<'input, G> {
     fn parse(&mut self) -> Result<BooleanExpr<G::Atom>, QueryBuilderError> {
         let expression = self.parse_or()?;
-        let unexpected = self.tokens.peek().map(LexedToken::span);
+        let unexpected = self.tokens.peek().map(Spanned::span);
         if let Some(span) = unexpected {
             return Err(self
                 .syntax_error(
@@ -249,16 +247,13 @@ impl<'input, G: AtomParser> BooleanExprParser<'input, G> {
         }
     }
 
-    fn next_span(&mut self) -> SourceSpan {
-        self.tokens.peek().map_or_else(
-            || SourceSpan::from((self.input.len(), 0)),
-            LexedToken::span,
-        )
+    fn next_span(&mut self) -> std::ops::Range<usize> {
+        self.tokens.next_span(self.input)
     }
 
     fn syntax_error(
         &self,
-        span: SourceSpan,
+        span: std::ops::Range<usize>,
         expected: &'static str,
     ) -> QuerySyntaxError {
         self.grammar.syntax_error(self.input, span, expected)
@@ -277,7 +272,7 @@ impl<'input, G: AtomParser> BooleanExprParser<'input, G> {
 /// [`Syntax`]: QueryBuilderError::Syntax
 pub(super) fn parse_boolean_expr<G>(
     input: &str,
-    tokens: LexTokenStream<LexedToken<G::Token>>,
+    tokens: LexTokenStream<Spanned<G::Token>>,
     grammar: G,
 ) -> Result<BooleanExpr<G::Atom>, QueryBuilderError>
 where
@@ -319,7 +314,7 @@ mod tests {
         fn parse_atom(
             &self,
             input: &str,
-            tokens: &mut LexTokenStream<LexedToken<Self::Token>>,
+            tokens: &mut LexTokenStream<Spanned<Self::Token>>,
         ) -> Result<Self::Atom, QueryBuilderError> {
             match tokens.next() {
                 Some(spanned) => {
@@ -332,11 +327,7 @@ mod tests {
                     }
                 }
                 None => Err(self
-                    .syntax_error(
-                        input,
-                        SourceSpan::from((input.len(), 0)),
-                        "an atom",
-                    )
+                    .syntax_error(input, input.len()..input.len(), "an atom")
                     .into()),
             }
         }
@@ -344,7 +335,7 @@ mod tests {
         fn syntax_error(
             &self,
             input: &str,
-            span: SourceSpan,
+            span: std::ops::Range<usize>,
             expected: &'static str,
         ) -> QuerySyntaxError {
             QuerySyntaxError::unexpected_end(
@@ -356,8 +347,8 @@ mod tests {
         }
     }
 
-    fn token(value: TestToken, offset: usize) -> LexedToken<TestToken> {
-        LexedToken::new(value, SourceSpan::from((offset, 1)))
+    fn token(value: TestToken, offset: usize) -> Spanned<TestToken> {
+        Spanned::new(value, offset..offset.saturating_add(1))
     }
 
     mod parse {
@@ -451,7 +442,7 @@ mod tests {
             token(TestToken::Atom("b"), 2),
         ])]
         fn rejects_incomplete_or_adjacent_tokens(
-            #[case] tokens: Vec<LexedToken<TestToken>>,
+            #[case] tokens: Vec<Spanned<TestToken>>,
         ) {
             assert!(
                 parse_boolean_expr(

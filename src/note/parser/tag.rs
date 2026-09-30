@@ -58,46 +58,6 @@ pub(super) fn scan_tags(text: &str) -> Vec<Tag> {
     tags
 }
 
-/// Scans `text` for configured task tag filters and records their byte spans.
-pub(super) fn find_tag_filter_spans(
-    text: &str,
-    tag_filters: &[Tag],
-    spans: &mut Vec<(usize, usize)>,
-) {
-    let mut iter = text.char_indices().peekable();
-    let mut prev_char: Option<char> = None;
-
-    while let Some((idx, ch)) = iter.next() {
-        let is_word_char =
-            prev_char.is_some_and(|c| c.is_alphanumeric() || c == '_');
-        prev_char = Some(ch);
-        if ch != '#' || is_word_char {
-            continue;
-        }
-        if let Some((start, end, candidate)) =
-            scan_tag_candidate(text, idx, &mut iter)
-            && tag_filters.iter().any(|filter| filter.as_str() == candidate)
-        {
-            spans.push((start, end));
-        }
-    }
-}
-
-/// Scans a single tag candidate starting at `start_idx`.
-fn scan_tag_candidate<'a>(
-    text: &'a str,
-    start_idx: usize,
-    iter: &mut std::iter::Peekable<std::str::CharIndices<'_>>,
-) -> Option<(usize, usize, &'a str)> {
-    let tag_len = Tag::prefix_len(text.get(start_idx..)?)?;
-    let tag_end = start_idx.saturating_add(tag_len);
-    while iter.peek().is_some_and(|(idx, _)| *idx < tag_end) {
-        iter.next();
-    }
-    let candidate = text.get(start_idx..tag_end)?;
-    Some((start_idx, tag_end, candidate))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,36 +80,6 @@ mod tests {
         fn skips_mid_word_hashes_and_non_alpha_initials() {
             let tags = scan_tags("foo#bar #123 #_not_alpha #valid");
             assert_eq!(tags, vec![Tag::parse("#valid").unwrap()]);
-        }
-    }
-
-    mod find_tag_filter_spans {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-        #[test]
-        fn locates_exact_tag_matches() {
-            let filters =
-                [Tag::parse("#task").unwrap(), Tag::parse("#urgent").unwrap()];
-            let mut spans = Vec::new();
-            find_tag_filter_spans(
-                "a #task and #urgent item",
-                &filters,
-                &mut spans,
-            );
-            assert_eq!(spans, vec![(2, 7), (12, 19)]);
-        }
-
-        #[test]
-        fn ignores_non_matching_and_subtags() {
-            let filters = [Tag::parse("#task").unwrap()];
-            let mut spans = Vec::new();
-            find_tag_filter_spans(
-                "a #task/sub and #other item",
-                &filters,
-                &mut spans,
-            );
-            assert_eq!(spans, vec![]);
         }
     }
 }

@@ -118,9 +118,7 @@ pub(crate) use index::IndexerService;
 pub use index::{
     FileEntry, IndexerService, InlinkMap, RefreshReport, WorkspaceIndex,
 };
-pub(crate) use lexer::{
-    LexError, LexTokenStream, LexedToken, TokenSpec, lexical_unquote,
-};
+pub(crate) use lexer::{LexError, LexTokenStream, TokenSpec, lexical_unquote};
 pub(crate) use note::NoteFieldType;
 pub use note::{
     ListItem, ListItemType, ListText, MarkdownParserInput, Note,
@@ -128,8 +126,8 @@ pub use note::{
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use path::codec as path_codec;
-pub use position::SourceLine;
 pub(crate) use position::{ByteOffset, ByteTracker};
+pub use position::{SourceLine, Spanned};
 #[cfg(any(test, feature = "test-utils"))]
 pub use query::{
     QueryBuilder, QueryBuilderError, QueryResult, QueryRow, QueryService,

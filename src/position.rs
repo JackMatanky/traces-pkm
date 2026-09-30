@@ -8,6 +8,7 @@
 //! - [`ByteOffsetError`] - Error for byte offsets that exceed the `u32` range.
 //! - [`SourceLine`] - 1-indexed source line number.
 //! - [`SourceLineError`] - Error for invalid line-number conversions.
+//! - [`Spanned`] - A value paired with its byte range in source text.
 //!
 //! [`SourceLine`] and [`ByteOffset`] are distinct newtypes so a byte offset can
 //! never be mistaken for a line number at compile time. [`ByteTracker`] is the
@@ -65,8 +66,8 @@ impl ByteTracker {
 /// A UTF-8 byte offset into source text.
 ///
 /// Distinct from [`SourceLine`] so a line number can never be passed where a
-/// byte offset is expected, or vice versa. Backed by `u32`, so offsets past
-/// 4 `GiB` cannot be represented: saturating conversions clamp at
+/// byte offset is expected, or vice versa. Backed by `u32`, so offsets past 4
+/// `GiB` cannot be represented: saturating conversions clamp at
 /// [`ByteOffset::MAX`].
 #[derive(
     Copy,
@@ -246,6 +247,117 @@ impl<'de> Deserialize<'de> for SourceLine {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 #[error("source line number must be non-zero")]
 pub struct SourceLineError;
+
+/// A value paired with its half-open `[start..end)` byte range in source text.
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+pub struct Spanned<T> {
+    value: T,
+    span: std::ops::Range<usize>,
+}
+
+impl<T> Spanned<T> {
+    /// Pairs `value` with its byte `span`.
+    #[inline]
+    #[must_use]
+    pub const fn new(value: T, span: std::ops::Range<usize>) -> Self {
+        Self {
+            value,
+            span,
+        }
+    }
+
+    /// Returns a reference to the inner value.
+    #[inline]
+    #[must_use]
+    pub const fn value(&self) -> &T {
+        &self.value
+    }
+
+    /// Returns the half-open byte range in source text.
+    #[inline]
+    #[must_use]
+    pub fn span(&self) -> std::ops::Range<usize> {
+        self.span.clone()
+    }
+
+    /// Returns the starting byte offset.
+    #[inline]
+    #[must_use]
+    pub const fn start(&self) -> usize {
+        self.span.start
+    }
+
+    /// Returns the exclusive ending byte offset.
+    #[inline]
+    #[must_use]
+    pub const fn end(&self) -> usize {
+        self.span.end
+    }
+
+    /// Returns the byte length of the span.
+    #[inline]
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.span.end.saturating_sub(self.span.start)
+    }
+
+    /// Returns `true` if the span covers zero bytes.
+    #[inline]
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.span.start >= self.span.end
+    }
+
+    /// Consumes the wrapper, returning the inner value.
+    #[inline]
+    #[must_use]
+    pub fn into_value(self) -> T {
+        self.value
+    }
+
+    /// Decomposes the wrapper into value and span.
+    #[inline]
+    #[must_use]
+    pub fn into_parts(self) -> (T, std::ops::Range<usize>) {
+        (self.value, self.span)
+    }
+}
+
+impl<T> AsRef<T> for Spanned<T> {
+    #[inline]
+    fn as_ref(&self) -> &T {
+        &self.value
+    }
+}
+
+impl<T: PartialOrd> PartialOrd for Spanned<T> {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match self.value.partial_cmp(&other.value) {
+            Some(std::cmp::Ordering::Equal) => {
+                match self.span.start.partial_cmp(&other.span.start) {
+                    Some(std::cmp::Ordering::Equal) => {
+                        self.span.end.partial_cmp(&other.span.end)
+                    }
+                    ord => ord,
+                }
+            }
+            ord => ord,
+        }
+    }
+}
+
+impl<T: Ord> Ord for Spanned<T> {
+    #[inline]
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.value.cmp(&other.value).then_with(|| {
+            self.span
+                .start
+                .cmp(&other.span.start)
+                .then_with(|| self.span.end.cmp(&other.span.end))
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -466,6 +578,56 @@ mod tests {
 
             assert_eq!(encoded, "5");
             assert_eq!(decoded, offset);
+        }
+    }
+
+    mod spanned {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn creates_and_accesses_properties() {
+            let spanned = Spanned::new("token", 4..9);
+            assert_eq!(*spanned.value(), "token");
+            assert_eq!(spanned.as_ref(), &"token");
+            assert_eq!(spanned.span(), 4..9);
+            assert_eq!(spanned.start(), 4);
+            assert_eq!(spanned.end(), 9);
+            assert_eq!(spanned.len(), 5);
+            assert!(!spanned.is_empty());
+        }
+
+        #[test]
+        #[expect(
+            clippy::reversed_empty_ranges,
+            reason = "tests inverted range handling"
+        )]
+        fn empty_span_behavior() {
+            let spanned = Spanned::new(123, 10..10);
+            assert_eq!(spanned.len(), 0);
+            assert!(spanned.is_empty());
+
+            let inverted = Spanned::new(123, 15..10);
+            assert_eq!(inverted.len(), 0);
+            assert!(inverted.is_empty());
+        }
+
+        #[test]
+        fn into_value_and_parts() {
+            let spanned = Spanned::new("abc".to_owned(), 0..3);
+            assert_eq!(spanned.clone().into_value(), "abc");
+            assert_eq!(spanned.into_parts(), ("abc".to_owned(), 0..3));
+        }
+
+        #[test]
+        fn ordering_and_comparison() {
+            let s1 = Spanned::new("a", 0..2);
+            let s2 = Spanned::new("a", 0..3);
+            let s3 = Spanned::new("b", 0..1);
+            assert!(s1 < s2);
+            assert!(s2 < s3);
+            assert_eq!(s1.cmp(&s2), std::cmp::Ordering::Less);
         }
     }
 }

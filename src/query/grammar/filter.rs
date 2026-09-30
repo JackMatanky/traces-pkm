@@ -10,7 +10,6 @@
 //! - Boolean combinators (`and`, `or`, `not`, parentheses) parsed via the
 //!   shared boolean expression grammar.
 use logos::{Lexer, Logos};
-use miette::SourceSpan;
 
 use super::{
     FieldPath,
@@ -19,7 +18,7 @@ use super::{
     },
 };
 use crate::{
-    LexError, LexTokenStream, LexedToken, NoteFieldValue, NoteFieldValueRef,
+    LexError, LexTokenStream, NoteFieldValue, NoteFieldValueRef, Spanned,
     TokenSpec, lexical_unquote,
     query::{
         QueryRow,
@@ -44,30 +43,28 @@ impl FilterExpr {
     /// [`Syntax`]: QueryBuilderError::Syntax
     /// [`FieldPath`]: QueryBuilderError::FieldPath
     pub(crate) fn parse(input: &str) -> Result<Self, QueryBuilderError> {
-        let tokens = LexTokenStream::<LexedToken<FilterToken>>::tokenize_with(
+        let tokens = LexTokenStream::<Spanned<FilterToken>>::tokenize_with(
             input,
             |token| {
                 let span = token.span();
                 match token.into_value() {
                     FilterToken::Ident(word) => match word.parse::<f64>() {
-                        Ok(number) if number.is_finite() => {
-                            Ok(LexedToken::new(
-                                FilterToken::Literal(NoteFieldValue::Number(
-                                    number,
-                                )),
-                                span,
-                            ))
-                        }
+                        Ok(number) if number.is_finite() => Ok(Spanned::new(
+                            FilterToken::Literal(NoteFieldValue::Number(
+                                number,
+                            )),
+                            span,
+                        )),
                         Ok(_) => Err(LexError::UnexpectedToken {
                             span,
                             found: "NaN or infinity".to_owned(),
                             expected: "a finite numeric literal",
                         }),
                         Err(_) => {
-                            Ok(LexedToken::new(FilterToken::Ident(word), span))
+                            Ok(Spanned::new(FilterToken::Ident(word), span))
                         }
                     },
-                    other => Ok(LexedToken::new(other, span)),
+                    other => Ok(Spanned::new(other, span)),
                 }
             },
         )
@@ -278,7 +275,7 @@ impl FilterGrammar {
     /// value.
     fn parse_literal_arg(
         input: &str,
-        tokens: &mut LexTokenStream<LexedToken<FilterToken>>,
+        tokens: &mut LexTokenStream<Spanned<FilterToken>>,
     ) -> Result<NoteFieldValue, QueryBuilderError> {
         let spanned = tokens
             .expect_map(input, "a literal value", |token| {
@@ -297,7 +294,7 @@ impl FilterGrammar {
     /// Parses a call argument list after the function name.
     fn parse_function_call(
         input: &str,
-        tokens: &mut LexTokenStream<LexedToken<FilterToken>>,
+        tokens: &mut LexTokenStream<Spanned<FilterToken>>,
         name: &str,
     ) -> Result<FilterFunction, QueryBuilderError> {
         tokens
@@ -352,7 +349,7 @@ impl FilterGrammar {
             QuerySyntaxError::unexpected_end(
                 QueryDialect::Filter,
                 input,
-                SourceSpan::from((0, name.len())),
+                0..name.len(),
                 "`contains`",
             )
             .into()
@@ -362,7 +359,7 @@ impl FilterGrammar {
     /// Parses a `<field> <op> <value>` comparison after the field token.
     fn parse_comparison(
         input: &str,
-        tokens: &mut LexTokenStream<LexedToken<FilterToken>>,
+        tokens: &mut LexTokenStream<Spanned<FilterToken>>,
         field_ident: &str,
     ) -> Result<ComparisonExpr, QueryBuilderError> {
         let op_spanned = tokens
@@ -406,7 +403,7 @@ impl AtomParser for FilterGrammar {
     fn parse_atom(
         &self,
         input: &str,
-        tokens: &mut LexTokenStream<LexedToken<Self::Token>>,
+        tokens: &mut LexTokenStream<Spanned<Self::Token>>,
     ) -> Result<Self::Atom, QueryBuilderError> {
         let spanned_ident = tokens
             .expect_map(input, "a filter term", |token| {
@@ -432,7 +429,7 @@ impl AtomParser for FilterGrammar {
     fn syntax_error(
         &self,
         input: &str,
-        span: SourceSpan,
+        span: std::ops::Range<usize>,
         expected: &'static str,
     ) -> QuerySyntaxError {
         QuerySyntaxError::unexpected_end(
@@ -570,7 +567,7 @@ mod tests {
             );
             if let Err(QueryBuilderError::Syntax(error)) = result {
                 assert_eq!(*error.lex_error, LexError::UnexpectedToken {
-                    span: SourceSpan::from((offset, length)),
+                    span: offset..offset.saturating_add(length),
                     found: "NaN or infinity".to_owned(),
                     expected: "a finite numeric literal",
                 });
