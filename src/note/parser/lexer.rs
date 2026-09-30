@@ -45,6 +45,9 @@ pub(super) fn tokenize_item_text(
 ) -> Vec<Spanned<ItemToken>> {
     let mut lexer = ItemToken::lexer_with_extras(text, shorthands);
     let mut tokens = Vec::new();
+    // The `skip(r"[\s\S]", priority = 0)` derive matches every byte, so the
+    // lexer never yields `Err`; a `Some(Err(_))` here would mean the skip
+    // rule was removed and would silently truncate the stream.
     while let Some(Ok(token)) = lexer.next() {
         let span = lexer.span();
         tokens.push(Spanned::new(token, span));

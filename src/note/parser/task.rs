@@ -157,7 +157,8 @@ fn first_date_in_field(
         .find_map(|val| val.as_date().map(Into::into))
 }
 
-/// Collapses consecutive whitespace in `text` while preserving newlines.
+/// Collapses in-line whitespace runs to single spaces, drops blank lines,
+/// and separates the remaining lines with single newlines.
 fn normalize_whitespace(text: &str) -> String {
     let mut result = String::with_capacity(text.len());
     let mut first_line = true;
