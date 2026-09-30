@@ -45,8 +45,8 @@ impl FilterExpr {
     pub(crate) fn parse(input: &str) -> Result<Self, QueryBuilderError> {
         let tokens =
             SpannedTokenStream::<FilterToken>::tokenize_with(input, |token| {
-                let span = token.span();
-                match token.into_value() {
+                let (value, span) = token.into_parts();
+                match value {
                     FilterToken::Ident(word) => match word.parse::<f64>() {
                         Ok(number) if number.is_finite() => Ok(Spanned::new(
                             FilterToken::Literal(NoteFieldValue::Number(

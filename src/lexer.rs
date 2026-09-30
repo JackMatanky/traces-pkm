@@ -489,8 +489,8 @@ mod tests {
         }
 
         fn clamp_post(token: Spanned<T>) -> Result<Spanned<T>, LexError> {
-            let span = token.span();
-            match token.into_value() {
+            let (value, span) = token.into_parts();
+            match value {
                 T::Num(n) if n > 100 => Err(LexError::UnexpectedToken {
                     span,
                     found: n.to_string(),

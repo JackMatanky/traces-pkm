@@ -280,11 +280,39 @@ impl<T> Spanned<T> {
         self.span.clone()
     }
 
+    /// Returns the starting byte offset.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn start(&self) -> usize {
+        self.span.start
+    }
+
+    /// Returns the exclusive ending byte offset.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn end(&self) -> usize {
+        self.span.end
+    }
+
     /// Consumes the wrapper, returning the inner value.
     #[inline]
     #[must_use]
     pub(crate) fn into_value(self) -> T {
         self.value
+    }
+
+    /// Decomposes the wrapper into value and span.
+    #[inline]
+    #[must_use]
+    pub(crate) fn into_parts(self) -> (T, Range<usize>) {
+        (self.value, self.span)
+    }
+}
+
+impl<T> AsRef<T> for Spanned<T> {
+    #[inline]
+    fn as_ref(&self) -> &T {
+        &self.value
     }
 }
 
@@ -292,14 +320,8 @@ impl<T: PartialOrd> PartialOrd for Spanned<T> {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         match self.value.partial_cmp(&other.value) {
-            Some(Ordering::Equal) => {
-                match self.span.start.partial_cmp(&other.span.start) {
-                    Some(Ordering::Equal) => {
-                        self.span.end.partial_cmp(&other.span.end)
-                    }
-                    ord => ord,
-                }
-            }
+            Some(Ordering::Equal) => (self.span.start, self.span.end)
+                .partial_cmp(&(other.span.start, other.span.end)),
             ord => ord,
         }
     }
@@ -309,10 +331,8 @@ impl<T: Ord> Ord for Spanned<T> {
     #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
         self.value.cmp(&other.value).then_with(|| {
-            self.span
-                .start
-                .cmp(&other.span.start)
-                .then_with(|| self.span.end.cmp(&other.span.end))
+            (self.span.start, self.span.end)
+                .cmp(&(other.span.start, other.span.end))
         })
     }
 }
@@ -568,6 +588,24 @@ mod tests {
 
             assert_eq!(at_five.span(), 5..5);
             assert!(at_five < at_six);
+        }
+
+        #[test]
+        fn provides_span_bounds_accessors() {
+            let spanned = Spanned::new("item", 3..10);
+
+            assert_eq!(spanned.start(), 3);
+            assert_eq!(spanned.end(), 10);
+        }
+
+        #[test]
+        fn decomposes_into_parts_and_borrows_as_ref() {
+            let spanned = Spanned::new("data".to_owned(), 2..6);
+
+            assert_eq!(spanned.as_ref(), "data");
+            let (value, span) = spanned.into_parts();
+            assert_eq!(value, "data");
+            assert_eq!(span, 2..6);
         }
     }
 }

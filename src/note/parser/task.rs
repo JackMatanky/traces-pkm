@@ -55,7 +55,8 @@ impl<'a> TaskScan<'a> {
                 continue;
             }
             for key_name in kind.field_keys() {
-                if let Some(date) = first_date_in_field(fields, key_name) {
+                if let Some(date) = Self::first_date_in_field(fields, key_name)
+                {
                     set.insert(TaskDate::new(kind, date));
                     break;
                 }
@@ -97,87 +98,79 @@ impl<'a> TaskScan<'a> {
     ///
     /// Expects `raw` to already have any leading task marker prefix removed.
     pub(super) fn clean_text(&self, tag_filters: &[Tag]) -> String {
-        let mut remove_spans: Vec<(usize, usize)> =
-            Vec::with_capacity(self.tokens.len());
-
-        for token in &self.tokens {
-            let span = token.span();
-            match token.value() {
-                ItemToken::Priority(_) | ItemToken::Date(_) => {
-                    remove_spans.push((span.start, span.end));
-                }
-                ItemToken::Tag(tag) => {
-                    if tag_filters.contains(tag) {
-                        remove_spans.push((span.start, span.end));
-                    }
-                }
-                ItemToken::Field((key, _, form)) => {
-                    if matches!(form, FieldForm::Wrapped)
-                        && TaskDateType::is_field_key(key.canonical())
-                    {
-                        remove_spans.push((span.start, span.end));
-                    }
-                }
-            }
-        }
-
-        // Token spans from a single logos pass are disjoint and ordered, so no
-        // merge step is required; `current_idx.max(end)` tolerates adjacency.
+        // Token spans from a single logos pass are disjoint and ordered, so
+        // unremoved text slices can be accumulated directly without an
+        // intermediate allocation of removal spans.
         let mut cleaned = String::with_capacity(self.raw.len());
         let mut current_idx = 0;
-        for (start, end) in remove_spans {
-            if start > current_idx
-                && let Some(slice) = self.raw.get(current_idx..start)
-            {
-                cleaned.push_str(slice);
+
+        for token in &self.tokens {
+            let should_remove = match token.value() {
+                ItemToken::Priority(_) | ItemToken::Date(_) => true,
+                ItemToken::Tag(tag) => tag_filters.contains(tag),
+                ItemToken::Field((key, _, form)) => {
+                    matches!(form, FieldForm::Wrapped)
+                        && TaskDateType::is_field_key(key.canonical())
+                }
+            };
+
+            if should_remove {
+                let start = token.start();
+                let end = token.end();
+                if start > current_idx
+                    && let Some(slice) = self.raw.get(current_idx..start)
+                {
+                    cleaned.push_str(slice);
+                }
+                current_idx = current_idx.max(end);
             }
-            current_idx = current_idx.max(end);
         }
+
         if current_idx < self.raw.len()
             && let Some(slice) = self.raw.get(current_idx..)
         {
             cleaned.push_str(slice);
         }
 
-        normalize_whitespace(&cleaned)
+        Self::normalize_whitespace(&cleaned)
     }
-}
 
-/// Returns the first date value matching `key_name` across `fields`.
-///
-/// [`FieldKeyRef`] resolves the canonical entry in O(1); keys in `fields` are
-/// unique under canonical equality, so at most one entry matches.
-fn first_date_in_field(
-    fields: &IndexMap<FieldKey, Vec<NoteFieldValue>>,
-    key_name: &str,
-) -> Option<DateValue> {
-    fields
-        .get(&FieldKeyRef::new(key_name))?
-        .iter()
-        .find_map(|val| val.as_date().map(Into::into))
-}
-
-/// Collapses in-line whitespace runs to single spaces, drops blank lines,
-/// and separates the remaining lines with single newlines.
-fn normalize_whitespace(text: &str) -> String {
-    let mut result = String::with_capacity(text.len());
-    let mut first_line = true;
-    for line in text.split('\n') {
-        let mut words = line.split_whitespace();
-        let Some(first_word) = words.next() else {
-            continue;
-        };
-        if !first_line {
-            result.push('\n');
-        }
-        result.push_str(first_word);
-        for word in words {
-            result.push(' ');
-            result.push_str(word);
-        }
-        first_line = false;
+    /// Returns the first date value matching `key_name` across `fields`.
+    ///
+    /// [`FieldKeyRef`] resolves the canonical entry in O(1); keys in `fields`
+    /// are unique under canonical equality, so at most one entry matches.
+    fn first_date_in_field(
+        fields: &IndexMap<FieldKey, Vec<NoteFieldValue>>,
+        key_name: &str,
+    ) -> Option<DateValue> {
+        fields
+            .get(&FieldKeyRef::new(key_name))?
+            .iter()
+            .find_map(|val| val.as_date().map(Into::into))
     }
-    result
+
+    /// Collapses in-line whitespace runs to single spaces, drops blank lines,
+    /// and separates the remaining lines with single newlines.
+    fn normalize_whitespace(text: &str) -> String {
+        let mut result = String::with_capacity(text.len());
+        let mut first_line = true;
+        for line in text.split('\n') {
+            let mut words = line.split_whitespace();
+            let Some(first_word) = words.next() else {
+                continue;
+            };
+            if !first_line {
+                result.push('\n');
+            }
+            result.push_str(first_word);
+            for word in words {
+                result.push(' ');
+                result.push_str(word);
+            }
+            first_line = false;
+        }
+        result
+    }
 }
 
 #[cfg(test)]

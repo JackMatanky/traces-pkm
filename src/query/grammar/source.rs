@@ -562,8 +562,8 @@ impl AtomParser for SourceGrammar {
         let next_span = tokens.next_span(input);
         match tokens.next() {
             Some(spanned) => {
-                let span = spanned.span();
-                match spanned.into_value() {
+                let (value, span) = spanned.into_parts();
+                match value {
                     SourceToken::Tag(tag) => Ok(SourceAtom::Tag(tag)),
                     SourceToken::ClassSigil(sigil) => {
                         Self::parse_sigil(input, &sigil, span)

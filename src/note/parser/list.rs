@@ -89,7 +89,7 @@ impl ListTracker {
         // trailing-whitespace text chunk ever arriving.
         self.resolve_pending_marker();
         let item = self.item_stack.last_mut()?;
-        if item.buffers.scan.is_empty() {
+        if item.buffers.is_scan_empty() {
             return None;
         }
         let text = item.buffers.take_scan();
@@ -183,7 +183,7 @@ impl ListTracker {
             // One tokenization pass feeds priority, date, and clean-text
             // extraction. Extraction reads must precede the move of the raw
             // text into `ListText` (NLL-enforced).
-            let scan = super::task::TaskScan::scan(&item_frame.buffers.text);
+            let scan = super::task::TaskScan::scan(item_frame.buffers.text());
             let clean = scan.clean_text(tag_filters);
             let item_type = match item_frame.marker.marker_symbol() {
                 Some(symbol) => {
@@ -208,7 +208,7 @@ impl ListTracker {
                 }
                 None => ListItemType::Plain,
             };
-            let text = ListText::new(item_frame.buffers.text, clean);
+            let text = ListText::new(item_frame.buffers.into_text(), clean);
             let (is_task, is_complete) = match &item_type {
                 ListItemType::Task(task) => {
                     (true, task.status().kind().is_complete())
@@ -319,6 +319,15 @@ impl SubTaskCompletion {
     }
 }
 
+impl Default for SubTaskCompletion {
+    /// Conservative fallback: unknown or default completion state is
+    /// fail-closed.
+    #[inline]
+    fn default() -> Self {
+        Self::HasIncomplete
+    }
+}
+
 /// Dual write target for an active item's text.
 ///
 /// `text` receives everything and becomes display text; `scan` mirrors it but
@@ -327,8 +336,8 @@ impl SubTaskCompletion {
 /// direct field access inside this module; [`super::marker`] mutates the pair
 /// only through these methods.
 pub(super) struct ItemBuffers {
-    pub(super) text: String,
-    pub(super) scan: String,
+    text: String,
+    scan: String,
 }
 
 impl ItemBuffers {
@@ -355,6 +364,32 @@ impl ItemBuffers {
         self.scan.push_str(text);
     }
 
+    /// Appends code text exclusively to the display text buffer.
+    pub(super) fn push_code(&mut self, text: &str) {
+        self.text.push_str(text);
+    }
+
+    /// Appends a character exclusively to the scan buffer.
+    pub(super) fn push_scan_char(&mut self, ch: char) {
+        self.scan.push(ch);
+    }
+
+    /// Returns a reference to the display text.
+    pub(super) fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Returns a reference to the scan buffer text.
+    #[cfg(test)]
+    pub(super) fn scan(&self) -> &str {
+        &self.scan
+    }
+
+    /// Returns `true` if the scan buffer is empty.
+    pub(super) fn is_scan_empty(&self) -> bool {
+        self.scan.is_empty()
+    }
+
     /// Separates a block-level child from prior content in both buffers.
     ///
     /// Writes a newline unless the buffer is empty or already newline-
@@ -379,6 +414,11 @@ impl ItemBuffers {
     /// Takes the scan buffer's contents, leaving it empty.
     fn take_scan(&mut self) -> String {
         std::mem::take(&mut self.scan)
+    }
+
+    /// Consumes the buffer pair, returning the display text.
+    fn into_text(self) -> String {
+        self.text
     }
 }
 
@@ -422,11 +462,11 @@ impl ItemFrame {
     }
 
     fn push_scan_char(&mut self, ch: char) {
-        self.buffers.scan.push(ch);
+        self.buffers.push_scan_char(ch);
     }
 
     fn push_code(&mut self, text: &str) {
-        self.buffers.text.push_str(text);
+        self.buffers.push_code(text);
     }
 }
 

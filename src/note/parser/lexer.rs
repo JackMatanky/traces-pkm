@@ -698,15 +698,18 @@ mod tests {
                 tokens.first().expect("token 0").value(),
                 &ItemToken::Priority(TaskPriority::Highest)
             );
+            assert_eq!(tokens.first().expect("token 0").span(), 5..9);
             assert_eq!(
                 tokens.get(1).expect("token 1").value(),
                 &ItemToken::Tag(Tag::parse("#task").unwrap())
             );
+            assert_eq!(tokens.get(1).expect("token 1").span(), 10..15);
             let date_val = DateValue::parse_iso("2025-01-15").unwrap();
             assert_eq!(
                 tokens.get(2).expect("token 2").value(),
                 &ItemToken::Date(TaskDate::new(TaskDateType::Due, date_val))
             );
+            assert_eq!(tokens.get(2).expect("token 2").span(), 16..31);
             let key = FieldKey::try_new("priority").unwrap();
             assert_eq!(
                 tokens.get(3).expect("token 3").value(),
@@ -716,6 +719,7 @@ mod tests {
                     FieldForm::Wrapped
                 ))
             );
+            assert_eq!(tokens.get(3).expect("token 3").span(), 32..49);
         }
     }
 }

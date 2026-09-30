@@ -234,13 +234,6 @@ impl MarkerAccumulator {
     }
 
     /// Buffers incoming text while the leading marker is still undecided.
-    // The remaining expect asserts an invariant upheld by construction
-    // (`take_bytes` is bounded by the 8-byte buffer's remaining space); a
-    // violation is an implementation bug, not input-dependent.
-    #[expect(
-        clippy::expect_used,
-        reason = "invariant violations indicate bugs, not degraded scanning"
-    )]
     fn push_buffering(
         &mut self,
         text: &str,
@@ -281,9 +274,7 @@ impl MarkerAccumulator {
         {
             *slot = *byte;
         }
-        *len = len.saturating_add(u8::try_from(take_bytes).expect(
-            "take_bytes is bounded by the 8-byte buffer's remaining space",
-        ));
+        *len = len.saturating_add(u8::try_from(take_bytes).unwrap_or(0));
 
         let candidate = Self::buffered_str(buf, *len);
         match scan_marker_prefix(candidate) {
@@ -315,21 +306,10 @@ impl MarkerAccumulator {
     }
 
     /// Returns the buffered marker bytes as a string slice.
-    // Both expects assert invariants upheld by construction: `len` is bounded
-    // by the 8-byte buffer, and the bytes originate from `&str` slices split
-    // only at char boundaries. Violations are implementation bugs, not
-    // input-dependent.
-    #[expect(
-        clippy::expect_used,
-        reason = "invariant violations indicate bugs, not degraded scanning"
-    )]
     fn buffered_str(buf: &[u8; 8], len: u8) -> &str {
-        let slice = buf
-            .get(..usize::from(len))
-            .expect("len is bounded by the 8-byte buffer");
-        std::str::from_utf8(slice).expect(
-            "buffered bytes originate from &str slices at char boundaries",
-        )
+        let clamped = usize::from(len.min(8));
+        let slice = buf.get(..clamped).unwrap_or(buf.as_slice());
+        std::str::from_utf8(slice).unwrap_or_default()
     }
 
     /// Flushes buffered bytes plus `trailing` to both buffers and records the
@@ -375,8 +355,7 @@ impl MarkerAccumulator {
             *self = Self::Decided(ItemMarker::Marked(scan.symbol()));
             return;
         }
-        buffers.append_verbatim(buffered);
-        *self = Self::Decided(ItemMarker::Plain);
+        self.flush_and_decide_plain("", buffers, false);
     }
 }
 
@@ -527,8 +506,8 @@ mod tests {
             acc.push_text("hello world", &mut buffers, false);
             assert!(!acc.is_marked());
             assert_eq!(acc.marker_symbol(), None);
-            assert_eq!(buffers.text, "hello world");
-            assert_eq!(buffers.scan, "hello world");
+            assert_eq!(buffers.text(), "hello world");
+            assert_eq!(buffers.scan(), "hello world");
         }
 
         #[test]
@@ -538,8 +517,8 @@ mod tests {
             acc.push_text("[x] hello", &mut buffers, false);
             assert!(acc.is_marked());
             assert_eq!(acc.marker_symbol(), Some('x'));
-            assert_eq!(buffers.text, "hello");
-            assert_eq!(buffers.scan, "hello");
+            assert_eq!(buffers.text(), "hello");
+            assert_eq!(buffers.scan(), "hello");
         }
 
         #[test]
@@ -547,16 +526,16 @@ mod tests {
             let mut acc = MarkerAccumulator::new();
             let mut buffers = ItemBuffers::new();
             acc.push_text("[", &mut buffers, false);
-            assert_eq!(buffers.text, "");
+            assert_eq!(buffers.text(), "");
             acc.push_text("x", &mut buffers, false);
-            assert_eq!(buffers.text, "");
+            assert_eq!(buffers.text(), "");
             acc.push_text("]", &mut buffers, false);
-            assert_eq!(buffers.text, "");
+            assert_eq!(buffers.text(), "");
             acc.push_text(" task", &mut buffers, false);
             assert!(acc.is_marked());
             assert_eq!(acc.marker_symbol(), Some('x'));
-            assert_eq!(buffers.text, "task");
-            assert_eq!(buffers.scan, "task");
+            assert_eq!(buffers.text(), "task");
+            assert_eq!(buffers.scan(), "task");
         }
 
         #[test]
@@ -564,12 +543,12 @@ mod tests {
             let mut acc = MarkerAccumulator::new();
             let mut buffers = ItemBuffers::new();
             acc.push_text("[✓", &mut buffers, false);
-            assert_eq!(buffers.text, "");
+            assert_eq!(buffers.text(), "");
             acc.push_text("] done", &mut buffers, false);
             assert!(acc.is_marked());
             assert_eq!(acc.marker_symbol(), Some('✓'));
-            assert_eq!(buffers.text, "done");
-            assert_eq!(buffers.scan, "done");
+            assert_eq!(buffers.text(), "done");
+            assert_eq!(buffers.scan(), "done");
         }
 
         #[test]
@@ -577,12 +556,12 @@ mod tests {
             let mut acc = MarkerAccumulator::new();
             let mut buffers = ItemBuffers::new();
             acc.push_text("[x]", &mut buffers, false);
-            assert_eq!(buffers.text, "");
+            assert_eq!(buffers.text(), "");
             acc.resolve_at_line_end(&mut buffers);
             assert!(acc.is_marked());
             assert_eq!(acc.marker_symbol(), Some('x'));
-            assert_eq!(buffers.text, "");
-            assert_eq!(buffers.scan, "");
+            assert_eq!(buffers.text(), "");
+            assert_eq!(buffers.scan(), "");
         }
 
         #[test]
@@ -590,12 +569,12 @@ mod tests {
             let mut acc = MarkerAccumulator::new();
             let mut buffers = ItemBuffers::new();
             acc.push_text("[x", &mut buffers, false);
-            assert_eq!(buffers.text, "");
+            assert_eq!(buffers.text(), "");
             acc.resolve_at_line_end(&mut buffers);
             assert!(!acc.is_marked());
             assert_eq!(acc.marker_symbol(), None);
-            assert_eq!(buffers.text, "[x");
-            assert_eq!(buffers.scan, "[x");
+            assert_eq!(buffers.text(), "[x");
+            assert_eq!(buffers.scan(), "[x");
         }
 
         #[test]
@@ -603,12 +582,12 @@ mod tests {
             let mut acc = MarkerAccumulator::new();
             let mut buffers = ItemBuffers::new();
             acc.push_text("[", &mut buffers, false);
-            assert_eq!(buffers.text, "");
+            assert_eq!(buffers.text(), "");
             acc.reject(&mut buffers);
             assert!(!acc.is_marked());
             assert_eq!(acc.marker_symbol(), None);
-            assert_eq!(buffers.text, "[");
-            assert_eq!(buffers.scan, "[");
+            assert_eq!(buffers.text(), "[");
+            assert_eq!(buffers.scan(), "[");
         }
 
         #[test]
@@ -618,8 +597,8 @@ mod tests {
             acc.push_text("[xx] foo", &mut buffers, false);
             assert!(!acc.is_marked());
             assert_eq!(acc.marker_symbol(), None);
-            assert_eq!(buffers.text, "[xx] foo");
-            assert_eq!(buffers.scan, "[xx] foo");
+            assert_eq!(buffers.text(), "[xx] foo");
+            assert_eq!(buffers.scan(), "[xx] foo");
         }
     }
 }

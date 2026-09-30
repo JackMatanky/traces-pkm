@@ -318,8 +318,8 @@ mod tests {
         ) -> Result<Self::Atom, QueryBuilderError> {
             match tokens.next() {
                 Some(spanned) => {
-                    let span = spanned.span();
-                    match spanned.into_value() {
+                    let (value, span) = spanned.into_parts();
+                    match value {
                         TestToken::Atom(atom) => Ok(atom),
                         TestToken::Control(_) => Err(self
                             .syntax_error(input, span, "an atom")
