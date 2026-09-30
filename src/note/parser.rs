@@ -141,34 +141,9 @@ enum BlockContext {
 /// Inline fields list flushed from a list item.
 type FlushedFieldsList = Vec<(FieldKey, NoteFieldValue)>;
 
-/// Metadata flushed from a closed list item's scan buffer.
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct FlushedMetadata {
-    fields: FlushedFieldsList,
-    tags: Vec<Tag>,
-}
-
-impl FlushedMetadata {
-    /// Creates a new flushed metadata record.
-    #[inline]
-    #[must_use]
-    pub(super) const fn new(
-        fields: Vec<(FieldKey, NoteFieldValue)>,
-        tags: Vec<Tag>,
-    ) -> Self {
-        Self {
-            fields,
-            tags,
-        }
-    }
-
-    /// Decomposes the record into its inner field and tag collections.
-    #[inline]
-    #[must_use]
-    pub(super) fn into_parts(self) -> (FlushedFieldsList, Vec<Tag>) {
-        (self.fields, self.tags)
-    }
-}
+/// Metadata flushed from a closed list item's scan buffer: inline fields in
+/// document order plus the tags scanned from the same text.
+type FlushedMetadata = (FlushedFieldsList, Vec<Tag>);
 
 /// State accumulated while walking Markdown events for one note.
 struct ParserContext<'a> {
@@ -428,8 +403,7 @@ impl<'a> ParserContext<'a> {
     /// Folds a flushed item's inline fields and tags into this context's
     /// document-order streams, if any were flushed.
     fn extend_from_flush(&mut self, flushed: Option<FlushedMetadata>) {
-        if let Some(metadata) = flushed {
-            let (fields, tags) = metadata.into_parts();
+        if let Some((fields, tags)) = flushed {
             for (key, value) in fields {
                 self.inline_fields.entry(key).or_default().push(value);
             }
@@ -1635,25 +1609,6 @@ mod tests {
                 items.get(1).expect("item 1").kind(),
                 ListItemType::Task(_)
             ));
-        }
-    }
-
-    mod flushed_metadata {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn decomposes_into_field_and_tag_collections() {
-            let key = FieldKey::try_new("status").unwrap();
-            let val = NoteFieldValue::String("active".to_owned());
-            let tag = Tag::parse("#urgent").unwrap();
-            let metadata =
-                FlushedMetadata::new(vec![(key.clone(), val.clone())], vec![
-                    tag.clone(),
-                ]);
-
-            assert_eq!(metadata.into_parts(), (vec![(key, val)], vec![tag]));
         }
     }
 }
