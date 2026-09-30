@@ -8,6 +8,7 @@
 //! frequently the item's line terminator (which never reaches the parser as a
 //! [`pulldown_cmark::Event::Text`] chunk), [`scan_marker_at_line_end`] treats
 //! end-of-input as the trailing whitespace.
+use super::list::ItemBuffers;
 use crate::DelimiterType;
 
 /// Opening bracket character for task markers (`[`).
@@ -143,21 +144,6 @@ const fn is_marker_whitespace(ch: char) -> bool {
     matches!(ch, ' ' | '\t' | '\n' | '\u{0B}' | '\u{0C}' | '\r')
 }
 
-/// Appends `text` to the display buffer and, outside code blocks, to the scan
-/// buffer.
-#[inline]
-fn append_buffers(
-    text: &str,
-    text_buffer: &mut String,
-    scan_buffer: &mut String,
-    in_code_block: bool,
-) {
-    text_buffer.push_str(text);
-    if !in_code_block {
-        scan_buffer.push_str(text);
-    }
-}
-
 /// Returns the largest character-start offset in `text` not exceeding `max`.
 fn char_boundary_le(text: &str, max: usize) -> usize {
     let mut boundary = 0;
@@ -221,30 +207,23 @@ impl MarkerAccumulator {
 
     /// Feeds incoming text into the accumulator.
     ///
-    /// Marker characters are withheld in `buf` and never written to
-    /// `text_buffer` or `scan_buffer`. Once decided as `Marked`, only
-    /// subsequent text is appended. If rejected, buffered bytes are flushed and
-    /// `text` is appended.
+    /// Marker characters are withheld in `buf` and never written to the
+    /// buffers. Once decided as `Marked`, only subsequent text is appended. If
+    /// rejected, buffered bytes are flushed and `text` is appended.
     pub(super) fn push_text(
         &mut self,
         text: &str,
-        text_buffer: &mut String,
-        scan_buffer: &mut String,
+        buffers: &mut ItemBuffers,
         in_code_block: bool,
     ) {
         match self {
             Self::Decided(_) => {
-                append_buffers(text, text_buffer, scan_buffer, in_code_block);
+                buffers.append(text, in_code_block);
             }
             Self::Buffering {
                 ..
             } => {
-                self.push_buffering(
-                    text,
-                    text_buffer,
-                    scan_buffer,
-                    in_code_block,
-                );
+                self.push_buffering(text, buffers, in_code_block);
             }
         }
     }
@@ -260,8 +239,7 @@ impl MarkerAccumulator {
     fn push_buffering(
         &mut self,
         text: &str,
-        text_buffer: &mut String,
-        scan_buffer: &mut String,
+        buffers: &mut ItemBuffers,
         in_code_block: bool,
     ) {
         let Self::Buffering {
@@ -274,7 +252,7 @@ impl MarkerAccumulator {
 
         if *len == 0 && !text.starts_with('[') {
             *self = Self::Decided(ItemMarker::Plain);
-            append_buffers(text, text_buffer, scan_buffer, in_code_block);
+            buffers.append(text, in_code_block);
             return;
         }
 
@@ -287,12 +265,7 @@ impl MarkerAccumulator {
         };
 
         if take_bytes == 0 {
-            self.flush_and_decide_plain(
-                text,
-                text_buffer,
-                scan_buffer,
-                in_code_block,
-            );
+            self.flush_and_decide_plain(text, buffers, in_code_block);
             return;
         }
 
@@ -311,27 +284,16 @@ impl MarkerAccumulator {
         match scan_marker_prefix(candidate) {
             MarkerPrefix::Complete(scan) => {
                 let symbol = scan.symbol();
-                append_buffers(
-                    scan.remainder(),
-                    text_buffer,
-                    scan_buffer,
-                    in_code_block,
-                );
+                buffers.append(scan.remainder(), in_code_block);
                 if let Some(rest) = text.get(take_bytes..) {
-                    append_buffers(
-                        rest,
-                        text_buffer,
-                        scan_buffer,
-                        in_code_block,
-                    );
+                    buffers.append(rest, in_code_block);
                 }
                 *self = Self::Decided(ItemMarker::Marked(symbol));
             }
             MarkerPrefix::Rejected => {
                 self.flush_and_decide_plain(
                     text.get(take_bytes..).unwrap_or_default(),
-                    text_buffer,
-                    scan_buffer,
+                    buffers,
                     in_code_block,
                 );
             }
@@ -339,8 +301,7 @@ impl MarkerAccumulator {
                 if take_bytes < text.len() {
                     self.flush_and_decide_plain(
                         text.get(take_bytes..).unwrap_or_default(),
-                        text_buffer,
-                        scan_buffer,
+                        buffers,
                         in_code_block,
                     );
                 }
@@ -371,8 +332,7 @@ impl MarkerAccumulator {
     fn flush_and_decide_plain(
         &mut self,
         trailing: &str,
-        text_buffer: &mut String,
-        scan_buffer: &mut String,
+        buffers: &mut ItemBuffers,
         in_code_block: bool,
     ) {
         if let Self::Buffering {
@@ -381,33 +341,23 @@ impl MarkerAccumulator {
         } = self
         {
             let buffered = Self::buffered_str(buf, *len);
-            text_buffer.push_str(buffered);
-            scan_buffer.push_str(buffered);
+            buffers.append_verbatim(buffered);
         }
-        append_buffers(trailing, text_buffer, scan_buffer, in_code_block);
+        buffers.append(trailing, in_code_block);
         *self = Self::Decided(ItemMarker::Plain);
     }
 
-    /// Rejects any pending marker, flushing buffered bytes to `text_buffer` and
-    /// `scan_buffer`.
+    /// Rejects any pending marker, flushing buffered bytes to both buffers.
     ///
     /// While buffering, no code-block text can have been appended: any text not
     /// starting with `[` decides the accumulator as plain immediately, and a
     /// code fence never starts with `[`.
-    pub(super) fn reject(
-        &mut self,
-        text_buffer: &mut String,
-        scan_buffer: &mut String,
-    ) {
-        self.flush_and_decide_plain("", text_buffer, scan_buffer, false);
+    pub(super) fn reject(&mut self, buffers: &mut ItemBuffers) {
+        self.flush_and_decide_plain("", buffers, false);
     }
 
     /// Resolves any pending marker using line-end semantics.
-    pub(super) fn resolve_at_line_end(
-        &mut self,
-        text_buffer: &mut String,
-        scan_buffer: &mut String,
-    ) {
+    pub(super) fn resolve_at_line_end(&mut self, buffers: &mut ItemBuffers) {
         let Self::Buffering {
             buf,
             len,
@@ -420,8 +370,7 @@ impl MarkerAccumulator {
             *self = Self::Decided(ItemMarker::Marked(scan.symbol()));
             return;
         }
-        text_buffer.push_str(buffered);
-        scan_buffer.push_str(buffered);
+        buffers.append_verbatim(buffered);
         *self = Self::Decided(ItemMarker::Plain);
     }
 }
@@ -568,97 +517,90 @@ mod tests {
         #[test]
         fn starts_plain_on_non_bracket() {
             let mut acc = MarkerAccumulator::new();
-            let mut tb = String::new();
-            let mut sb = String::new();
-            acc.push_text("hello world", &mut tb, &mut sb, false);
+            let mut buffers = ItemBuffers::new();
+            acc.push_text("hello world", &mut buffers, false);
             assert!(!acc.is_marked());
             assert_eq!(acc.marker_symbol(), None);
-            assert_eq!(tb, "hello world");
-            assert_eq!(sb, "hello world");
+            assert_eq!(buffers.text, "hello world");
+            assert_eq!(buffers.scan, "hello world");
         }
 
         #[test]
         fn recognizes_marker_in_single_chunk() {
             let mut acc = MarkerAccumulator::new();
-            let mut tb = String::new();
-            let mut sb = String::new();
-            acc.push_text("[x] hello", &mut tb, &mut sb, false);
+            let mut buffers = ItemBuffers::new();
+            acc.push_text("[x] hello", &mut buffers, false);
             assert!(acc.is_marked());
             assert_eq!(acc.marker_symbol(), Some('x'));
-            assert_eq!(tb, "hello");
-            assert_eq!(sb, "hello");
+            assert_eq!(buffers.text, "hello");
+            assert_eq!(buffers.scan, "hello");
         }
 
         #[test]
         fn recognizes_marker_split_across_chunks() {
             let mut acc = MarkerAccumulator::new();
-            let mut tb = String::new();
-            let mut sb = String::new();
-            acc.push_text("[", &mut tb, &mut sb, false);
-            assert_eq!(tb, "");
-            acc.push_text("x", &mut tb, &mut sb, false);
-            assert_eq!(tb, "");
-            acc.push_text("]", &mut tb, &mut sb, false);
-            assert_eq!(tb, "");
-            acc.push_text(" task", &mut tb, &mut sb, false);
+            let mut buffers = ItemBuffers::new();
+            acc.push_text("[", &mut buffers, false);
+            assert_eq!(buffers.text, "");
+            acc.push_text("x", &mut buffers, false);
+            assert_eq!(buffers.text, "");
+            acc.push_text("]", &mut buffers, false);
+            assert_eq!(buffers.text, "");
+            acc.push_text(" task", &mut buffers, false);
             assert!(acc.is_marked());
             assert_eq!(acc.marker_symbol(), Some('x'));
-            assert_eq!(tb, "task");
-            assert_eq!(sb, "task");
+            assert_eq!(buffers.text, "task");
+            assert_eq!(buffers.scan, "task");
         }
 
         #[test]
         fn recognizes_bare_marker_at_line_end() {
             let mut acc = MarkerAccumulator::new();
-            let mut tb = String::new();
-            let mut sb = String::new();
-            acc.push_text("[x]", &mut tb, &mut sb, false);
-            assert_eq!(tb, "");
-            acc.resolve_at_line_end(&mut tb, &mut sb);
+            let mut buffers = ItemBuffers::new();
+            acc.push_text("[x]", &mut buffers, false);
+            assert_eq!(buffers.text, "");
+            acc.resolve_at_line_end(&mut buffers);
             assert!(acc.is_marked());
             assert_eq!(acc.marker_symbol(), Some('x'));
-            assert_eq!(tb, "");
-            assert_eq!(sb, "");
+            assert_eq!(buffers.text, "");
+            assert_eq!(buffers.scan, "");
         }
 
         #[test]
         fn rejects_unclosed_marker_at_line_end() {
             let mut acc = MarkerAccumulator::new();
-            let mut tb = String::new();
-            let mut sb = String::new();
-            acc.push_text("[x", &mut tb, &mut sb, false);
-            assert_eq!(tb, "");
-            acc.resolve_at_line_end(&mut tb, &mut sb);
+            let mut buffers = ItemBuffers::new();
+            acc.push_text("[x", &mut buffers, false);
+            assert_eq!(buffers.text, "");
+            acc.resolve_at_line_end(&mut buffers);
             assert!(!acc.is_marked());
             assert_eq!(acc.marker_symbol(), None);
-            assert_eq!(tb, "[x");
-            assert_eq!(sb, "[x");
+            assert_eq!(buffers.text, "[x");
+            assert_eq!(buffers.scan, "[x");
         }
 
         #[test]
         fn rejects_pending_marker_on_reject() {
             let mut acc = MarkerAccumulator::new();
-            let mut tb = String::new();
-            let mut sb = String::new();
-            acc.push_text("[", &mut tb, &mut sb, false);
-            assert_eq!(tb, "");
-            acc.reject(&mut tb, &mut sb);
+            let mut buffers = ItemBuffers::new();
+            acc.push_text("[", &mut buffers, false);
+            assert_eq!(buffers.text, "");
+            acc.reject(&mut buffers);
             assert!(!acc.is_marked());
             assert_eq!(acc.marker_symbol(), None);
-            assert_eq!(tb, "[");
-            assert_eq!(sb, "[");
+            assert_eq!(buffers.text, "[");
+            assert_eq!(buffers.scan, "[");
         }
 
         #[test]
         fn rejects_invalid_marker_immediately() {
             let mut acc = MarkerAccumulator::new();
-            let mut tb = String::new();
-            let mut sb = String::new();
-            acc.push_text("[xx] foo", &mut tb, &mut sb, false);
+            let mut buffers = ItemBuffers::new();
+            acc.push_text("[xx] foo", &mut buffers, false);
             assert!(!acc.is_marked());
             assert_eq!(acc.marker_symbol(), None);
-            assert_eq!(tb, "[xx] foo");
-            assert_eq!(sb, "[xx] foo");
+            assert_eq!(buffers.text, "[xx] foo");
+            assert_eq!(buffers.scan, "[xx] foo");
         }
     }
 }

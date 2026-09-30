@@ -38,8 +38,8 @@ impl ListTracker {
         let Some(item) = self.item_stack.last_mut() else {
             return false;
         };
-        if !item.scan_buffer.is_empty() {
-            item.scan_buffer.push('\n');
+        if !item.buffers.scan.is_empty() {
+            item.buffers.scan.push('\n');
         }
         true
     }
@@ -91,10 +91,10 @@ impl ListTracker {
         // trailing-whitespace text chunk ever arriving.
         self.resolve_pending_marker();
         let item = self.item_stack.last_mut()?;
-        if item.scan_buffer.is_empty() {
+        if item.buffers.scan.is_empty() {
             return None;
         }
-        let text = std::mem::take(&mut item.scan_buffer);
+        let text = item.buffers.take_scan();
         let shorthands = if item.marker.is_marked() {
             super::lexer::TaskShorthands::Include
         } else {
@@ -153,8 +153,7 @@ impl ListTracker {
         let is_ordered =
             self.list_stack.last().is_some_and(|frame| frame.is_ordered);
         self.item_stack.push(ItemFrame {
-            text_buffer: String::new(),
-            scan_buffer: String::new(),
+            buffers: ItemBuffers::new(),
             fields: IndexMap::new(),
             tags: Vec::new(),
             line,
@@ -186,15 +185,15 @@ impl ListTracker {
             // One tokenization pass feeds priority, date, and clean-text
             // extraction.
             let tokens = super::lexer::tokenize_item_text(
-                &item_frame.text_buffer,
+                &item_frame.buffers.text,
                 super::lexer::TaskShorthands::Include,
             );
             let clean = super::task::clean_task_text(
-                &item_frame.text_buffer,
+                &item_frame.buffers.text,
                 &tokens,
                 tag_filters,
             );
-            let text = ListText::new(item_frame.text_buffer, clean);
+            let text = ListText::new(item_frame.buffers.text, clean);
             let item_type = match item_frame.marker.marker_symbol() {
                 Some(symbol) => {
                     let status = statuses.resolve(symbol);
@@ -333,14 +332,57 @@ impl SubTaskCompletion {
     }
 }
 
+/// Dual write target for an active item's text.
+///
+/// `text` receives everything and becomes display text; `scan` mirrors it but
+/// excludes code-span and code-block text so inline field/tag scanning never
+/// sees code. Asymmetric writes (scan-only separators, text-only code) stay
+/// direct field access inside this module; [`super::marker`] mutates the pair
+/// only through these methods.
+pub(super) struct ItemBuffers {
+    pub(super) text: String,
+    pub(super) scan: String,
+}
+
+impl ItemBuffers {
+    pub(super) const fn new() -> Self {
+        Self {
+            text: String::new(),
+            scan: String::new(),
+        }
+    }
+
+    /// Appends `text` to `text`, and to `scan` unless code is hidden.
+    pub(super) fn append(&mut self, text: &str, code_hidden: bool) {
+        self.text.push_str(text);
+        if !code_hidden {
+            self.scan.push_str(text);
+        }
+    }
+
+    /// Appends `text` to both buffers unconditionally.
+    ///
+    /// Only withheld marker-byte flushes use this; those bytes are never code.
+    pub(super) fn append_verbatim(&mut self, text: &str) {
+        self.text.push_str(text);
+        self.scan.push_str(text);
+    }
+
+    /// Writes the line terminator to both buffers.
+    fn push_break(&mut self) {
+        self.text.push('\n');
+        self.scan.push('\n');
+    }
+
+    /// Takes the scan buffer's contents, leaving it empty.
+    fn take_scan(&mut self) -> String {
+        std::mem::take(&mut self.scan)
+    }
+}
+
 /// An active list item frame on the parser stack.
 struct ItemFrame {
-    text_buffer: String,
-    /// Mirrors `text_buffer` but excludes code text.
-    ///
-    /// [`ListTracker::flush_active_item_scan_buffer`] lexes this buffer for
-    /// inline fields and tags.
-    scan_buffer: String,
+    buffers: ItemBuffers,
     /// Inline fields lexed from this item's own text.
     ///
     /// Kept separate from child items' fields so [`ListItem::fields`] resolves
@@ -361,36 +403,28 @@ struct ItemFrame {
 
 impl ItemFrame {
     fn push_text(&mut self, text: &str, in_code_block: bool) {
-        self.marker.push_text(
-            text,
-            &mut self.text_buffer,
-            &mut self.scan_buffer,
-            in_code_block,
-        );
+        self.marker.push_text(text, &mut self.buffers, in_code_block);
     }
 
     fn push_break(&mut self) {
-        self.marker
-            .resolve_at_line_end(&mut self.text_buffer, &mut self.scan_buffer);
-        self.text_buffer.push('\n');
-        self.scan_buffer.push('\n');
+        self.marker.resolve_at_line_end(&mut self.buffers);
+        self.buffers.push_break();
     }
 
     fn reject_marker(&mut self) {
-        self.marker.reject(&mut self.text_buffer, &mut self.scan_buffer);
+        self.marker.reject(&mut self.buffers);
     }
 
     fn resolve_pending_marker(&mut self) {
-        self.marker
-            .resolve_at_line_end(&mut self.text_buffer, &mut self.scan_buffer);
+        self.marker.resolve_at_line_end(&mut self.buffers);
     }
 
     fn push_scan_char(&mut self, ch: char) {
-        self.scan_buffer.push(ch);
+        self.buffers.scan.push(ch);
     }
 
     fn push_code(&mut self, text: &str) {
-        self.text_buffer.push_str(text);
+        self.buffers.text.push_str(text);
     }
 }
 

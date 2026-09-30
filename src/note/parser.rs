@@ -976,9 +976,9 @@ mod tests {
         #[test]
         fn preserves_inline_code_in_list_item_text() {
             // Arrange: inline code inside a list item must appear in the
-            // item's display text (text_buffer) but NOT in the scan
+            // item's display text (buffers.text) but NOT in the scan
             // buffer (for field/tag scanning). The push_code method
-            // writes only to text_buffer.
+            // writes only to buffers.text.
             let input = "- Item with `inline code` here\n";
             let note = parse(input);
 
