@@ -141,6 +141,8 @@ const fn is_marker_whitespace(ch: char) -> bool {
     matches!(ch, ' ' | '\t' | '\n' | '\u{0B}' | '\u{0C}' | '\r')
 }
 
+/// Appends `text` to the display buffer and, outside code blocks, to the scan
+/// buffer.
 #[inline]
 fn append_buffers(
     text: &str,
@@ -154,6 +156,7 @@ fn append_buffers(
     }
 }
 
+/// Returns the largest character-start offset in `text` not exceeding `max`.
 fn char_boundary_le(text: &str, max: usize) -> usize {
     let mut boundary = 0;
     for (offset, _) in text.char_indices() {
@@ -244,6 +247,15 @@ impl MarkerAccumulator {
         }
     }
 
+    /// Buffers incoming text while the leading marker is still undecided.
+    // The three expects below assert scan-buffer invariants that are upheld by
+    // construction (`take_bytes` is bounded by both the text and the buffer's
+    // remaining space); a violation is an implementation bug, not
+    // input-dependent.
+    #[expect(
+        clippy::expect_used,
+        reason = "invariant violations indicate bugs, not degraded scanning"
+    )]
     fn push_buffering(
         &mut self,
         text: &str,
@@ -284,15 +296,19 @@ impl MarkerAccumulator {
         }
 
         let next_len = current_len.saturating_add(take_bytes);
-        if let (Some(target), Some(src)) = (
-            buf.get_mut(current_len..next_len),
-            text.as_bytes().get(..take_bytes),
-        ) {
-            target.copy_from_slice(src);
-        }
-        if let Ok(added) = u8::try_from(take_bytes) {
-            *len = len.saturating_add(added);
-        }
+        // `take_bytes` never exceeds `remaining`, so the slice always fits in
+        // the 8-byte buffer; a violation is a bug, not degraded scanning.
+        let target = buf
+            .get_mut(current_len..next_len)
+            .expect("take_bytes is bounded by the buffer's remaining space");
+        let src = text
+            .as_bytes()
+            .get(..take_bytes)
+            .expect("take_bytes is bounded by text.len()");
+        target.copy_from_slice(src);
+        *len = len.saturating_add(u8::try_from(take_bytes).expect(
+            "take_bytes is bounded by the 8-byte buffer's remaining space",
+        ));
 
         let candidate = buf
             .get(..usize::from(*len))
@@ -338,6 +354,8 @@ impl MarkerAccumulator {
         }
     }
 
+    /// Flushes buffered bytes plus `trailing` to both buffers and records the
+    /// item as plain text.
     fn flush_and_decide_plain(
         &mut self,
         trailing: &str,

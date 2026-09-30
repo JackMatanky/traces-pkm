@@ -10,7 +10,7 @@
 //! filtering ([`FilterAtom`](super::filter::FilterAtom)) to reuse identical
 //! operator semantics, associativity, and diagnostic span reporting.
 use crate::{
-    LexTokenStream, Spanned,
+    Spanned, SpannedTokenStream,
     query::error::{QueryBuilderError, QuerySyntaxError},
 };
 
@@ -73,7 +73,7 @@ pub(super) trait AtomParser {
     fn parse_atom(
         &self,
         input: &str,
-        tokens: &mut LexTokenStream<Spanned<Self::Token>>,
+        tokens: &mut SpannedTokenStream<Self::Token>,
     ) -> Result<Self::Atom, QueryBuilderError>;
 
     /// Builds a span-aware syntax diagnostic for this domain.
@@ -87,7 +87,7 @@ pub(super) trait AtomParser {
 
 struct BooleanExprParser<'input, G: AtomParser> {
     input: &'input str,
-    tokens: LexTokenStream<Spanned<G::Token>>,
+    tokens: SpannedTokenStream<G::Token>,
     grammar: G,
 }
 
@@ -272,7 +272,7 @@ impl<'input, G: AtomParser> BooleanExprParser<'input, G> {
 /// [`Syntax`]: QueryBuilderError::Syntax
 pub(super) fn parse_boolean_expr<G>(
     input: &str,
-    tokens: LexTokenStream<Spanned<G::Token>>,
+    tokens: SpannedTokenStream<G::Token>,
     grammar: G,
 ) -> Result<BooleanExpr<G::Atom>, QueryBuilderError>
 where
@@ -314,7 +314,7 @@ mod tests {
         fn parse_atom(
             &self,
             input: &str,
-            tokens: &mut LexTokenStream<Spanned<Self::Token>>,
+            tokens: &mut SpannedTokenStream<Self::Token>,
         ) -> Result<Self::Atom, QueryBuilderError> {
             match tokens.next() {
                 Some(spanned) => {
@@ -365,7 +365,7 @@ mod tests {
 
             let parsed = parse_boolean_expr(
                 "a or b and not not c and d",
-                LexTokenStream::new(vec![
+                SpannedTokenStream::new(vec![
                     token(Atom("a"), 0),
                     token(Control(Operator(Or)), 2),
                     token(Atom("b"), 5),
@@ -403,7 +403,7 @@ mod tests {
             assert_eq!(
                 parse_boolean_expr(
                     "(a or b) and c",
-                    LexTokenStream::new(vec![
+                    SpannedTokenStream::new(vec![
                         token(Control(LeftParen), 0),
                         token(Atom("a"), 1),
                         token(Control(Operator(Or)), 3),
@@ -447,7 +447,7 @@ mod tests {
             assert!(
                 parse_boolean_expr(
                     "fixture",
-                    LexTokenStream::new(tokens),
+                    SpannedTokenStream::new(tokens),
                     TestGrammar
                 )
                 .is_err()

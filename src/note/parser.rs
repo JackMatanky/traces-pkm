@@ -22,7 +22,8 @@
 //! - [`marker`]: custom task marker scanner that recognizes `[<symbol>]`
 //!   markers at item-leading positions with pulldown-cmark-compatible
 //!   whitespace rules.
-//! - [`tag`]: [`tag::scan_tags`] extracts Markdown tags from text buffers.
+//! - [`tag`]: [`tag::scan_tags`] extracts Markdown tags from text buffers,
+//!   including tags inside inline field values.
 //! - [`task`]: [`task::extract_task_dates`], [`task::extract_task_priority`],
 //!   and [`task::clean_task_text`] handle task shorthand dates, priorities, and
 //!   display text normalization.
@@ -161,44 +162,11 @@ impl FlushedMetadata {
         }
     }
 
-    /// Returns a slice of the flushed inline fields.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "accessors used in unit suite")
-    )]
-    #[inline]
-    #[must_use]
-    pub(super) fn fields(&self) -> &[(FieldKey, NoteFieldValue)] {
-        &self.fields
-    }
-
-    /// Returns a slice of the flushed tags.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "accessors used in unit suite")
-    )]
-    #[inline]
-    #[must_use]
-    pub(super) fn tags(&self) -> &[Tag] {
-        &self.tags
-    }
-
     /// Decomposes the record into its inner field and tag collections.
     #[inline]
     #[must_use]
     pub(super) fn into_parts(self) -> (FlushedFieldsList, Vec<Tag>) {
         (self.fields, self.tags)
-    }
-
-    /// Returns `true` if no fields and no tags were flushed.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "accessors used in unit suite")
-    )]
-    #[inline]
-    #[must_use]
-    pub(super) fn is_empty(&self) -> bool {
-        self.fields.is_empty() && self.tags.is_empty()
     }
 }
 
@@ -1614,7 +1582,7 @@ mod tests {
         use super::*;
 
         #[test]
-        fn creates_and_accesses_properties() {
+        fn decomposes_into_field_and_tag_collections() {
             let key = FieldKey::try_new("status").unwrap();
             let val = NoteFieldValue::String("active".to_owned());
             let tag = Tag::parse("#urgent").unwrap();
@@ -1623,18 +1591,14 @@ mod tests {
                     tag.clone(),
                 ]);
 
-            assert!(!metadata.is_empty());
-            assert_eq!(metadata.fields(), &[(key.clone(), val.clone())]);
-            assert_eq!(metadata.tags(), std::slice::from_ref(&tag));
             assert_eq!(metadata.into_parts(), (vec![(key, val)], vec![tag]));
         }
 
         #[test]
-        fn empty_metadata() {
+        fn default_decomposes_to_empty_collections() {
             let metadata = FlushedMetadata::default();
-            assert!(metadata.is_empty());
-            assert_eq!(metadata.fields(), []);
-            assert_eq!(metadata.tags(), []);
+
+            assert_eq!(metadata.into_parts(), (vec![], vec![]));
         }
     }
 }

@@ -17,6 +17,9 @@ pub(crate) struct LexTokenStream<T> {
     tokens: Peekable<vec::IntoIter<T>>,
 }
 
+/// A [`LexTokenStream`] whose tokens carry their [`Spanned`] byte ranges.
+pub(crate) type SpannedTokenStream<T> = LexTokenStream<Spanned<T>>;
+
 impl<T> LexTokenStream<T> {
     /// Creates a new token stream from a vector of tokens.
     #[inline]
@@ -132,8 +135,6 @@ impl<T> LexTokenStream<Spanned<T>> {
     }
 
     /// Consumes the next token, applies `f`, and returns the mapped result.
-    /// The next token must exist and `f` must return `Some`. Otherwise,
-    /// [`Self::expect_map`] returns `None` and leaves the stream untouched.
     ///
     /// # Errors
     ///
@@ -153,52 +154,20 @@ impl<T> LexTokenStream<Spanned<T>> {
             Some(token) => {
                 let span = token.span();
                 let found = format!("{:?}", token.value());
-                f(token).map(|value| Spanned::new(value, span.clone())).ok_or(
-                    LexError::UnexpectedToken {
+                match f(token) {
+                    Some(value) => Ok(Spanned::new(value, span)),
+                    None => Err(LexError::UnexpectedToken {
                         span,
                         found,
                         expected: expected_desc,
-                    },
-                )
+                    }),
+                }
             }
             None => Err(LexError::UnexpectedEndOfInput {
                 span: input.len()..input.len(),
                 expected: expected_desc,
             }),
         }
-    }
-
-    /// Consumes an opening delimiter `open`, runs `parse_inner`, and consumes
-    /// the matching closing delimiter `close`.
-    ///
-    /// # Errors
-    ///
-    /// - [`LexError::UnexpectedToken`] if the opening or closing token does not
-    ///   match.
-    /// - [`LexError::UnexpectedEndOfInput`] if the stream ends unexpectedly.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "general token-stream combinator; tested in unit suite"
-        )
-    )]
-    pub(crate) fn delimited<U, R, F>(
-        &mut self,
-        input: &str,
-        open: TokenSpec<'_, U>,
-        close: TokenSpec<'_, U>,
-        parse_inner: F,
-    ) -> Result<R, LexError>
-    where
-        T: PartialEq<U> + std::fmt::Debug,
-        U: ?Sized,
-        F: FnOnce(&mut Self) -> Result<R, LexError>,
-    {
-        self.expect(input, open)?;
-        let result = parse_inner(self)?;
-        self.expect(input, close)?;
-        Ok(result)
     }
 }
 
@@ -380,28 +349,29 @@ mod tests {
 
         #[test]
         fn peek_is_value_returns_true_when_next_token_matches() {
-            let mut ts = LexTokenStream::new(vec![Spanned::new("hello", 0..5)]);
+            let mut ts =
+                SpannedTokenStream::new(vec![Spanned::new("hello", 0..5)]);
             assert!(ts.peek_is_value(&"hello"));
             assert!(ts.peek().is_some());
         }
 
         #[test]
         fn peek_is_value_returns_false_on_mismatch() {
-            let mut ts = LexTokenStream::new(vec![Spanned::new("hello", 0..5)]);
+            let mut ts =
+                SpannedTokenStream::new(vec![Spanned::new("hello", 0..5)]);
             assert!(!ts.peek_is_value(&"world"));
         }
 
         #[test]
         fn next_span_returns_end_when_empty() {
-            let mut ts: LexTokenStream<Spanned<i32>> =
-                LexTokenStream::new(vec![]);
+            let mut ts = SpannedTokenStream::<i32>::new(vec![]);
             let span = ts.next_span("hello");
             assert_eq!(span, 5..5);
         }
 
         #[test]
         fn next_span_returns_current_token_span() {
-            let mut ts = LexTokenStream::new(vec![Spanned::new(1, 0..3)]);
+            let mut ts = SpannedTokenStream::new(vec![Spanned::new(1, 0..3)]);
             let span = ts.next_span("input");
             assert_eq!(span, 0..3);
         }
@@ -423,7 +393,7 @@ mod tests {
 
         #[test]
         fn returns_span_when_token_matches() {
-            let mut ts = LexTokenStream::<Spanned<T>>::tokenize("a b").unwrap();
+            let mut ts = SpannedTokenStream::<T>::tokenize("a b").unwrap();
             let span = ts
                 .expect("a b", TokenSpec::new(&T::A, "an `a` token"))
                 .unwrap();
@@ -432,7 +402,7 @@ mod tests {
 
         #[test]
         fn returns_unexpected_token_when_mismatched() {
-            let mut ts = LexTokenStream::<Spanned<T>>::tokenize("b a").unwrap();
+            let mut ts = SpannedTokenStream::<T>::tokenize("b a").unwrap();
             let err = ts
                 .expect("b a", TokenSpec::new(&T::A, "an `a` token"))
                 .unwrap_err();
@@ -441,7 +411,7 @@ mod tests {
 
         #[test]
         fn returns_unexpected_end_of_input_when_empty() {
-            let mut ts = LexTokenStream::<Spanned<T>>::tokenize("").unwrap();
+            let mut ts = SpannedTokenStream::<T>::tokenize("").unwrap();
             let err = ts
                 .expect("", TokenSpec::new(&T::A, "an `a` token"))
                 .unwrap_err();
@@ -465,8 +435,7 @@ mod tests {
 
         #[test]
         fn returns_mapped_value_on_match() {
-            let mut ts =
-                LexTokenStream::<Spanned<T>>::tokenize("42 x").unwrap();
+            let mut ts = SpannedTokenStream::<T>::tokenize("42 x").unwrap();
             let mapped = ts
                 .expect_map("42 x", "a number", |token| {
                     match token.into_value() {
@@ -480,8 +449,7 @@ mod tests {
 
         #[test]
         fn returns_unexpected_token_when_predicate_fails() {
-            let mut ts =
-                LexTokenStream::<Spanned<T>>::tokenize("x 42").unwrap();
+            let mut ts = SpannedTokenStream::<T>::tokenize("x 42").unwrap();
             let err = ts
                 .expect_map("x 42", "a number", |token| {
                     match token.into_value() {
@@ -495,7 +463,7 @@ mod tests {
 
         #[test]
         fn returns_unexpected_end_of_input_when_empty() {
-            let mut ts = LexTokenStream::<Spanned<T>>::tokenize("").unwrap();
+            let mut ts = SpannedTokenStream::<T>::tokenize("").unwrap();
             let err = ts
                 .expect_map("", "a number", |token| match token.into_value() {
                     T::Num(n) => Some(n),
@@ -535,7 +503,7 @@ mod tests {
         #[test]
         fn applies_post_processing_to_each_token() {
             let mut ts =
-                LexTokenStream::<Spanned<T>>::tokenize_with("a 42", clamp_post)
+                SpannedTokenStream::<T>::tokenize_with("a 42", clamp_post)
                     .unwrap();
             assert!(ts.peek_is_value(&T::A));
             ts.next();
@@ -545,7 +513,7 @@ mod tests {
         #[test]
         fn propagates_post_processing_errors() {
             let result =
-                LexTokenStream::<Spanned<T>>::tokenize_with("200", clamp_post);
+                SpannedTokenStream::<T>::tokenize_with("200", clamp_post);
             assert!(result.is_err());
         }
     }
@@ -609,57 +577,6 @@ mod tests {
             assert_eq!(lexical_unquote(r#""""#), "");
             assert_eq!(lexical_unquote("''"), "");
             assert_eq!(lexical_unquote(r#"""#), "\"");
-        }
-    }
-
-    mod delimited {
-        use super::*;
-
-        #[derive(Debug, PartialEq, Logos)]
-        enum SimpleToken {
-            #[token("(")]
-            LParen,
-            #[token(")")]
-            RParen,
-            #[token("x")]
-            X,
-        }
-
-        #[test]
-        fn parses_matching_delimited_content() {
-            let mut stream =
-                LexTokenStream::<Spanned<SimpleToken>>::tokenize("(x)")
-                    .unwrap();
-            let result = stream.delimited(
-                "(x)",
-                TokenSpec::new(&SimpleToken::LParen, "`(`"),
-                TokenSpec::new(&SimpleToken::RParen, "`)`"),
-                |ts| {
-                    let token = ts.next().unwrap();
-                    assert_eq!(*token.value(), SimpleToken::X);
-                    Ok("parsed")
-                },
-            );
-            assert_eq!(result.unwrap(), "parsed");
-        }
-
-        #[test]
-        fn rejects_missing_close_delimiter() {
-            let mut stream =
-                LexTokenStream::<Spanned<SimpleToken>>::tokenize("(x").unwrap();
-            let result = stream.delimited(
-                "(x",
-                TokenSpec::new(&SimpleToken::LParen, "`(`"),
-                TokenSpec::new(&SimpleToken::RParen, "`)`"),
-                |ts| {
-                    let _ = ts.next();
-                    Ok(())
-                },
-            );
-            assert!(matches!(
-                result,
-                Err(LexError::UnexpectedEndOfInput { .. })
-            ));
         }
     }
 }

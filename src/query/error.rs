@@ -141,6 +141,7 @@ impl QuerySyntaxError {
         }
     }
 
+    /// Wraps `lex_error`, preserving its span as the diagnostic label.
     pub(crate) fn from_lex(
         dialect: QueryDialect,
         input: &str,

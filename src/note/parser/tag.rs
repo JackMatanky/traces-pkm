@@ -1,8 +1,12 @@
-//! Tag token scanning and filter matching for Markdown text buffers.
+//! Tag token scanning for Markdown text buffers.
+//!
+//! Tags are lexed separately from [`super::lexer::ItemToken`] because the field
+//! tokens consume the rest of a line, hiding tags inside field values; this
+//! scanner sees them. Both token sets share [`super::lexer::tag_callback`].
 
-use logos::{Filter, Lexer, Logos};
+use logos::Logos;
 
-use super::lexer::char_before;
+use super::lexer::tag_callback;
 use crate::Tag;
 
 /// Token stream for Markdown tags in free-form text.
@@ -10,38 +14,14 @@ use crate::Tag;
 /// - [`Self::Tag`] carries an emitted [`Tag`].
 /// - [`Self::Ignored`] skips ordinary text.
 ///
-/// [`tag_callback`] returns [`Filter::Skip`] to reject non-tag `#` characters
-/// without swallowing the rest of the text.
+/// [`tag_callback`] returns logos' `Filter::Skip` to reject non-tag `#`
+/// characters without swallowing the rest of the text.
 #[derive(Clone, Debug, PartialEq, Logos)]
 enum TagToken {
     #[token("#", tag_callback)]
     Tag(Tag),
     #[regex(r"[\s\S]", priority = 0)]
     Ignored,
-}
-
-/// Parses a Markdown tag after its already-consumed leading `#`.
-///
-/// Rejects a mid-word `#`, such as `foo#bar`, and a `#` not followed by an
-/// alphabetic character, such as `#1`.
-fn tag_callback(lex: &mut Lexer<'_, TagToken>) -> Filter<Tag> {
-    let preceded_by_word_char =
-        char_before(lex).is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
-    if preceded_by_word_char {
-        return Filter::Skip;
-    }
-    let tag_start = lex.span().start;
-    let Some(tail) = lex.source().get(tag_start..) else {
-        return Filter::Skip;
-    };
-    let Some(tag_len) = Tag::prefix_len(tail) else {
-        return Filter::Skip;
-    };
-    lex.bump(tag_len.saturating_sub('#'.len_utf8()));
-    match Tag::parse(lex.slice()) {
-        Ok(tag) => Filter::Emit(tag),
-        Err(_) => Filter::Skip,
-    }
 }
 
 /// Extracts Markdown tags from `text` in encounter order.
@@ -64,22 +44,49 @@ mod tests {
 
     mod scan_tags {
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
 
-        #[test]
-        fn extracts_valid_tags_preserving_order() {
-            let tags = scan_tags("hello #rust and #dev/tools world");
-            assert_eq!(tags, vec![
-                Tag::parse("#rust").unwrap(),
-                Tag::parse("#dev/tools").unwrap(),
-            ]);
+        #[rstest]
+        #[case::standalone("Filed under #book for later.", &["#book"])]
+        #[case::nested_path(
+            "#projects/active needs review.",
+            &["#projects/active"]
+        )]
+        #[case::multiple_space_separated(
+            "#book #fiction favorites.",
+            &["#book", "#fiction"]
+        )]
+        #[case::hash_embedded_in_a_word(
+            "The issue is foo#bar, not a tag.",
+            &[]
+        )]
+        #[case::adjacent_separated_by_punctuation("(#a)(#b)", &["#a", "#b"])]
+        #[case::glued_directly_onto_another_tag("#a#b", &["#a"])]
+        #[case::preceded_by_multibyte_punctuation("café—#book", &["#book"])]
+        #[case::glued_onto_a_multibyte_letter("café#book", &[])]
+        fn extracts_tags_matching_the_expected_set(
+            #[case] input: &str,
+            #[case] expected: &[&str],
+        ) {
+            let expected: Vec<Tag> =
+                expected.iter().map(|tag| Tag::parse(tag).unwrap()).collect();
+
+            assert_eq!(scan_tags(input), expected);
         }
 
         #[test]
         fn skips_mid_word_hashes_and_non_alpha_initials() {
             let tags = scan_tags("foo#bar #123 #_not_alpha #valid");
             assert_eq!(tags, vec![Tag::parse("#valid").unwrap()]);
+        }
+
+        #[test]
+        fn finds_tags_inside_field_values_the_item_lexer_swallows() {
+            let tags = scan_tags("Status:: Draft #urgent");
+
+            assert_eq!(tags, vec![Tag::parse("#urgent").unwrap()]);
         }
     }
 }

@@ -19,7 +19,7 @@ use super::expr::{
     AtomParser, BooleanExpr, LogicalControl, LogicalOp, parse_boolean_expr,
 };
 use crate::{
-    LexTokenStream, Spanned, Tag, TokenSpec,
+    SpannedTokenStream, Tag, TokenSpec,
     index::FileEntry,
     lexical_unquote,
     note::{Note, NoteFieldValue},
@@ -114,7 +114,7 @@ impl SourceExpr {
     ///
     /// - [`QueryBuilderError::Syntax`] if tokenizing or parsing `input` fails.
     pub(crate) fn parse(input: &str) -> Result<Self, QueryBuilderError> {
-        let tokens = LexTokenStream::<Spanned<SourceToken>>::tokenize(input)
+        let tokens = SpannedTokenStream::<SourceToken>::tokenize(input)
             .map_err(|e| {
                 QuerySyntaxError::from_lex(QueryDialect::Source, input, e)
             })?;
@@ -423,7 +423,7 @@ impl SourceGrammar {
     ///   are present.
     fn parse_class_function(
         input: &str,
-        tokens: &mut LexTokenStream<Spanned<SourceToken>>,
+        tokens: &mut SpannedTokenStream<SourceToken>,
         class_span: std::ops::Range<usize>,
     ) -> Result<SourceAtom, QueryBuilderError> {
         let lex =
@@ -557,7 +557,7 @@ impl AtomParser for SourceGrammar {
     fn parse_atom(
         &self,
         input: &str,
-        tokens: &mut LexTokenStream<Spanned<Self::Token>>,
+        tokens: &mut SpannedTokenStream<Self::Token>,
     ) -> Result<Self::Atom, QueryBuilderError> {
         let next_span = tokens.next_span(input);
         match tokens.next() {

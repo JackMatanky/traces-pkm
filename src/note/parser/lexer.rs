@@ -13,15 +13,18 @@ use crate::{
 };
 
 /// Extracts inline fields from `text` in encounter order.
+///
+/// Date shorthand tokens contribute a field keyed by the date type's name when
+/// `shorthands` includes them. Tags are extracted separately by
+/// [`super::tag::scan_tags`], whose token set does not swallow field values.
 #[inline]
 #[must_use]
 pub(super) fn scan_fields(
     text: &str,
     shorthands: TaskShorthands,
 ) -> Vec<(FieldKey, NoteFieldValue)> {
-    let tokens = tokenize_item_text(text, shorthands);
     let mut fields = Vec::new();
-    for token in tokens {
+    for token in tokenize_item_text(text, shorthands) {
         match token.into_value() {
             ItemToken::Field(field) => fields.push(field),
             ItemToken::Date(date) if shorthands.is_included() => {
@@ -29,7 +32,10 @@ pub(super) fn scan_fields(
                     fields.push((key, NoteFieldValue::Date(date.date())));
                 }
             }
-            _ => {}
+            ItemToken::Tag(_)
+            | ItemToken::Date(_)
+            | ItemToken::Priority(_)
+            | ItemToken::Ignored => {}
         }
     }
     fields
@@ -73,8 +79,8 @@ const ISO_DATE_LEN: usize = 10;
 
 /// Field-token mode controlling whether task emoji shorthands are recognized.
 ///
-/// Used as [`FieldToken`]'s logos `extras` value so [`scan_fields`] chooses its
-/// lexer behavior without passing a bare `bool`.
+/// Used as [`ItemToken`]'s logos `extras` value so [`scan_fields`]
+/// chooses its lexer behavior without passing a bare `bool`.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub(super) enum TaskShorthands {
     /// Recognizes task emoji shorthands.
@@ -137,7 +143,7 @@ pub(super) enum ItemToken {
 }
 
 /// Parses a bare inline field (`Key:: Value`) from the `Key::` prefix already
-/// matched by [`FieldToken`]'s body-field pattern, consuming the rest of the
+/// matched by [`ItemToken`]'s body-field pattern, consuming the rest of the
 /// line as the raw value, equivalent to the regex:
 /// `(?m)^[ \t]*key::[\t]*(.*)$`.
 ///
@@ -250,7 +256,14 @@ fn task_date_callback(
     Filter::Emit(TaskDate::new(date_type, value))
 }
 
-fn tag_callback(lex: &mut Lexer<'_, ItemToken>) -> Filter<Tag> {
+/// Parses a Markdown tag after its already-consumed leading `#`.
+///
+/// Shared by [`ItemToken`]'s tag token and the dedicated tag scanner in
+/// [`super::tag`]. Rejects a mid-word `#`, such as `foo#bar`, and a `#` not
+/// followed by an alphabetic character, such as `#1`.
+pub(super) fn tag_callback<'source, T: Logos<'source, Source = str>>(
+    lex: &mut Lexer<'source, T>,
+) -> Filter<Tag> {
     let preceded_by_word_char =
         char_before(lex).is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
     if preceded_by_word_char {
@@ -611,12 +624,33 @@ mod tests {
         }
         #[test]
         fn rejects_task_emoji_shorthand_with_alphanumeric_terminator() {
-            // Mirrors `super::task::scan_date_after`: a datetime suffix is not
-            // a valid shorthand date, so no field is emitted.
+            // A datetime suffix is not a valid shorthand date, so no field is
+            // emitted.
             let fields =
                 scan_fields("🗓️ 2026-07-30T12:00", TaskShorthands::Include);
 
             assert_eq!(fields, []);
+        }
+        #[rstest]
+        #[case::multibyte_candidate_then_valid_date(
+            "📅 你好你好 📅 2025-01-15",
+            Some("2025-01-15")
+        )]
+        #[case::multibyte_candidate_only("📅 你好你好", None)]
+        fn skips_multibyte_date_candidates_without_panicking(
+            #[case] input: &str,
+            #[case] expected: Option<&str>,
+        ) {
+            // Byte 10 of a multibyte candidate falls inside a character, so the
+            // candidate must be skipped rather than sliced.
+            let fields = scan_fields(input, TaskShorthands::Include);
+
+            let expected = expected.map(|date| {
+                NoteFieldValue::Date(
+                    DateValue::parse_iso(date).expect("valid date"),
+                )
+            });
+            assert_eq!(fields.first().map(|(_, v)| v), expected.as_ref());
         }
         #[test]
         fn accepts_a_bare_key_preceded_by_leading_whitespace() {
@@ -646,45 +680,6 @@ mod tests {
                 fields.first().and_then(|(_, v)| v.as_str()),
                 Some("Draft [Key:: Value]")
             );
-        }
-    }
-
-    mod tags {
-        use pretty_assertions::assert_eq;
-        use rstest::rstest;
-
-        use crate::Tag;
-
-        #[rstest]
-        #[case::standalone(
-            "Filed under #book for later.",
-            &["#book"]
-        )]
-        #[case::nested_path(
-            "#projects/active needs review.",
-            &["#projects/active"]
-        )]
-        #[case::multiple_space_separated(
-            "#book #fiction favorites.",
-            &["#book", "#fiction"]
-        )]
-        #[case::hash_embedded_in_a_word(
-            "The issue is foo#bar, not a tag.",
-            &[]
-        )]
-        #[case::adjacent_separated_by_punctuation("(#a)(#b)", &["#a", "#b"])]
-        #[case::glued_directly_onto_another_tag("#a#b", &["#a"])]
-        #[case::preceded_by_multibyte_punctuation("café—#book", &["#book"])]
-        #[case::glued_onto_a_multibyte_letter("café#book", &[])]
-        fn extracts_tags_matching_the_expected_set(
-            #[case] input: &str,
-            #[case] expected: &[&str],
-        ) {
-            let tags = crate::note::parser::tag::scan_tags(input);
-
-            let expected: Vec<Tag> =
-                expected.iter().map(|tag| Tag::parse(tag).unwrap()).collect();
-            assert_eq!(tags, expected);
         }
     }
 

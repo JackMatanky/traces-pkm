@@ -18,7 +18,7 @@ use super::{
     },
 };
 use crate::{
-    LexError, LexTokenStream, NoteFieldValue, NoteFieldValueRef, Spanned,
+    LexError, NoteFieldValue, NoteFieldValueRef, Spanned, SpannedTokenStream,
     TokenSpec, lexical_unquote,
     query::{
         QueryRow,
@@ -43,9 +43,8 @@ impl FilterExpr {
     /// [`Syntax`]: QueryBuilderError::Syntax
     /// [`FieldPath`]: QueryBuilderError::FieldPath
     pub(crate) fn parse(input: &str) -> Result<Self, QueryBuilderError> {
-        let tokens = LexTokenStream::<Spanned<FilterToken>>::tokenize_with(
-            input,
-            |token| {
+        let tokens =
+            SpannedTokenStream::<FilterToken>::tokenize_with(input, |token| {
                 let span = token.span();
                 match token.into_value() {
                     FilterToken::Ident(word) => match word.parse::<f64>() {
@@ -66,11 +65,10 @@ impl FilterExpr {
                     },
                     other => Ok(Spanned::new(other, span)),
                 }
-            },
-        )
-        .map_err(|e| {
-            QuerySyntaxError::from_lex(QueryDialect::Filter, input, e)
-        })?;
+            })
+            .map_err(|e| {
+                QuerySyntaxError::from_lex(QueryDialect::Filter, input, e)
+            })?;
         parse_boolean_expr(input, tokens, FilterGrammar).map(Self)
     }
 
@@ -275,7 +273,7 @@ impl FilterGrammar {
     /// value.
     fn parse_literal_arg(
         input: &str,
-        tokens: &mut LexTokenStream<Spanned<FilterToken>>,
+        tokens: &mut SpannedTokenStream<FilterToken>,
     ) -> Result<NoteFieldValue, QueryBuilderError> {
         let spanned = tokens
             .expect_map(input, "a literal value", |token| {
@@ -294,7 +292,7 @@ impl FilterGrammar {
     /// Parses a call argument list after the function name.
     fn parse_function_call(
         input: &str,
-        tokens: &mut LexTokenStream<Spanned<FilterToken>>,
+        tokens: &mut SpannedTokenStream<FilterToken>,
         name: &str,
     ) -> Result<FilterFunction, QueryBuilderError> {
         tokens
@@ -359,7 +357,7 @@ impl FilterGrammar {
     /// Parses a `<field> <op> <value>` comparison after the field token.
     fn parse_comparison(
         input: &str,
-        tokens: &mut LexTokenStream<Spanned<FilterToken>>,
+        tokens: &mut SpannedTokenStream<FilterToken>,
         field_ident: &str,
     ) -> Result<ComparisonExpr, QueryBuilderError> {
         let op_spanned = tokens
@@ -403,7 +401,7 @@ impl AtomParser for FilterGrammar {
     fn parse_atom(
         &self,
         input: &str,
-        tokens: &mut LexTokenStream<Spanned<Self::Token>>,
+        tokens: &mut SpannedTokenStream<Self::Token>,
     ) -> Result<Self::Atom, QueryBuilderError> {
         let spanned_ident = tokens
             .expect_map(input, "a filter term", |token| {

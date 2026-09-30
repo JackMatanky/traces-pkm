@@ -3,8 +3,8 @@
 //!
 //! [`ListTracker`] maintains explicit list and list-item stacks so nested
 //! Markdown structures never recurse through the call stack. [`ItemFrame`]
-//! drives the incremental [`ItemClassificationState`] state machine that
-//! detects leading task markers.
+//! drives the incremental [`MarkerAccumulator`] state machine that detects
+//! leading task markers.
 //!
 //! Status-marked items are evaluated against configured tag filters to classify
 //! them as [`ListItemType::Task`] or [`ListItemType::Checkbox`], extracting
@@ -97,6 +97,7 @@ impl ListTracker {
             super::lexer::TaskShorthands::Exclude
         };
         let raw_fields = super::lexer::scan_fields(&text, shorthands);
+        let tags = super::tag::scan_tags(&text);
         // Two independently owned copies, not a borrow-checker workaround:
         // `item.fields` lets a task/list item resolve its own metadata
         // (`ListItem::fields`), while the returned copy feeds the caller's
@@ -109,7 +110,6 @@ impl ListTracker {
             item_fields.entry(key.clone()).or_default().push(value.clone());
         }
         item.fields = item_fields;
-        let tags = super::tag::scan_tags(&text);
         item.tags.extend(tags.iter().cloned());
         Some(FlushedMetadata::new(raw_fields, tags))
     }
@@ -179,8 +179,15 @@ impl ListTracker {
         if let Some(item_frame) = self.item_stack.pop() {
             let fully_complete =
                 item_frame.subtask_completion.is_fully_complete();
+            // One tokenization pass feeds priority, date, and clean-text
+            // extraction.
+            let tokens = super::lexer::tokenize_item_text(
+                &item_frame.text_buffer,
+                super::lexer::TaskShorthands::Include,
+            );
             let clean = super::task::clean_task_text(
                 &item_frame.text_buffer,
+                &tokens,
                 tag_filters,
             );
             let text = ListText::new(item_frame.text_buffer, clean);
@@ -194,11 +201,11 @@ impl ListTracker {
                             .any(|tag| tag_filters.contains(tag))
                     {
                         let priority = super::task::extract_task_priority(
-                            text.raw(),
+                            &tokens,
                             &item_frame.fields,
                         );
                         let dates = super::task::extract_task_dates(
-                            text.raw(),
+                            &tokens,
                             &item_frame.fields,
                         );
                         ListItemType::Task(TaskListItem::new(
@@ -495,11 +502,9 @@ mod tests {
                 flushed.is_some(),
                 "start_list must flush active item scan buffer"
             );
-            let metadata = flushed.unwrap();
-            let has_status = metadata
-                .fields()
-                .iter()
-                .any(|(k, _)| k.is_canonical_match("status"));
+            let (fields, _) = flushed.unwrap().into_parts();
+            let has_status =
+                fields.iter().any(|(k, _)| k.is_canonical_match("status"));
             assert!(has_status, "flushed fields must contain Status");
         }
 
@@ -512,11 +517,9 @@ mod tests {
 
             let flushed = tracker.end_item(&[], &TaskStatusMap::default());
             assert!(flushed.is_some(), "end_item must flush scan buffer");
-            let metadata = flushed.unwrap();
-            let has_author = metadata
-                .fields()
-                .iter()
-                .any(|(k, _)| k.is_canonical_match("author"));
+            let (fields, _) = flushed.unwrap().into_parts();
+            let has_author =
+                fields.iter().any(|(k, _)| k.is_canonical_match("author"));
             assert!(has_author, "flushed fields must contain Author");
         }
 

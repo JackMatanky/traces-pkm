@@ -1,84 +1,29 @@
 //! Task date, priority, inline task field, and text cleaning logic.
 
-use std::ops::Range;
-
 use indexmap::IndexMap;
 
-use super::lexer::{ItemToken, TaskShorthands, tokenize_item_text};
+use super::lexer::ItemToken;
 use crate::{
-    DateValue, FieldKey, FieldKeyRef, Tag, TaskDate, TaskDateSet, TaskDateType,
-    TaskPriority, note::NoteFieldValue,
+    DateValue, FieldKey, FieldKeyRef, Spanned, Tag, TaskDate, TaskDateSet,
+    TaskDateType, TaskPriority, note::NoteFieldValue,
 };
-
-/// Scans `text` starting at byte offset `from` for `emoji` followed by an ISO
-/// date.
-///
-/// Returns the byte range spanning the emoji, optional variation selector,
-/// whitespace, and the 10-byte ISO date string, paired with the parsed
-/// [`DateValue`].
-#[cfg_attr(not(test), expect(dead_code, reason = "tested in unit suite"))]
-pub(super) fn scan_date_after(
-    text: &str,
-    mut from: usize,
-    emoji: &str,
-) -> Option<(Range<usize>, DateValue)> {
-    while from < text.len() {
-        let sub = text.get(from..)?;
-        let pos = sub.find(emoji)?;
-        let match_start = from.saturating_add(pos);
-        let emoji_end = match_start.saturating_add(emoji.len());
-        let after_emoji = text.get(emoji_end..)?;
-        let var_len = if after_emoji.starts_with('\u{FE0F}') {
-            '\u{FE0F}'.len_utf8()
-        } else {
-            0
-        };
-        let after_var = &after_emoji[var_len..];
-        let ws_len = after_var
-            .char_indices()
-            .find(|&(_, c)| c != ' ' && c != '\t')
-            .map_or(after_var.len(), |(offset, _)| offset);
-        let after_ws = &after_var[ws_len..];
-        let Some(candidate) = after_ws.get(..10) else {
-            from = emoji_end.saturating_add(var_len);
-            continue;
-        };
-        let next_char_valid = after_ws
-            .get(10..)
-            .and_then(|tail| tail.chars().next())
-            .is_none_or(|ch| !ch.is_alphanumeric());
-        if next_char_valid
-            && DateValue::is_iso_shape(candidate)
-            && let Ok(date) = DateValue::parse_iso(candidate)
-        {
-            let span_end = emoji_end
-                .saturating_add(var_len)
-                .saturating_add(ws_len)
-                .saturating_add(10);
-            return Some((match_start..span_end, date));
-        }
-        from = emoji_end.saturating_add(var_len);
-    }
-    None
-}
 
 /// Extracts task lifecycle dates from emoji shorthands and inline task fields.
 ///
 /// Emoji dates take precedence over inline fields. When duplicate dates appear
 /// for the same lifecycle slot, first-wins semantics apply.
 pub(super) fn extract_task_dates(
-    text: &str,
+    tokens: &[Spanned<ItemToken>],
     fields: &IndexMap<FieldKey, Vec<NoteFieldValue>>,
 ) -> TaskDateSet {
     let mut set = TaskDateSet::default();
 
     // 1. Emoji dates (first-wins per slot)
-    let tokens = tokenize_item_text(text, TaskShorthands::Include);
     for token in tokens {
-        if let ItemToken::Date(task_date) = token.into_value()
+        if let ItemToken::Date(task_date) = token.value()
             && set.get(task_date.kind()).is_none()
         {
-            set.insert(task_date);
+            set.insert(*task_date);
         }
     }
 
@@ -120,13 +65,12 @@ fn first_date_in_field(
 /// if no priority is specified or if priority resolves to
 /// [`TaskPriority::Normal`].
 pub(super) fn extract_task_priority(
-    text: &str,
+    tokens: &[Spanned<ItemToken>],
     fields: &IndexMap<FieldKey, Vec<NoteFieldValue>>,
 ) -> Option<TaskPriority> {
-    let tokens = tokenize_item_text(text, TaskShorthands::Exclude);
     for token in tokens {
-        if let ItemToken::Priority(priority) = token.into_value() {
-            return Some(priority);
+        if let ItemToken::Priority(priority) = token.value() {
+            return Some(*priority);
         }
     }
 
@@ -155,8 +99,11 @@ pub(super) fn extract_task_priority(
 /// filters, date syntax, priority emojis, and inline task fields.
 ///
 /// Expects `raw_text` to already have any leading task marker prefix removed.
-pub(super) fn clean_task_text(raw_text: &str, tag_filters: &[Tag]) -> String {
-    let tokens = tokenize_item_text(raw_text, TaskShorthands::Include);
+pub(super) fn clean_task_text(
+    raw_text: &str,
+    tokens: &[Spanned<ItemToken>],
+    tag_filters: &[Tag],
+) -> String {
     let mut remove_spans: Vec<(usize, usize)> =
         Vec::with_capacity(tokens.len());
 
@@ -262,61 +209,11 @@ fn normalize_whitespace(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::note::parser::lexer::{TaskShorthands, tokenize_item_text};
 
-    mod scan_date_after {
-        use pretty_assertions::assert_eq;
-        use rstest::rstest;
-
-        use super::*;
-
-        #[rstest]
-        #[case::with_variation_selector(
-            "Task 📅\u{FE0F} 2025-01-15",
-            "📅\u{FE0F} 2025-01-15"
-        )]
-        #[case::without_variation_selector(
-            "Task 📅 2025-01-15",
-            "📅 2025-01-15"
-        )]
-        fn parses_iso_date_with_optional_variation_selector(
-            #[case] input: &str,
-            #[case] expected_span: &str,
-        ) {
-            let expected_date = DateValue::parse_iso("2025-01-15").unwrap();
-            let (range, date) = scan_date_after(input, 0, "\u{1F4C5}").unwrap();
-            assert_eq!(date, expected_date);
-            assert_eq!(&input[range], expected_span);
-        }
-
-        #[test]
-        fn skips_invalid_date_continuing_to_valid_match() {
-            let text = "Task 📅 2026-13-45 then 📅 2025-01-15";
-            let (range, date) = scan_date_after(text, 0, "\u{1F4C5}").unwrap();
-            assert_eq!(date, DateValue::parse_iso("2025-01-15").unwrap());
-            assert_eq!(&text[range], "📅 2025-01-15");
-        }
-
-        #[test]
-        fn rejects_alphanumeric_date_terminator() {
-            let text = "Task 📅 2025-01-15T12:00:00";
-            assert_eq!(scan_date_after(text, 0, "\u{1F4C5}"), None);
-        }
-
-        #[test]
-        fn skips_multibyte_candidate_without_panicking() {
-            // Byte 10 of the candidate falls inside a multibyte character, so
-            // slicing there must not panic; the candidate is skipped instead.
-            let text = "📅 你好你好";
-            assert_eq!(scan_date_after(text, 0, "\u{1F4C5}"), None);
-        }
-
-        #[test]
-        fn finds_valid_date_after_skipping_multibyte_candidate() {
-            let text = "📅 你好你好 📅 2025-01-15";
-            let (range, date) = scan_date_after(text, 0, "\u{1F4C5}").unwrap();
-            assert_eq!(date, DateValue::parse_iso("2025-01-15").unwrap());
-            assert_eq!(&text[range], "📅 2025-01-15");
-        }
+    /// Tokenizes `text` the way `ListTracker::end_item` does before extraction.
+    fn tokens(text: &str) -> Vec<Spanned<ItemToken>> {
+        tokenize_item_text(text, TaskShorthands::Include)
     }
 
     mod extract_task_dates {
@@ -333,7 +230,7 @@ mod tests {
                     DateValue::parse_iso("2025-02-02").unwrap(),
                 ),
             ]);
-            let set = extract_task_dates(text, &fields);
+            let set = extract_task_dates(&tokens(text), &fields);
             assert_eq!(
                 set.get(TaskDateType::Due),
                 Some(DateValue::parse_iso("2025-01-01").unwrap())
@@ -354,7 +251,7 @@ mod tests {
                     DateValue::parse_iso("2025-02-02").unwrap(),
                 ),
             ]);
-            let set = extract_task_dates(text, &fields);
+            let set = extract_task_dates(&tokens(text), &fields);
             assert_eq!(
                 set.get(TaskDateType::Done),
                 Some(DateValue::parse_iso("2025-01-01").unwrap())
@@ -371,7 +268,7 @@ mod tests {
         fn selects_first_in_document_order() {
             let text = "Task 🔺 and 🔽";
             let fields = IndexMap::new();
-            let priority = extract_task_priority(text, &fields);
+            let priority = extract_task_priority(&tokens(text), &fields);
             assert_eq!(priority, Some(TaskPriority::Highest));
         }
 
@@ -382,7 +279,7 @@ mod tests {
             fields.insert(FieldKey::try_from("priority").unwrap(), vec![
                 NoteFieldValue::String("normal".to_owned()),
             ]);
-            let priority = extract_task_priority(text, &fields);
+            let priority = extract_task_priority(&tokens(text), &fields);
             assert_eq!(priority, None);
         }
     }
@@ -395,43 +292,38 @@ mod tests {
         #[test]
         fn strips_dates_priorities_tags_and_inline_fields() {
             let filters = [Tag::parse("#task").unwrap()];
-            let cleaned = clean_task_text(
-                "Task #task 🔺 📅 2025-01-01 [custom:: value] [created:: \
-                 2024-12-01]",
-                &filters,
-            );
+            let raw = "Task #task 🔺 📅 2025-01-01 [custom:: value] \
+                       [created:: 2024-12-01]";
+            let cleaned = clean_task_text(raw, &tokens(raw), &filters);
             assert_eq!(cleaned, "Task [custom:: value]");
         }
 
         #[test]
         fn preserves_unparsed_invalid_dates() {
-            let cleaned = clean_task_text("Task 📅 2026-13-45 keep", &[]);
+            let raw = "Task 📅 2026-13-45 keep";
+            let cleaned = clean_task_text(raw, &tokens(raw), &[]);
             assert_eq!(cleaned, "Task 📅 2026-13-45 keep");
         }
 
         #[test]
         fn strips_priority_emoji_with_variation_selector() {
-            let cleaned =
-                clean_task_text("Task 🔺\u{FE0F} remaining text", &[]);
+            let raw = "Task 🔺\u{FE0F} remaining text";
+            let cleaned = clean_task_text(raw, &tokens(raw), &[]);
             assert_eq!(cleaned, "Task remaining text");
         }
 
         #[test]
         fn strips_inline_fields_with_nested_delimiters_and_wikilinks() {
-            let cleaned = clean_task_text(
-                "Task [due:: [[2025-01-15]]] and (scheduled:: 2025-01-01 \
-                 (tentative)) remaining",
-                &[],
-            );
+            let raw = "Task [due:: [[2025-01-15]]] and (scheduled:: \
+                       2025-01-01 (tentative)) remaining";
+            let cleaned = clean_task_text(raw, &tokens(raw), &[]);
             assert_eq!(cleaned, "Task and remaining");
         }
 
         #[test]
         fn strips_inline_fields_with_quoted_bracket_content() {
-            let cleaned = clean_task_text(
-                r#"Task [due:: "meeting [sync]"] remaining"#,
-                &[],
-            );
+            let raw = r#"Task [due:: "meeting [sync]"] remaining"#;
+            let cleaned = clean_task_text(raw, &tokens(raw), &[]);
             assert_eq!(cleaned, "Task remaining");
         }
     }

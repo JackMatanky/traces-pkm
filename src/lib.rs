@@ -118,7 +118,9 @@ pub(crate) use index::IndexerService;
 pub use index::{
     FileEntry, IndexerService, InlinkMap, RefreshReport, WorkspaceIndex,
 };
-pub(crate) use lexer::{LexError, LexTokenStream, TokenSpec, lexical_unquote};
+pub(crate) use lexer::{
+    LexError, SpannedTokenStream, TokenSpec, lexical_unquote,
+};
 pub(crate) use note::NoteFieldType;
 pub use note::{
     ListItem, ListItemType, ListText, MarkdownParserInput, Note,
@@ -684,36 +686,35 @@ mod test_support {
 
     #[cfg(test)]
     thread_local! {
-        /// Per-test-thread holder of the [`TzGuard`]; the guard drops when
-        /// the thread ends, restoring `TZ`.
+        /// Per-test-thread holder of the [`TzGuard`]; the guard drops when the
+        /// thread ends, restoring `TZ`.
         static TZ_GUARD: std::cell::RefCell<Option<TzGuard>> =
             const { std::cell::RefCell::new(None) };
     }
 
     /// Owns the process-global `TZ` variable for the duration of one test.
     ///
-    /// chrono's `Local` reads `TZ` per call through `std::env::var`
-    /// (serialized by std's environment lock, so concurrent reads are
-    /// memory-safe); it also caches the resolved offset in a thread-local
-    /// for up to one second (chrono's internal `local::unix::Cache`),
-    /// re-reading `TZ` only on that thread's first lookup or once the cache
-    /// goes stale. The test harness runs each test on its own thread, so
-    /// the first lookup on a fresh thread always happens after
-    /// `TzGuard::set` has already swapped `TZ`, keeping the per-thread
-    /// cache in step with the swap. A test that swaps `TZ` before its first
-    /// local-clock read therefore observes its zone deterministically.
+    /// chrono's `Local` reads `TZ` per call through `std::env::var` (serialized
+    /// by std's environment lock, so concurrent reads are memory-safe); it also
+    /// caches the resolved offset in a thread-local for up to one second
+    /// (chrono's internal `local::unix::Cache`), re-reading `TZ` only on that
+    /// thread's first lookup or once the cache goes stale. The test harness
+    /// runs each test on its own thread, so the first lookup on a fresh thread
+    /// always happens after `TzGuard::set` has already swapped `TZ`, keeping
+    /// the per-thread cache in step with the swap. A test that swaps `TZ`
+    /// before its first local-clock read therefore observes its zone
+    /// deterministically.
     ///
-    /// Install with [`TzGuard::set`] to pin a zone or [`TzGuard::keep`] to
-    /// hold the lock without changing the zone. The guard registers itself
-    /// on the test thread and lives until the thread ends; a second `set`
-    /// on the same thread just swaps the value, and the original guard
-    /// still restores the true original. Holds a shared mutex so
-    /// concurrent tests never interleave reads of one zone with writes of
-    /// another; the edition-2024 `unsafe` on the write exists for non-Rust
-    /// `getenv` readers, of which this dependency tree has none during
-    /// tests. Tests whose assertions depend on the zone must hold the
-    /// guard (`set` or `keep`); zone-stable assertions elsewhere are
-    /// unaffected by a swap. The previous `TZ` is restored when the test
+    /// Install with [`TzGuard::set`] to pin a zone or [`TzGuard::keep`] to hold
+    /// the lock without changing the zone. The guard registers itself on the
+    /// test thread and lives until the thread ends; a second `set` on the same
+    /// thread just swaps the value, and the original guard still restores the
+    /// true original. Holds a shared mutex so concurrent tests never interleave
+    /// reads of one zone with writes of another; the edition-2024 `unsafe` on
+    /// the write exists for non-Rust `getenv` readers, of which this dependency
+    /// tree has none during tests. Tests whose assertions depend on the zone
+    /// must hold the guard (`set` or `keep`); zone-stable assertions elsewhere
+    /// are unaffected by a swap. The previous `TZ` is restored when the test
     /// thread ends.
     #[cfg(test)]
     pub(crate) struct TzGuard {
@@ -728,8 +729,8 @@ mod test_support {
             Self::install(None);
         }
 
-        /// Sets `TZ` to `zone` for this thread, restoring the previous
-        /// value when the thread ends.
+        /// Sets `TZ` to `zone` for this thread, restoring the previous value
+        /// when the thread ends.
         pub(crate) fn set(zone: &str) {
             Self::install(Some(zone));
         }
@@ -737,9 +738,9 @@ mod test_support {
         fn install(zone: Option<&str>) {
             let already_owned = TZ_GUARD.with(|slot| slot.borrow().is_some());
             if already_owned {
-                // This thread already owns `TZ`; a second `set` just swaps
-                // the value and the original guard still restores the true
-                // original on drop.
+                // This thread already owns `TZ`; a second `set` just swaps the
+                // value and the original guard still restores the true original
+                // on drop.
                 if let Some(zone) = zone {
                     set_var(zone);
                 }
@@ -781,10 +782,9 @@ mod test_support {
                   dependency tree has none during tests"
     )]
     fn set_var(value: &str) {
-        // SAFETY: std::env::set_var serializes with every std::env::var
-        // read via std's internal environment lock, so in-process readers
-        // are memory-safe; writes also serialize test-side under
-        // `TZ_LOCK`.
+        // SAFETY: std::env::set_var serializes with every std::env::var read
+        // via std's internal environment lock, so in-process readers are
+        // memory-safe; writes also serialize test-side under `TZ_LOCK`.
         unsafe { std::env::set_var("TZ", value) };
     }
 
@@ -798,10 +798,9 @@ mod test_support {
                   dependency tree has none during tests"
     )]
     fn remove_var() {
-        // SAFETY: std::env::remove_var serializes with every
-        // std::env::var read via std's internal environment lock, so
-        // in-process readers are memory-safe; writes also serialize
-        // test-side under `TZ_LOCK`.
+        // SAFETY: std::env::remove_var serializes with every std::env::var read
+        // via std's internal environment lock, so in-process readers are
+        // memory-safe; writes also serialize test-side under `TZ_LOCK`.
         unsafe { std::env::remove_var("TZ") };
     }
 
@@ -814,14 +813,13 @@ mod test_support {
             TzGuard::set("Etc/GMT-2");
             assert_eq!(std::env::var("TZ").ok().as_deref(), Some("Etc/GMT-2"));
 
-            // A second set on the same thread swaps the value; the
-            // original guard still restores the true original.
+            // A second set on the same thread swaps the value; the original
+            // guard still restores the true original.
             TzGuard::set("UTC");
             assert_eq!(std::env::var("TZ").ok().as_deref(), Some("UTC"));
 
-            // Dropping happens at thread end, so this test cannot observe
-            // the restore directly; it only asserts the swap behavior
-            // above.
+            // Dropping happens at thread end, so this test cannot observe the
+            // restore directly; it only asserts the swap behavior above.
         }
 
         #[test]
