@@ -31,54 +31,38 @@ pub struct Note {
 
 impl Note {
     /// Creates a note from parser-owned page components.
-    ///
-    /// The new note starts without inline fields or tags because those are
-    /// extracted after block parsing. Attach them with `with_inline_fields` and
-    /// [`Self::with_tags`].
     #[inline]
     #[must_use]
-    pub(crate) fn new<
-        P: Into<PathBuf>,
-        L: Into<Box<[ListItem]>>,
-        O: Into<Box<[Link]>>,
-    >(
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "constructor accepts all Note components"
+    )]
+    pub(crate) fn new<P, L, O, T>(
         path: P,
         frontmatter: Option<Frontmatter>,
         lists: L,
         outlinks: O,
-    ) -> Self {
+        inline_fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
+        tags: T,
+    ) -> Self
+    where
+        P: Into<PathBuf>,
+        L: Into<Box<[ListItem]>>,
+        O: Into<Box<[Link]>>,
+        T: Into<Box<[Tag]>>,
+    {
+        let boxed_fields = inline_fields
+            .into_iter()
+            .map(|(key, values)| (key, values.into_boxed_slice()))
+            .collect();
         Self {
             path: path.into(),
             frontmatter,
             lists: lists.into(),
             outlinks: outlinks.into(),
-            inline_fields: IndexMap::new(),
-            tags: Box::default(),
+            inline_fields: boxed_fields,
+            tags: tags.into(),
         }
-    }
-
-    /// Attaches `inline_fields` and returns the updated [`Note`].
-    #[inline]
-    #[must_use]
-    pub(crate) fn with_inline_fields(
-        mut self,
-        inline_fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
-    ) -> Self {
-        self.inline_fields.clear();
-        self.inline_fields.extend(
-            inline_fields
-                .into_iter()
-                .map(|(key, values)| (key, values.into_boxed_slice())),
-        );
-        self
-    }
-
-    /// Attaches `tags` and returns the updated [`Note`].
-    #[inline]
-    #[must_use]
-    pub(crate) fn with_tags<T: Into<Box<[Tag]>>>(mut self, tags: T) -> Self {
-        self.tags = tags.into();
-        self
     }
 
     /// Returns the project-relative path to this note.
@@ -227,7 +211,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        TaskDates, TaskStatus, TaskStatusSymbol, TaskStatusType,
+        TaskDateSet, TaskStatus, TaskStatusSymbol, TaskStatusType,
         note::{
             LinkType, ListItem, ListItemType, NoteFieldValue, TaskListItem,
         },
@@ -235,7 +219,7 @@ mod tests {
 
     fn task(name: &str, symbol: char, kind: TaskStatusType) -> ListItemType {
         ListItemType::Task(TaskListItem::new(
-            TaskDates::default(),
+            TaskDateSet::default(),
             None,
             TaskStatus::new(TaskStatusSymbol::new(symbol), name, kind),
             true,
@@ -258,6 +242,8 @@ mod tests {
                 Some(frontmatter.clone()),
                 vec![item.clone()],
                 vec![outlink.clone()],
+                IndexMap::new(),
+                Vec::new(),
             );
 
             assert_eq!(note.path(), Path::new("notes/a.md"));
@@ -268,22 +254,23 @@ mod tests {
 
         #[test]
         fn constructs_note_with_no_frontmatter_and_empty_collections() {
-            let note = Note::new("notes/a.md", None, Vec::new(), Vec::new());
+            let note = Note::new(
+                "notes/a.md",
+                None,
+                Vec::new(),
+                Vec::new(),
+                IndexMap::new(),
+                Vec::new(),
+            );
 
             assert_eq!(note.path(), Path::new("notes/a.md"));
             assert_eq!(note.frontmatter(), None);
             assert_eq!(note.lists().len(), 0);
             assert_eq!(note.outlinks().len(), 0);
         }
-    }
-
-    mod builder {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
 
         #[test]
-        fn with_inline_fields_attaches_the_given_fields() {
+        fn stores_inline_fields_in_constructor() {
             let key =
                 FieldKey::try_new("Status").expect("valid test field key");
             let mut fields = IndexMap::new();
@@ -291,8 +278,14 @@ mod tests {
                 "Draft".to_owned(),
             )]);
 
-            let note = Note::new("notes/a.md", None, Vec::new(), Vec::new())
-                .with_inline_fields(fields);
+            let note = Note::new(
+                "notes/a.md",
+                None,
+                Vec::new(),
+                Vec::new(),
+                fields,
+                Vec::new(),
+            );
 
             let mut expected = IndexMap::new();
             expected.insert(
@@ -302,10 +295,17 @@ mod tests {
             );
             assert_eq!(note.inline_fields(), &expected);
         }
+
         #[test]
-        fn with_tags_attaches_the_given_tags() {
-            let note = Note::new("notes/a.md", None, Vec::new(), Vec::new())
-                .with_tags(vec![Tag::parse("#book").unwrap()]);
+        fn stores_tags_in_constructor() {
+            let note = Note::new(
+                "notes/a.md",
+                None,
+                Vec::new(),
+                Vec::new(),
+                IndexMap::new(),
+                vec![Tag::parse("#book").unwrap()],
+            );
 
             assert_eq!(note.tags(), [Tag::parse("#book").unwrap()]);
         }
@@ -318,7 +318,14 @@ mod tests {
 
         #[test]
         fn returns_empty_iterator_when_note_has_no_fields() {
-            let note = Note::new("notes/a.md", None, Vec::new(), Vec::new());
+            let note = Note::new(
+                "notes/a.md",
+                None,
+                Vec::new(),
+                Vec::new(),
+                IndexMap::new(),
+                Vec::new(),
+            );
 
             assert_eq!(note.fields().count(), 0);
         }
@@ -340,8 +347,9 @@ mod tests {
                 Some(frontmatter),
                 Vec::new(),
                 Vec::new(),
-            )
-            .with_inline_fields(inline_fields);
+                inline_fields,
+                Vec::new(),
+            );
 
             let keys: Vec<String> =
                 note.fields().map(|(k, _)| k.name().to_owned()).collect();
@@ -358,10 +366,14 @@ mod tests {
             inline_fields.insert(FieldKey::try_new("status").unwrap(), vec![
                 NoteFieldValue::String("draft".into()),
             ]);
-            let note =
-                Note::new("notes/a.md", Some(frontmatter), vec![], vec![])
-                    .with_inline_fields(inline_fields);
-
+            let note = Note::new(
+                "notes/a.md",
+                Some(frontmatter),
+                vec![],
+                vec![],
+                inline_fields,
+                vec![],
+            );
             let fields: Vec<_> = note.fields().collect();
             assert_eq!(fields.len(), 1);
             let first =
@@ -395,6 +407,8 @@ mod tests {
                 None,
                 vec![parent, child_task, plain],
                 Vec::new(),
+                IndexMap::new(),
+                Vec::new(),
             );
 
             let task_text: Vec<&str> =
@@ -411,6 +425,8 @@ mod tests {
                 "notes/a.md",
                 None,
                 vec![plain, checkbox],
+                Vec::new(),
+                IndexMap::new(),
                 Vec::new(),
             );
 
@@ -451,6 +467,8 @@ mod tests {
                     sibling_task,
                 ],
                 Vec::new(),
+                IndexMap::new(),
+                Vec::new(),
             );
 
             let texts: Vec<&str> =
@@ -480,6 +498,8 @@ mod tests {
                 None,
                 vec![parent, child, sibling],
                 Vec::new(),
+                IndexMap::new(),
+                Vec::new(),
             );
 
             let texts: Vec<&str> =
@@ -490,7 +510,14 @@ mod tests {
         #[test]
         fn returns_no_descendants_for_the_final_item() {
             let plain = ListItem::for_test("plain item", ListItemType::Plain);
-            let note = Note::new("notes/a.md", None, vec![plain], Vec::new());
+            let note = Note::new(
+                "notes/a.md",
+                None,
+                vec![plain],
+                Vec::new(),
+                IndexMap::new(),
+                Vec::new(),
+            );
 
             assert_eq!(note.descendants(0).count(), 0);
         }
@@ -498,7 +525,14 @@ mod tests {
         #[test]
         fn returns_no_descendants_for_an_out_of_range_parent_index() {
             let plain = ListItem::for_test("plain item", ListItemType::Plain);
-            let note = Note::new("notes/a.md", None, vec![plain], Vec::new());
+            let note = Note::new(
+                "notes/a.md",
+                None,
+                vec![plain],
+                Vec::new(),
+                IndexMap::new(),
+                Vec::new(),
+            );
 
             assert_eq!(note.descendants(5).count(), 0);
             assert_eq!(note.descendants(usize::MAX).count(), 0);
@@ -544,9 +578,9 @@ mod tests {
                 Some(frontmatter),
                 vec![item, child],
                 vec![outlink],
-            )
-            .with_inline_fields(inline_fields)
-            .with_tags(vec![crate::parse_tag("#book")]);
+                inline_fields,
+                vec![crate::parse_tag("#book")],
+            );
 
             let bytes = postcard::to_allocvec(&note).expect("encode note");
             let decoded: Note =

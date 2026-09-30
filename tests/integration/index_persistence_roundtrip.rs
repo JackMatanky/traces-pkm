@@ -12,7 +12,8 @@ use chrono::NaiveDate;
 use pretty_assertions::assert_eq;
 use traces_pkm::{
     FileEntry, QueryBuilder, QueryService, QuerySet, SourceLine,
-    SourceSelector, TaskListItem, TaskPriority, TaskStatusType, TestProject,
+    SourceSelector, TaskDateType, TaskListItem, TaskPriority, TaskStatusType,
+    TestProject,
 };
 /// Builds an index, persists it, and reloads it into a fresh `WorkspaceIndex`,
 /// checking records survive intact.
@@ -99,7 +100,10 @@ fn reloads_flat_list_items_with_metadata_and_hierarchy() {
     let root = records.first().expect("root task record");
     assert_eq!(root.raw_text(), "Root task 📅 2025-06-01 🔺");
     assert_eq!(
-        root.kind().as_task().and_then(|t| t.dates().due()).map(Into::into),
+        root.kind()
+            .as_task()
+            .and_then(|t| t.dates().get(TaskDateType::Due))
+            .map(Into::into),
         NaiveDate::from_ymd_opt(2025, 6, 1)
     );
     assert_eq!(
@@ -118,7 +122,10 @@ fn reloads_flat_list_items_with_metadata_and_hierarchy() {
     );
 
     let plain = records.get(3).expect("plain bullet record");
-    assert_eq!(plain.kind().as_task().and_then(|t| t.dates().due()), None);
+    assert_eq!(
+        plain.kind().as_task().and_then(|t| t.dates().get(TaskDateType::Due)),
+        None
+    );
     assert_eq!(plain.kind().as_task().and_then(TaskListItem::priority), None);
     assert_eq!(
         plain.kind().as_task().map(TaskListItem::is_fully_complete),
@@ -226,7 +233,7 @@ owner: alice
     let root_task = loaded_items.first().expect("root task");
     let root_t = root_task.kind().as_task().expect("root task kind");
     assert_eq!(
-        root_t.dates().due().map(Into::into),
+        root_t.dates().get(TaskDateType::Due).map(Into::into),
         NaiveDate::from_ymd_opt(2026, 6, 1)
     );
     assert_eq!(root_t.priority(), Some(TaskPriority::Highest));
@@ -236,7 +243,7 @@ owner: alice
     let completed_t =
         completed_subtask.kind().as_task().expect("completed task kind");
     assert_eq!(
-        completed_t.dates().due().map(Into::into),
+        completed_t.dates().get(TaskDateType::Due).map(Into::into),
         NaiveDate::from_ymd_opt(2026, 6, 15)
     );
     assert_eq!(completed_t.is_fully_complete(), true);

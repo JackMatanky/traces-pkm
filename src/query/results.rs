@@ -394,27 +394,16 @@ impl QueryRow {
                     priority.as_str(),
                 ))
             }),
-            TaskField::DueDate => task.dates().due().map_or(null, |date| {
-                QueryFieldValueRef::Note(NoteFieldValueRef::Date(date))
-            }),
-            TaskField::DoneDate => task.dates().done().map_or(null, |date| {
-                QueryFieldValueRef::Note(NoteFieldValueRef::Date(date))
-            }),
-            TaskField::CreatedDate => {
-                task.dates().created().map_or(null, |date| {
-                    QueryFieldValueRef::Note(NoteFieldValueRef::Date(date))
-                })
-            }
-            TaskField::StartDate => task.dates().start().map_or(null, |date| {
-                QueryFieldValueRef::Note(NoteFieldValueRef::Date(date))
-            }),
-            TaskField::ScheduledDate => {
-                task.dates().scheduled().map_or(null, |date| {
-                    QueryFieldValueRef::Note(NoteFieldValueRef::Date(date))
-                })
-            }
-            TaskField::CancelledDate => {
-                task.dates().cancelled().map_or(null, |date| {
+            TaskField::DueDate
+            | TaskField::DoneDate
+            | TaskField::CreatedDate
+            | TaskField::StartDate
+            | TaskField::ScheduledDate
+            | TaskField::CancelledDate => {
+                let Some(kind) = field.date_kind() else {
+                    return QueryFieldValueRef::Note(NoteFieldValueRef::Null);
+                };
+                task.dates().get(kind).map_or(null, |date| {
                     QueryFieldValueRef::Note(NoteFieldValueRef::Date(date))
                 })
             }

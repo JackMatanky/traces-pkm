@@ -140,6 +140,27 @@ impl TaskField {
             _ => None,
         }
     }
+
+    /// Returns the corresponding [`crate::TaskDateType`] if this field
+    /// represents a task lifecycle date.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn date_kind(self) -> Option<crate::TaskDateType> {
+        match self {
+            Self::DueDate => Some(crate::TaskDateType::Due),
+            Self::DoneDate => Some(crate::TaskDateType::Done),
+            Self::CreatedDate => Some(crate::TaskDateType::Created),
+            Self::StartDate => Some(crate::TaskDateType::Start),
+            Self::ScheduledDate => Some(crate::TaskDateType::Scheduled),
+            Self::CancelledDate => Some(crate::TaskDateType::Cancelled),
+            Self::Status
+            | Self::StatusType
+            | Self::StatusSymbol
+            | Self::Completed
+            | Self::Priority
+            | Self::FullyComplete => None,
+        }
+    }
 }
 
 /// A universal or task-specific `list.<field>` accessor.
@@ -386,6 +407,41 @@ mod tests {
                     "{name} should parse"
                 );
             }
+        }
+
+        #[test]
+        fn date_kind_returns_some_for_all_date_variants_and_none_for_others() {
+            assert_eq!(
+                TaskField::DueDate.date_kind(),
+                Some(crate::TaskDateType::Due)
+            );
+            assert_eq!(
+                TaskField::DoneDate.date_kind(),
+                Some(crate::TaskDateType::Done)
+            );
+            assert_eq!(
+                TaskField::CreatedDate.date_kind(),
+                Some(crate::TaskDateType::Created)
+            );
+            assert_eq!(
+                TaskField::StartDate.date_kind(),
+                Some(crate::TaskDateType::Start)
+            );
+            assert_eq!(
+                TaskField::ScheduledDate.date_kind(),
+                Some(crate::TaskDateType::Scheduled)
+            );
+            assert_eq!(
+                TaskField::CancelledDate.date_kind(),
+                Some(crate::TaskDateType::Cancelled)
+            );
+
+            assert_eq!(TaskField::Status.date_kind(), None);
+            assert_eq!(TaskField::StatusType.date_kind(), None);
+            assert_eq!(TaskField::StatusSymbol.date_kind(), None);
+            assert_eq!(TaskField::Completed.date_kind(), None);
+            assert_eq!(TaskField::Priority.date_kind(), None);
+            assert_eq!(TaskField::FullyComplete.date_kind(), None);
         }
     }
 

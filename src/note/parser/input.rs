@@ -67,28 +67,28 @@ impl<'a> MarkdownParserInput<'a> {
     /// Returns the project-relative path of the note being parsed.
     #[inline]
     #[must_use]
-    pub const fn path(&self) -> &'a Path {
+    pub(crate) const fn path(&self) -> &'a Path {
         self.path
     }
 
     /// Returns the raw Markdown source text.
     #[inline]
     #[must_use]
-    pub const fn src(&self) -> &'a str {
+    pub(crate) const fn src(&self) -> &'a str {
         self.src
     }
 
     /// Returns the resolved task configuration.
     #[inline]
     #[must_use]
-    pub const fn tasks(&self) -> &'a TaskConfig {
+    pub(crate) const fn tasks(&self) -> &'a TaskConfig {
         self.tasks
     }
 
     /// Returns the resolved frontmatter configuration.
     #[inline]
     #[must_use]
-    pub const fn frontmatter(&self) -> &'a FrontmatterConfig {
+    pub(crate) const fn frontmatter(&self) -> &'a FrontmatterConfig {
         self.frontmatter
     }
 }

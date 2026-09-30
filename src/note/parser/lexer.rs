@@ -1,91 +1,29 @@
-//! Scan plain-text buffers for inline fields and Markdown tags.
+//! Scan plain-text buffers for inline fields.
 //!
 //! Operates on text already filtered by the Markdown parser: fenced code
 //! blocks, indented code blocks, and inline code spans are excluded before
-//! [`InlineTokenLexer`] runs.
-//!
-//! [`InlineTokenLexer`] extracts:
-//!
-//! - inline fields: `Key:: Value`, `[Key:: Value]`, and `(Key:: Value)` body
-//!   metadata, plus (when `has_marker` is `true`) task emoji shorthand fields
-//!   such as `🗓️2026-01-01`.
-//! - tags: Markdown tags such as `#book` and `#projects/active`, unconditional
-//!   on `has_marker`.
+//! scanning runs.
 
 use logos::{Filter, Lexer, Logos};
 
 use super::inline::parse_inline_value;
-use crate::{DateValue, DelimiterType, FieldKey, Tag, note::NoteFieldValue};
+use crate::{DateValue, DelimiterType, FieldKey, note::NoteFieldValue};
 
-/// Extracts inline fields and tags from a parser scan buffer.
-///
-/// `has_marker` controls whether [`Self::extract_fields`] recognizes task emoji
-/// shorthand fields (dates, priority); [`Self::extract_tags`] is unconditional
-/// on it. Both methods return flat token lists in encounter order; the caller
-/// aggregates them into an `IndexMap`.
-#[derive(Copy, Clone, Debug)]
-pub(super) struct InlineTokenLexer {
-    has_marker: bool,
-}
-
-impl InlineTokenLexer {
-    /// Creates a lexer. `has_marker` is `true` for status-marked list items.
-    #[inline]
-    #[must_use]
-    pub(super) const fn new(has_marker: bool) -> Self {
-        Self {
-            has_marker,
+/// Extracts inline fields from `text` in encounter order.
+#[inline]
+#[must_use]
+pub(super) fn scan_fields(
+    text: &str,
+    shorthands: TaskShorthands,
+) -> Vec<(FieldKey, NoteFieldValue)> {
+    let lexer = FieldToken::lexer_with_extras(text, shorthands);
+    let mut fields = Vec::new();
+    for result in lexer {
+        if let Ok(FieldToken::Field(field)) = result {
+            fields.push(field);
         }
     }
-
-    /// Extracts inline fields from `text` in encounter order.
-    ///
-    /// Recognizes `Key:: Value`, `[Key:: Value]`, and `(Key:: Value)`. When
-    /// `has_marker` is `true`, also recognizes task emoji shorthand fields such
-    /// as `🗓️2026-01-01`. `text` must already exclude code spans and blocks.
-    #[inline]
-    #[must_use]
-    pub(super) fn extract_fields(
-        self,
-        text: &str,
-    ) -> Vec<(FieldKey, NoteFieldValue)> {
-        let shorthands = if self.has_marker {
-            TaskShorthands::Include
-        } else {
-            TaskShorthands::Exclude
-        };
-        let lexer = FieldToken::lexer_with_extras(text, shorthands);
-        let mut fields = Vec::new();
-        for result in lexer {
-            if let Ok(FieldToken::Field(field)) = result {
-                fields.push(field);
-            }
-        }
-        fields
-    }
-
-    /// Extracts Markdown tags from `text` in encounter order, unconditional on
-    /// `has_marker`.
-    ///
-    /// Tags keep their leading `#`. Mid-word occurrences like `foo#bar` are
-    /// rejected.
-    #[inline]
-    #[must_use]
-    #[expect(
-        clippy::unused_self,
-        reason = "method for API symmetry with extract_fields; has_marker \
-                  deliberately does not affect tag extraction"
-    )]
-    pub(super) fn extract_tags(self, text: &str) -> Vec<Tag> {
-        let lexer = TagToken::lexer(text);
-        let mut tags = Vec::new();
-        for result in lexer {
-            if let Ok(TagToken::Tag(tag)) = result {
-                tags.push(tag);
-            }
-        }
-        tags
-    }
+    fields
 }
 
 /// Returns the character immediately before the current match.
@@ -93,7 +31,7 @@ impl InlineTokenLexer {
 /// Returns `None` if the match starts at the beginning of the source. Shared by
 /// [`body_field_callback`] and [`tag_callback`], both of which need a
 /// look-behind check that logos' regex dialect cannot express.
-fn char_before<'source, T>(lex: &Lexer<'source, T>) -> Option<char>
+pub(super) fn char_before<'source, T>(lex: &Lexer<'source, T>) -> Option<char>
 where
     T: Logos<'source, Source = str>,
 {
@@ -108,10 +46,10 @@ const ISO_DATE_LEN: usize = 10;
 /// Field-token mode controlling whether task emoji shorthands are recognized.
 ///
 /// Used as [`FieldToken`]'s logos `extras` value so
-/// [`InlineTokenLexer::extract_fields`] chooses its lexer behavior without
+/// [`scan_fields`] chooses its lexer behavior without
 /// passing a bare `bool`.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-enum TaskShorthands {
+pub(super) enum TaskShorthands {
     /// Recognizes task emoji shorthands.
     Include,
     /// Ignores task emoji shorthands.
@@ -266,45 +204,6 @@ fn task_field_callback(
     Filter::Emit((key, NoteFieldValue::Date(value)))
 }
 
-/// Token stream for Markdown tags in free-form text.
-///
-/// - [`Self::Tag`] carries an emitted [`Tag`].
-/// - [`Self::Ignored`] skips ordinary text.
-///
-/// [`tag_callback`] returns [`Filter::Skip`] to reject non-tag `#` characters
-/// without swallowing the rest of the text.
-#[derive(Clone, Debug, PartialEq, Logos)]
-enum TagToken {
-    #[token("#", tag_callback)]
-    Tag(Tag),
-    #[regex(r"[\s\S]", priority = 0)]
-    Ignored,
-}
-
-/// Parses a Markdown tag after its already-consumed leading `#`.
-///
-/// Rejects a mid-word `#`, such as `foo#bar`, and a `#` not followed by an
-/// alphabetic character, such as `#1`.
-fn tag_callback(lex: &mut Lexer<'_, TagToken>) -> Filter<Tag> {
-    let preceded_by_word_char =
-        char_before(lex).is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
-    if preceded_by_word_char {
-        return Filter::Skip;
-    }
-    let tag_start = lex.span().start;
-    let Some(tail) = lex.source().get(tag_start..) else {
-        return Filter::Skip;
-    };
-    let Some(tag_len) = Tag::prefix_len(tail) else {
-        return Filter::Skip;
-    };
-    lex.bump(tag_len.saturating_sub('#'.len_utf8()));
-    match Tag::parse(lex.slice()) {
-        Ok(tag) => Filter::Emit(tag),
-        Err(_) => Filter::Skip,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -316,6 +215,9 @@ mod tests {
         use super::*;
         use crate::note::{Link, LinkType, NoteFieldValue};
 
+        fn extract_fields(input: &str) -> Vec<(FieldKey, NoteFieldValue)> {
+            scan_fields(input, TaskShorthands::Exclude)
+        }
         #[rstest]
         #[case::body("Author:: Jane Doe", "Author", "Jane Doe")]
         #[case::visible_key(
@@ -329,7 +231,7 @@ mod tests {
             #[case] expected_key: &str,
             #[case] expected_value: &str,
         ) {
-            let fields = InlineTokenLexer::new(false).extract_fields(input);
+            let fields = extract_fields(input);
 
             assert_eq!(fields.len(), 1);
             assert_eq!(
@@ -344,8 +246,7 @@ mod tests {
 
         #[test]
         fn rejects_a_multi_word_bare_key() {
-            let fields = InlineTokenLexer::new(false)
-                .extract_fields("This sentence has a :: but no key.");
+            let fields = extract_fields("This sentence has a :: but no key.");
 
             assert_eq!(fields.len(), 0);
         }
@@ -357,7 +258,7 @@ mod tests {
             #[case] input: &str,
             #[case] expected_key: &str,
         ) {
-            let fields = InlineTokenLexer::new(false).extract_fields(input);
+            let fields = extract_fields(input);
 
             assert_eq!(
                 fields.first().map(|(k, _)| k.name()),
@@ -373,8 +274,7 @@ mod tests {
 
         #[test]
         fn extracts_a_bare_field_from_each_line_of_a_multiline_buffer() {
-            let fields = InlineTokenLexer::new(false)
-                .extract_fields("Status:: Draft\nAuthor:: Jane Doe");
+            let fields = extract_fields("Status:: Draft\nAuthor:: Jane Doe");
 
             let keys: Vec<&str> =
                 fields.iter().map(|(k, _)| k.name()).collect();
@@ -383,8 +283,7 @@ mod tests {
 
         #[test]
         fn trims_surrounding_whitespace_from_the_value() {
-            let fields = InlineTokenLexer::new(false)
-                .extract_fields("Status::    Draft   ");
+            let fields = extract_fields("Status::    Draft   ");
 
             assert_eq!(
                 fields.first().and_then(|(_, v)| v.as_str()),
@@ -394,8 +293,7 @@ mod tests {
 
         #[test]
         fn extracts_an_empty_value_when_nothing_follows_the_double_colon() {
-            let fields =
-                InlineTokenLexer::new(false).extract_fields("Status::");
+            let fields = extract_fields("Status::");
 
             assert_eq!(
                 fields.first().map(|(_, v)| v),
@@ -418,15 +316,14 @@ mod tests {
             #[case] input: &str,
             #[case] expected: NoteFieldValue,
         ) {
-            let fields = InlineTokenLexer::new(false).extract_fields(input);
+            let fields = extract_fields(input);
 
             assert_eq!(fields.first().map(|(_, v)| v), Some(&expected));
         }
 
         #[test]
         fn parses_dataview_link_value() {
-            let fields = InlineTokenLexer::new(false)
-                .extract_fields("[link:: [[test]]]");
+            let fields = extract_fields("[link:: [[test]]]");
 
             assert_eq!(
                 fields.first().map(|(_, v)| v),
@@ -440,8 +337,7 @@ mod tests {
 
         #[test]
         fn parses_dataview_wikilink_value_with_commas_in_target() {
-            let fields = InlineTokenLexer::new(false)
-                .extract_fields("[link:: [[yes, no, and maybe]]]");
+            let fields = extract_fields("[link:: [[yes, no, and maybe]]]");
 
             assert_eq!(
                 fields.first().map(|(_, v)| v),
@@ -455,8 +351,7 @@ mod tests {
 
         #[test]
         fn preserves_dataview_html_link_values_as_text() {
-            let fields = InlineTokenLexer::new(false)
-                .extract_fields(r#"[link:: <a href="Page">Value</a>]"#);
+            let fields = extract_fields(r#"[link:: <a href="Page">Value</a>]"#);
 
             assert_eq!(
                 fields.first().and_then(|(_, v)| v.as_str()),
@@ -466,8 +361,7 @@ mod tests {
 
         #[test]
         fn parses_dataview_embed_link_value() {
-            let fields = InlineTokenLexer::new(false)
-                .extract_fields("[embed:: ![[hello]]]");
+            let fields = extract_fields("[embed:: ![[hello]]]");
             let (_, value) = fields.first().expect("field present");
             assert!(matches!(
                 value,
@@ -525,15 +419,14 @@ mod tests {
             #[case] input: &str,
             #[case] expected: NoteFieldValue,
         ) {
-            let fields = InlineTokenLexer::new(false).extract_fields(input);
+            let fields = extract_fields(input);
 
             assert_eq!(fields.first().map(|(_, v)| v), Some(&expected));
         }
 
         #[test]
         fn parses_quoted_string_with_comma() {
-            let fields = InlineTokenLexer::new(false)
-                .extract_fields(r#"[str:: "yes,"]"#);
+            let fields = extract_fields(r#"[str:: "yes,"]"#);
 
             assert_eq!(
                 fields.first().map(|(_, v)| v),
@@ -543,8 +436,7 @@ mod tests {
 
         #[test]
         fn parses_quoted_string_with_escaped_quote() {
-            let fields = InlineTokenLexer::new(false)
-                .extract_fields(r#"[str:: "yes, \"maybe\""]"#);
+            let fields = extract_fields(r#"[str:: "yes, \"maybe\""]"#);
 
             assert_eq!(
                 fields.first().map(|(_, v)| v),
@@ -554,8 +446,7 @@ mod tests {
 
         #[test]
         fn extracts_nested_bracket_value() {
-            let fields = InlineTokenLexer::new(false)
-                .extract_fields("This is some text. [key:: [value]]");
+            let fields = extract_fields("This is some text. [key:: [value]]");
 
             assert_eq!(fields.first().map(|(k, _)| k.name()), Some("key"));
             assert_eq!(
@@ -566,8 +457,7 @@ mod tests {
 
         #[test]
         fn accepts_punctuation_in_wrapped_keys() {
-            let fields = InlineTokenLexer::new(false)
-                .extract_fields(r"Hello? [key! :: \[value]");
+            let fields = extract_fields(r"Hello? [key! :: \[value]");
 
             assert_eq!(fields.first().map(|(k, _)| k.name()), Some("key!"));
             assert_eq!(
@@ -578,16 +468,14 @@ mod tests {
 
         #[test]
         fn drops_a_wrapped_field_whose_key_has_no_searchable_characters() {
-            let fields = InlineTokenLexer::new(false)
-                .extract_fields("Hello [!!!:: value]");
+            let fields = extract_fields("Hello [!!!:: value]");
 
             assert_eq!(fields, []);
         }
 
         #[test]
         fn keeps_escaped_closing_bracket_inside_visible_value() {
-            let fields = InlineTokenLexer::new(false)
-                .extract_fields(r"Hello [key:: \] value]");
+            let fields = extract_fields(r"Hello [key:: \] value]");
 
             assert_eq!(fields.first().map(|(k, _)| k.name()), Some("key"));
             assert_eq!(
@@ -598,8 +486,7 @@ mod tests {
 
         #[test]
         fn extracts_wrapped_field_after_large_leading_whitespace() {
-            let fields = InlineTokenLexer::new(false)
-                .extract_fields("      - [ ] Huh! [p:: 1]");
+            let fields = extract_fields("      - [ ] Huh! [p:: 1]");
 
             assert_eq!(fields.first().map(|(k, _)| k.name()), Some("p"));
             assert_eq!(
@@ -624,7 +511,7 @@ mod tests {
             #[case] input: &str,
             #[case] expected: &str,
         ) {
-            let fields = InlineTokenLexer::new(false).extract_fields(input);
+            let fields = extract_fields(input);
 
             let expected_dv =
                 DurationValue::parse(expected).expect("valid duration");
@@ -642,7 +529,7 @@ mod tests {
             #[case] expected_key: &str,
             #[case] expected_date: &str,
         ) {
-            let fields = InlineTokenLexer::new(true).extract_fields(input);
+            let fields = scan_fields(input, TaskShorthands::Include);
 
             assert_eq!(fields.len(), 1);
             assert_eq!(
@@ -658,15 +545,14 @@ mod tests {
         }
         #[test]
         fn accepts_a_bare_key_preceded_by_leading_whitespace() {
-            let fields =
-                InlineTokenLexer::new(false).extract_fields("  Status:: Draft");
+            let fields = extract_fields("  Status:: Draft");
 
             assert_eq!(fields.first().map(|(k, _)| k.name()), Some("Status"));
         }
 
         #[test]
         fn orders_matches_by_position_across_forms() {
-            let fields = InlineTokenLexer::new(false).extract_fields(
+            let fields = extract_fields(
                 "Status:: Draft\nSee [Reviewer:: Jane] and (Editor:: Sam).",
             );
 
@@ -677,8 +563,7 @@ mod tests {
 
         #[test]
         fn body_field_value_swallows_a_nested_wrapped_field_look_alike() {
-            let fields = InlineTokenLexer::new(false)
-                .extract_fields("Status:: Draft [Key:: Value]");
+            let fields = extract_fields("Status:: Draft [Key:: Value]");
 
             assert_eq!(fields.len(), 1);
             assert_eq!(fields.first().map(|(k, _)| k.name()), Some("Status"));
@@ -693,7 +578,6 @@ mod tests {
         use pretty_assertions::assert_eq;
         use rstest::rstest;
 
-        use super::*;
         use crate::Tag;
 
         #[rstest]
@@ -721,7 +605,7 @@ mod tests {
             #[case] input: &str,
             #[case] expected: &[&str],
         ) {
-            let tags = InlineTokenLexer::new(false).extract_tags(input);
+            let tags = crate::note::parser::tag::scan_tags(input);
 
             let expected: Vec<Tag> =
                 expected.iter().map(|tag| Tag::parse(tag).unwrap()).collect();

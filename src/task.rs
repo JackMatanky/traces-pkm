@@ -9,11 +9,12 @@
 //! - [`TaskStatusType`]: the workflow classification of a status (todo,
 //!   in-progress, on-hold, done, cancelled, non-task).
 //! - [`TaskStatusSymbol`]: the marker character inside `[<char>]`.
+//! - [`TaskDateSet`]: set of lifecycle dates (created, scheduled, start, due,
+//!   done, cancelled).
+//! - [`TaskDate`]: single lifecycle date occurrence paired with its slot.
+//! - [`TaskDateType`]: enum of the six lifecycle date slots.
 //! - [`TaskPriority`]: six-level task priority enum mapped to emoji and text
 //!   representations.
-//! - [`TaskDates`]: six distinct task-lifecycle calendar dates (created,
-//!   scheduled, start, due, done, cancelled).
-//! - [`TaskError`]: error type for task domain parsing failures.
 
 use std::collections::HashMap;
 
@@ -372,6 +373,205 @@ fn normalize_name(name: &str) -> String {
     out
 }
 
+/// Set of lifecycle dates associated with a
+/// [`TaskListItem`](crate::TaskListItem).
+///
+/// Stores at most one calendar date per [`TaskDateType`] slot. Preserves an
+/// unversioned, deterministic postcard memory layout.
+#[derive(
+    Copy, Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize,
+)]
+pub struct TaskDateSet {
+    created: Option<DateValue>,
+    scheduled: Option<DateValue>,
+    start: Option<DateValue>,
+    due: Option<DateValue>,
+    done: Option<DateValue>,
+    cancelled: Option<DateValue>,
+}
+
+impl TaskDateSet {
+    /// Inserts a [`TaskDate`] into its corresponding slot.
+    ///
+    /// Adheres to first-wins precedence: if the slot is already occupied, the
+    /// incoming date is ignored.
+    #[inline]
+    pub(crate) fn insert(&mut self, date: TaskDate) {
+        let slot = match date.kind {
+            TaskDateType::Created => &mut self.created,
+            TaskDateType::Scheduled => &mut self.scheduled,
+            TaskDateType::Start => &mut self.start,
+            TaskDateType::Due => &mut self.due,
+            TaskDateType::Done => &mut self.done,
+            TaskDateType::Cancelled => &mut self.cancelled,
+        };
+        if slot.is_none() {
+            *slot = Some(date.date);
+        }
+    }
+
+    /// Returns the date value for `kind`, if set.
+    #[inline]
+    #[must_use]
+    pub const fn get(&self, kind: TaskDateType) -> Option<DateValue> {
+        match kind {
+            TaskDateType::Created => self.created,
+            TaskDateType::Scheduled => self.scheduled,
+            TaskDateType::Start => self.start,
+            TaskDateType::Due => self.due,
+            TaskDateType::Done => self.done,
+            TaskDateType::Cancelled => self.cancelled,
+        }
+    }
+
+    /// Returns `true` if no lifecycle dates are populated.
+    #[inline]
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.created.is_none()
+            && self.scheduled.is_none()
+            && self.start.is_none()
+            && self.due.is_none()
+            && self.done.is_none()
+            && self.cancelled.is_none()
+    }
+
+    /// Returns an iterator over all occupied lifecycle dates in declaration
+    /// order.
+    #[inline]
+    pub fn iter(&self) -> impl Iterator<Item = TaskDate> + '_ {
+        TaskDateType::ALL.into_iter().filter_map(|kind| {
+            self.get(kind).map(|date| TaskDate::new(kind, date))
+        })
+    }
+}
+
+impl FromIterator<TaskDate> for TaskDateSet {
+    #[inline]
+    fn from_iter<T: IntoIterator<Item = TaskDate>>(iter: T) -> Self {
+        let mut set = Self::default();
+        for date in iter {
+            set.insert(date);
+        }
+        set
+    }
+}
+
+impl Extend<TaskDate> for TaskDateSet {
+    #[inline]
+    fn extend<T: IntoIterator<Item = TaskDate>>(&mut self, iter: T) {
+        for date in iter {
+            self.insert(date);
+        }
+    }
+}
+
+/// A single task lifecycle date occurrence paired with its slot.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct TaskDate {
+    kind: TaskDateType,
+    date: DateValue,
+}
+
+impl TaskDate {
+    /// Creates a new [`TaskDate`] pairing a lifecycle slot with its calendar
+    /// date.
+    #[inline]
+    #[must_use]
+    pub const fn new(kind: TaskDateType, date: DateValue) -> Self {
+        Self {
+            kind,
+            date,
+        }
+    }
+
+    /// Returns the lifecycle slot for this date.
+    #[inline]
+    #[must_use]
+    pub const fn kind(&self) -> TaskDateType {
+        self.kind
+    }
+
+    /// Returns the calendar date value.
+    #[inline]
+    #[must_use]
+    pub const fn date(&self) -> DateValue {
+        self.date
+    }
+}
+
+/// Lifecycle slot of a task date.
+///
+/// Represents the six recognized task lifecycle calendar dates supported by
+/// Obsidian Tasks syntax and Dataview inline fields.
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+pub enum TaskDateType {
+    /// Date the task was created (`➕` or `[created::]`).
+    Created,
+    /// Date the task is scheduled (`⏳` or `[scheduled::]`).
+    Scheduled,
+    /// Date work on the task begins (`🛫` or `[start::]`).
+    Start,
+    /// Date the task is due (`📅`, `🗓`, or `[due::]`).
+    Due,
+    /// Date the task was completed (`✅`, `[done::]`, or `[completion::]`).
+    Done,
+    /// Date the task was cancelled (`❌` or `[cancelled::]`).
+    Cancelled,
+}
+
+impl TaskDateType {
+    /// Declaration order array defining deterministic iteration order for
+    /// [`TaskDateSet::iter`].
+    pub const ALL: [Self; 6] = [
+        Self::Created,
+        Self::Scheduled,
+        Self::Start,
+        Self::Due,
+        Self::Done,
+        Self::Cancelled,
+    ];
+    /// Base emoji spellings in precedence order.
+    pub const EMOJIS: &'static [(&'static str, Self)] = &[
+        ("\u{2795}", Self::Created),
+        ("\u{23F3}", Self::Scheduled),
+        ("\u{1F6EB}", Self::Start),
+        ("\u{1F4C5}", Self::Due),
+        ("\u{1F5D3}", Self::Due),
+        ("\u{2705}", Self::Done),
+        ("\u{274C}", Self::Cancelled),
+    ];
+
+    /// Resolves a lifecycle slot from an emoji, ignoring trailing variation
+    /// selectors.
+    #[inline]
+    #[must_use]
+    pub fn from_emoji(emoji: &str) -> Option<Self> {
+        let trimmed = emoji.trim_end_matches('\u{FE0F}');
+        Self::EMOJIS.iter().find_map(|&(e, kind)| {
+            if e == trimmed {
+                Some(kind)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Returns canonical inline field aliases for this lifecycle slot.
+    #[inline]
+    #[must_use]
+    pub const fn field_keys(self) -> &'static [&'static str] {
+        match self {
+            Self::Created => &["created"],
+            Self::Scheduled => &["scheduled"],
+            Self::Start => &["start"],
+            Self::Due => &["due"],
+            Self::Done => &["done", "completion"],
+            Self::Cancelled => &["cancelled"],
+        }
+    }
+}
+
 /// Task priority level.
 ///
 /// Supports six priority levels ordered from lowest to highest:
@@ -417,6 +617,35 @@ pub enum TaskPriority {
 }
 
 impl TaskPriority {
+    /// Parses a priority from an emoji, with or without variation selector 16
+    /// (`\u{FE0F}`).
+    ///
+    /// | Emoji | Priority |
+    /// | ----- | -------- |
+    /// | 🔺    | highest  |
+    /// | ⏫    | high     |
+    /// | 🔼    | medium   |
+    /// | 🔽    | low      |
+    /// | ⏬    | lowest   |
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use traces_pkm::TaskPriority;
+    ///
+    /// assert_eq!(TaskPriority::from_emoji("🔺"), Some(TaskPriority::Highest));
+    /// assert_eq!(TaskPriority::from_emoji("⏬"), Some(TaskPriority::Lowest));
+    /// assert_eq!(TaskPriority::from_emoji("invalid"), None);
+    /// ```
+    /// Base priority emoji spellings in severity order.
+    pub const EMOJIS: &'static [(&'static str, Self)] = &[
+        ("\u{1F53A}", Self::Highest),
+        ("\u{23EB}", Self::High),
+        ("\u{1F53C}", Self::Medium),
+        ("\u{1F53D}", Self::Low),
+        ("\u{23EC}", Self::Lowest),
+    ];
+
     /// Returns the canonical lowercase string name of the priority.
     ///
     /// # Examples
@@ -460,16 +689,7 @@ impl TaskPriority {
         }
     }
 
-    /// Parses a priority from an emoji, with or without variation selector 16
-    /// (`\u{FE0F}`).
-    ///
-    /// | Emoji | Priority |
-    /// | ----- | -------- |
-    /// | 🔺    | highest  |
-    /// | ⏫    | high     |
-    /// | 🔼    | medium   |
-    /// | 🔽    | low      |
-    /// | ⏬    | lowest   |
+    /// Resolves priority from an emoji, ignoring trailing variation selectors.
     ///
     /// # Examples
     ///
@@ -477,21 +697,19 @@ impl TaskPriority {
     /// use traces_pkm::TaskPriority;
     ///
     /// assert_eq!(TaskPriority::from_emoji("🔺"), Some(TaskPriority::Highest));
-    /// assert_eq!(TaskPriority::from_emoji("⏬"), Some(TaskPriority::Lowest));
     /// assert_eq!(TaskPriority::from_emoji("invalid"), None);
     /// ```
     #[inline]
     #[must_use]
     pub fn from_emoji(emoji: &str) -> Option<Self> {
         let trimmed = emoji.trim_end_matches('\u{FE0F}');
-        match trimmed {
-            "\u{1F53A}" => Some(Self::Highest),
-            "\u{23EB}" => Some(Self::High),
-            "\u{1F53C}" => Some(Self::Medium),
-            "\u{1F53D}" => Some(Self::Low),
-            "\u{23EC}" => Some(Self::Lowest),
-            _ => None,
-        }
+        Self::EMOJIS.iter().find_map(|&(e, p)| {
+            if e == trimmed {
+                Some(p)
+            } else {
+                None
+            }
+        })
     }
 
     /// Returns the canonical emoji representation for this priority, or
@@ -544,206 +762,6 @@ impl std::str::FromStr for TaskPriority {
                 })
             }
         }
-    }
-}
-
-/// Date metadata associated with a [`TaskListItem`](crate::TaskListItem).
-///
-/// Stores six distinct task-lifecycle dates parsed from emoji shorthand or
-/// Dataview inline field syntax. Missing dates are represented as [`None`].
-///
-/// # Examples
-///
-/// ```rust
-/// use chrono::NaiveDate;
-/// use traces_pkm::{DateValue, TaskDates};
-///
-/// let due = NaiveDate::from_ymd_opt(2025, 1, 15).map(DateValue::from);
-/// let dates = TaskDates::new(None, None, None, due, None, None);
-/// assert!(!dates.is_empty());
-/// assert_eq!(dates.due(), due);
-/// ```
-#[derive(
-    Copy, Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize,
-)]
-pub struct TaskDates {
-    /// Date when the task was created (`➕` or `[created::]`).
-    created: Option<DateValue>,
-    /// Date when the task is scheduled (`⏳` or `[scheduled::]`).
-    scheduled: Option<DateValue>,
-    /// Date when work on the task begins (`🛫` or `[start::]`).
-    start: Option<DateValue>,
-    /// Date when the task is due (`📅` or `[due::]`).
-    due: Option<DateValue>,
-    /// Date when the task was completed (`✅` or `[done::]`).
-    done: Option<DateValue>,
-    /// Date when the task was cancelled (`❌` or `[cancelled::]`).
-    cancelled: Option<DateValue>,
-}
-
-impl TaskDates {
-    /// Creates a new [`Self`] instance with all dates specified.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use chrono::NaiveDate;
-    /// use traces_pkm::{DateValue, TaskDates};
-    ///
-    /// let due = NaiveDate::from_ymd_opt(2025, 1, 15).map(DateValue::from);
-    /// let dates = TaskDates::new(None, None, None, due, None, None);
-    /// assert_eq!(dates.due(), due);
-    /// ```
-    #[inline]
-    #[must_use]
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "constructor accepts all 6 task dates"
-    )]
-    pub const fn new(
-        created: Option<DateValue>,
-        scheduled: Option<DateValue>,
-        start: Option<DateValue>,
-        due: Option<DateValue>,
-        done: Option<DateValue>,
-        cancelled: Option<DateValue>,
-    ) -> Self {
-        Self {
-            created,
-            scheduled,
-            start,
-            due,
-            done,
-            cancelled,
-        }
-    }
-
-    /// Returns `true` if no dates are set.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use traces_pkm::TaskDates;
-    ///
-    /// assert!(TaskDates::default().is_empty());
-    /// ```
-    #[inline]
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.created.is_none()
-            && self.scheduled.is_none()
-            && self.start.is_none()
-            && self.due.is_none()
-            && self.done.is_none()
-            && self.cancelled.is_none()
-    }
-
-    /// Returns the task's creation date, if set.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use chrono::NaiveDate;
-    /// use traces_pkm::{DateValue, TaskDates};
-    ///
-    /// let created = NaiveDate::from_ymd_opt(2025, 1, 1).map(DateValue::from);
-    /// let dates = TaskDates::new(created, None, None, None, None, None);
-    /// assert_eq!(dates.created(), created);
-    /// ```
-    #[inline]
-    #[must_use]
-    pub const fn created(&self) -> Option<DateValue> {
-        self.created
-    }
-
-    /// Returns the task's scheduled date, if set.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use chrono::NaiveDate;
-    /// use traces_pkm::{DateValue, TaskDates};
-    ///
-    /// let scheduled = NaiveDate::from_ymd_opt(2025, 1, 10).map(DateValue::from);
-    /// let dates = TaskDates::new(None, scheduled, None, None, None, None);
-    /// assert_eq!(dates.scheduled(), scheduled);
-    /// ```
-    #[inline]
-    #[must_use]
-    pub const fn scheduled(&self) -> Option<DateValue> {
-        self.scheduled
-    }
-
-    /// Returns the task's start date, if set.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use chrono::NaiveDate;
-    /// use traces_pkm::{DateValue, TaskDates};
-    ///
-    /// let start = NaiveDate::from_ymd_opt(2025, 1, 12).map(DateValue::from);
-    /// let dates = TaskDates::new(None, None, start, None, None, None);
-    /// assert_eq!(dates.start(), start);
-    /// ```
-    #[inline]
-    #[must_use]
-    pub const fn start(&self) -> Option<DateValue> {
-        self.start
-    }
-
-    /// Returns the task's due date, if set.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use chrono::NaiveDate;
-    /// use traces_pkm::{DateValue, TaskDates};
-    ///
-    /// let due = NaiveDate::from_ymd_opt(2025, 1, 15).map(DateValue::from);
-    /// let dates = TaskDates::new(None, None, None, due, None, None);
-    /// assert_eq!(dates.due(), due);
-    /// ```
-    #[inline]
-    #[must_use]
-    pub const fn due(&self) -> Option<DateValue> {
-        self.due
-    }
-
-    /// Returns the task's completion date, if set.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use chrono::NaiveDate;
-    /// use traces_pkm::{DateValue, TaskDates};
-    ///
-    /// let done = NaiveDate::from_ymd_opt(2025, 1, 20).map(DateValue::from);
-    /// let dates = TaskDates::new(None, None, None, None, done, None);
-    /// assert_eq!(dates.done(), done);
-    /// ```
-    #[inline]
-    #[must_use]
-    pub const fn done(&self) -> Option<DateValue> {
-        self.done
-    }
-
-    /// Returns the task's cancellation date, if set.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use chrono::NaiveDate;
-    /// use traces_pkm::{DateValue, TaskDates};
-    ///
-    /// let cancelled = NaiveDate::from_ymd_opt(2025, 1, 22).map(DateValue::from);
-    /// let dates = TaskDates::new(None, None, None, None, None, cancelled);
-    /// assert_eq!(dates.cancelled(), cancelled);
-    /// ```
-    #[inline]
-    #[must_use]
-    pub const fn cancelled(&self) -> Option<DateValue> {
-        self.cancelled
     }
 }
 
@@ -1161,76 +1179,148 @@ mod tests {
         }
     }
 
-    mod task_dates {
+    mod task_date_set {
         use chrono::NaiveDate;
         use pretty_assertions::assert_eq;
 
         use super::*;
 
-        #[test]
-        fn is_empty_when_all_dates_are_absent() {
-            let dates = TaskDates::default();
+        const _: () = assert!(
+            std::mem::size_of::<TaskDateSet>()
+                == std::mem::size_of::<[Option<DateValue>; 6]>()
+        );
 
-            assert_eq!(dates.is_empty(), true);
+        #[test]
+        fn is_empty_when_default() {
+            let set = TaskDateSet::default();
+            assert_eq!(set.is_empty(), true);
         }
 
         #[test]
-        fn is_not_empty_when_a_lifecycle_date_is_present() {
-            let dates = TaskDates::new(
-                None,
-                None,
-                None,
-                NaiveDate::from_ymd_opt(2025, 1, 15).map(Into::into),
-                None,
-                None,
+        fn insert_occupies_slot_and_is_not_empty() {
+            let mut set = TaskDateSet::default();
+            let d = NaiveDate::from_ymd_opt(2025, 1, 15)
+                .map(DateValue::from)
+                .unwrap();
+            set.insert(TaskDate::new(TaskDateType::Due, d));
+            assert_eq!(set.is_empty(), false);
+            assert_eq!(set.get(TaskDateType::Due), Some(d));
+        }
+
+        #[test]
+        fn insert_ignores_duplicate_insertion_into_occupied_slot() {
+            let mut set = TaskDateSet::default();
+            let d1 = NaiveDate::from_ymd_opt(2025, 1, 15)
+                .map(DateValue::from)
+                .unwrap();
+            let d2 = NaiveDate::from_ymd_opt(2025, 2, 20)
+                .map(DateValue::from)
+                .unwrap();
+            set.insert(TaskDate::new(TaskDateType::Due, d1));
+            set.insert(TaskDate::new(TaskDateType::Due, d2));
+            assert_eq!(set.get(TaskDateType::Due), Some(d1));
+        }
+
+        #[test]
+        fn iter_yields_occupied_slots_in_declaration_order() {
+            let mut set = TaskDateSet::default();
+            let d1 = NaiveDate::from_ymd_opt(2025, 1, 1)
+                .map(DateValue::from)
+                .unwrap();
+            let d2 = NaiveDate::from_ymd_opt(2025, 1, 6)
+                .map(DateValue::from)
+                .unwrap();
+            set.insert(TaskDate::new(TaskDateType::Cancelled, d2));
+            set.insert(TaskDate::new(TaskDateType::Created, d1));
+            let items: Vec<TaskDate> = set.iter().collect();
+            assert_eq!(items, vec![
+                TaskDate::new(TaskDateType::Created, d1),
+                TaskDate::new(TaskDateType::Cancelled, d2),
+            ]);
+        }
+
+        #[test]
+        fn from_iterator_and_extend_collect_first_wins() {
+            let d1 = NaiveDate::from_ymd_opt(2025, 1, 1)
+                .map(DateValue::from)
+                .unwrap();
+            let d2 = NaiveDate::from_ymd_opt(2025, 1, 2)
+                .map(DateValue::from)
+                .unwrap();
+            let set = TaskDateSet::from_iter([
+                TaskDate::new(TaskDateType::Due, d1),
+                TaskDate::new(TaskDateType::Due, d2),
+            ]);
+            assert_eq!(set.get(TaskDateType::Due), Some(d1));
+
+            let mut extended = set;
+            let d3 = NaiveDate::from_ymd_opt(2025, 1, 3)
+                .map(DateValue::from)
+                .unwrap();
+            extended.extend([
+                TaskDate::new(TaskDateType::Due, d3),
+                TaskDate::new(TaskDateType::Start, d3),
+            ]);
+            assert_eq!(extended.get(TaskDateType::Due), Some(d1));
+            assert_eq!(extended.get(TaskDateType::Start), Some(d3));
+        }
+
+        #[test]
+        fn preserves_slots_across_postcard_roundtrip() {
+            let due = NaiveDate::from_ymd_opt(2025, 1, 15)
+                .map(DateValue::from)
+                .unwrap();
+            let mut set = TaskDateSet::default();
+            set.insert(TaskDate::new(TaskDateType::Due, due));
+            let bytes = postcard::to_allocvec(&set).expect("encode dates");
+            let decoded: TaskDateSet =
+                postcard::from_bytes(&bytes).expect("decode dates");
+
+            assert_eq!(decoded, set);
+            assert_eq!(decoded.get(TaskDateType::Due), Some(due));
+        }
+
+        #[test]
+        fn decodes_pre_c1_wire_fixture() {
+            const HEX: &str =
+                "010a323032352d30312d3031\
+                 010a323032352d30312d3032\
+                 010a323032352d30312d3033\
+                 010a323032352d30312d3034\
+                 010a323032352d30312d3035\
+                 010a323032352d30312d3036";
+            let bytes: Vec<u8> = (0..HEX.len())
+                .step_by(2)
+                .map(|i| {
+                    u8::from_str_radix(&HEX[i..i + 2], 16).expect("valid hex")
+                })
+                .collect();
+            let decoded: TaskDateSet = postcard::from_bytes(&bytes)
+                .expect("decode pre-c1 dates wire bytes");
+            assert_eq!(
+                decoded.get(TaskDateType::Created),
+                NaiveDate::from_ymd_opt(2025, 1, 1).map(DateValue::from)
             );
-
-            assert_eq!(dates.is_empty(), false);
-        }
-
-        #[test]
-        fn returns_configured_date_values() {
-            let created =
-                NaiveDate::from_ymd_opt(2025, 1, 1).map(DateValue::from);
-            let scheduled =
-                NaiveDate::from_ymd_opt(2025, 1, 2).map(DateValue::from);
-            let start =
-                NaiveDate::from_ymd_opt(2025, 1, 3).map(DateValue::from);
-            let due = NaiveDate::from_ymd_opt(2025, 1, 4).map(DateValue::from);
-            let done = NaiveDate::from_ymd_opt(2025, 1, 5).map(DateValue::from);
-            let cancelled =
-                NaiveDate::from_ymd_opt(2025, 1, 6).map(DateValue::from);
-            let dates =
-                TaskDates::new(created, scheduled, start, due, done, cancelled);
-
-            assert_eq!(dates.created(), created);
-            assert_eq!(dates.scheduled(), scheduled);
-            assert_eq!(dates.start(), start);
-            assert_eq!(dates.due(), due);
-            assert_eq!(dates.done(), done);
-            assert_eq!(dates.cancelled(), cancelled);
-        }
-
-        #[test]
-        fn preserves_all_none_dates_across_postcard_roundtrip() {
-            let dates = TaskDates::default();
-            let bytes = postcard::to_allocvec(&dates).expect("encode dates");
-            let decoded: TaskDates =
-                postcard::from_bytes(&bytes).expect("decode dates");
-
-            assert_eq!(decoded, dates);
-        }
-
-        #[test]
-        fn preserves_partially_populated_dates_across_postcard_roundtrip() {
-            let due = NaiveDate::from_ymd_opt(2025, 1, 15).map(DateValue::from);
-            let dates = TaskDates::new(None, None, None, due, None, None);
-            let bytes = postcard::to_allocvec(&dates).expect("encode dates");
-            let decoded: TaskDates =
-                postcard::from_bytes(&bytes).expect("decode dates");
-
-            assert_eq!(decoded, dates);
-            assert_eq!(decoded.due(), due);
+            assert_eq!(
+                decoded.get(TaskDateType::Scheduled),
+                NaiveDate::from_ymd_opt(2025, 1, 2).map(DateValue::from)
+            );
+            assert_eq!(
+                decoded.get(TaskDateType::Start),
+                NaiveDate::from_ymd_opt(2025, 1, 3).map(DateValue::from)
+            );
+            assert_eq!(
+                decoded.get(TaskDateType::Due),
+                NaiveDate::from_ymd_opt(2025, 1, 4).map(DateValue::from)
+            );
+            assert_eq!(
+                decoded.get(TaskDateType::Done),
+                NaiveDate::from_ymd_opt(2025, 1, 5).map(DateValue::from)
+            );
+            assert_eq!(
+                decoded.get(TaskDateType::Cancelled),
+                NaiveDate::from_ymd_opt(2025, 1, 6).map(DateValue::from)
+            );
         }
     }
 }

@@ -23,7 +23,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::field::NoteFieldValue;
-use crate::{FieldKey, SourceLine, Tag, TaskDates, TaskPriority, TaskStatus};
+use crate::{FieldKey, SourceLine, Tag, TaskDateSet, TaskPriority, TaskStatus};
 /// Compact inline field map for a list item.
 pub(crate) type ListFieldMap = IndexMap<FieldKey, Box<[NoteFieldValue]>>;
 
@@ -244,10 +244,10 @@ impl ListItemType {
     /// # Examples
     ///
     /// ```rust
-    /// use traces_pkm::{ListItemType, TaskDates, TaskListItem, TaskStatus};
+    /// use traces_pkm::{ListItemType, TaskDateSet, TaskListItem, TaskStatus};
     ///
     /// let kind = ListItemType::Task(TaskListItem::new(
-    ///     TaskDates::default(),
+    ///     TaskDateSet::default(),
     ///     None,
     ///     TaskStatus::default(),
     ///     false,
@@ -267,10 +267,10 @@ impl ListItemType {
     /// # Examples
     ///
     /// ```rust
-    /// use traces_pkm::{ListItemType, TaskDates, TaskListItem, TaskStatus};
+    /// use traces_pkm::{ListItemType, TaskDateSet, TaskListItem, TaskStatus};
     ///
     /// let kind = ListItemType::Task(TaskListItem::new(
-    ///     TaskDates::default(),
+    ///     TaskDateSet::default(),
     ///     None,
     ///     TaskStatus::default(),
     ///     false,
@@ -324,17 +324,17 @@ impl ListItemType {
 
 /// Task-specific data carried by a [`ListItemType::Task`] item.
 ///
-/// Encapsulates extracted task lifecycle dates ([`TaskDates`]), an optional
+/// Encapsulates extracted task lifecycle dates ([`TaskDateSet`]), an optional
 /// priority ([`TaskPriority`]), the resolved [`TaskStatus`], and a precomputed
 /// boolean flag indicating whether the entire task subtree is complete.
 ///
 /// # Examples
 ///
 /// ```rust
-/// use traces_pkm::{TaskDates, TaskListItem, TaskPriority, TaskStatus};
+/// use traces_pkm::{TaskDateSet, TaskListItem, TaskPriority, TaskStatus};
 ///
 /// let task = TaskListItem::new(
-///     TaskDates::default(),
+///     TaskDateSet::default(),
 ///     Some(TaskPriority::Highest),
 ///     TaskStatus::default(),
 ///     true,
@@ -344,7 +344,7 @@ impl ListItemType {
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct TaskListItem {
-    dates: TaskDates,
+    dates: TaskDateSet,
     priority: Option<TaskPriority>,
     status: TaskStatus,
     fully_complete: bool,
@@ -357,10 +357,10 @@ impl TaskListItem {
     /// # Examples
     ///
     /// ```rust
-    /// use traces_pkm::{TaskDates, TaskListItem, TaskPriority, TaskStatus};
+    /// use traces_pkm::{TaskDateSet, TaskListItem, TaskPriority, TaskStatus};
     ///
     /// let task = TaskListItem::new(
-    ///     TaskDates::default(),
+    ///     TaskDateSet::default(),
     ///     Some(TaskPriority::Low),
     ///     TaskStatus::default(),
     ///     false,
@@ -370,7 +370,7 @@ impl TaskListItem {
     #[inline]
     #[must_use]
     pub const fn new(
-        dates: TaskDates,
+        dates: TaskDateSet,
         priority: Option<TaskPriority>,
         status: TaskStatus,
         fully_complete: bool,
@@ -389,10 +389,10 @@ impl TaskListItem {
     /// # Examples
     ///
     /// ```rust
-    /// use traces_pkm::{TaskDates, TaskListItem, TaskStatus};
+    /// use traces_pkm::{TaskDateSet, TaskListItem, TaskStatus};
     ///
     /// let task = TaskListItem::new(
-    ///     TaskDates::default(),
+    ///     TaskDateSet::default(),
     ///     None,
     ///     TaskStatus::default(),
     ///     true,
@@ -411,10 +411,10 @@ impl TaskListItem {
     /// # Examples
     ///
     /// ```rust
-    /// use traces_pkm::{TaskDates, TaskListItem, TaskStatus};
+    /// use traces_pkm::{TaskDateSet, TaskListItem, TaskStatus};
     ///
     /// let task = TaskListItem::new(
-    ///     TaskDates::default(),
+    ///     TaskDateSet::default(),
     ///     None,
     ///     TaskStatus::default(),
     ///     true,
@@ -432,10 +432,10 @@ impl TaskListItem {
     /// # Examples
     ///
     /// ```rust
-    /// use traces_pkm::{TaskDates, TaskListItem, TaskPriority, TaskStatus};
+    /// use traces_pkm::{TaskDateSet, TaskListItem, TaskPriority, TaskStatus};
     ///
     /// let task = TaskListItem::new(
-    ///     TaskDates::default(),
+    ///     TaskDateSet::default(),
     ///     Some(TaskPriority::Medium),
     ///     TaskStatus::default(),
     ///     false,
@@ -453,10 +453,10 @@ impl TaskListItem {
     /// # Examples
     ///
     /// ```rust
-    /// use traces_pkm::{TaskDates, TaskListItem, TaskStatus};
+    /// use traces_pkm::{TaskDateSet, TaskListItem, TaskStatus};
     ///
     /// let task = TaskListItem::new(
-    ///     TaskDates::default(),
+    ///     TaskDateSet::default(),
     ///     None,
     ///     TaskStatus::default(),
     ///     false,
@@ -465,7 +465,7 @@ impl TaskListItem {
     /// ```
     #[inline]
     #[must_use]
-    pub const fn dates(&self) -> TaskDates {
+    pub const fn dates(&self) -> TaskDateSet {
         self.dates
     }
 }
@@ -652,11 +652,11 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::{TaskStatusSymbol, TaskStatusType};
+    use crate::{TaskDate, TaskDateType, TaskStatusSymbol, TaskStatusType};
 
     fn done_task() -> ListItemType {
         ListItemType::Task(TaskListItem::new(
-            TaskDates::default(),
+            TaskDateSet::default(),
             None,
             TaskStatus::new(
                 TaskStatusSymbol::new('x'),
@@ -886,14 +886,16 @@ mod tests {
                     "Done",
                     TaskStatusType::Done,
                 );
-                let dates = TaskDates::new(
-                    NaiveDate::from_ymd_opt(2025, 1, 1).map(Into::into),
-                    None,
-                    None,
-                    NaiveDate::from_ymd_opt(2025, 1, 15).map(Into::into),
-                    None,
-                    None,
-                );
+                let dates = TaskDateSet::from_iter([
+                    TaskDate::new(
+                        TaskDateType::Created,
+                        NaiveDate::from_ymd_opt(2025, 1, 1).unwrap().into(),
+                    ),
+                    TaskDate::new(
+                        TaskDateType::Due,
+                        NaiveDate::from_ymd_opt(2025, 1, 15).unwrap().into(),
+                    ),
+                ]);
                 let item = TaskListItem::new(
                     dates,
                     Some(TaskPriority::High),
@@ -919,7 +921,7 @@ mod tests {
                     TaskStatusType::InProgress,
                 );
                 let item = TaskListItem::new(
-                    TaskDates::default(),
+                    TaskDateSet::default(),
                     None,
                     status.clone(),
                     false,
@@ -936,7 +938,7 @@ mod tests {
                     TaskStatusType::Todo,
                 );
                 let item = TaskListItem::new(
-                    TaskDates::default(),
+                    TaskDateSet::default(),
                     None,
                     status,
                     false,
@@ -953,7 +955,7 @@ mod tests {
                     TaskStatusType::Todo,
                 );
                 let item = TaskListItem::new(
-                    TaskDates::default(),
+                    TaskDateSet::default(),
                     Some(TaskPriority::Highest),
                     status,
                     false,
@@ -971,7 +973,7 @@ mod tests {
                     TaskStatusType::Todo,
                 );
                 let item = TaskListItem::new(
-                    TaskDates::default(),
+                    TaskDateSet::default(),
                     None,
                     status,
                     false,
@@ -988,19 +990,15 @@ mod tests {
                     "Todo",
                     TaskStatusType::Todo,
                 );
-                let dates = TaskDates::new(
-                    None,
-                    None,
-                    None,
-                    NaiveDate::from_ymd_opt(2025, 2, 1).map(Into::into),
-                    None,
-                    None,
-                );
+                let dates = TaskDateSet::from_iter([TaskDate::new(
+                    TaskDateType::Due,
+                    NaiveDate::from_ymd_opt(2025, 2, 1).unwrap().into(),
+                )]);
                 let item = TaskListItem::new(dates, None, status, false);
 
                 assert_eq!(item.dates(), dates);
                 assert_eq!(
-                    item.dates().due(),
+                    item.dates().get(TaskDateType::Due),
                     NaiveDate::from_ymd_opt(2025, 2, 1).map(Into::into)
                 );
             }
