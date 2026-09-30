@@ -552,13 +552,22 @@ mod tests {
         }
 
         #[test]
-        fn ordering_and_comparison() {
-            let s1 = Spanned::new("a", 0..2);
-            let s2 = Spanned::new("a", 0..3);
-            let s3 = Spanned::new("b", 0..1);
-            assert!(s1 < s2);
-            assert!(s2 < s3);
-            assert_eq!(s1.cmp(&s2), std::cmp::Ordering::Less);
+        fn orders_by_value_then_span_start_then_span_end() {
+            let same_value_earlier_start = Spanned::new("a", 0..2);
+            let same_value_longer_span = Spanned::new("a", 0..3);
+            let later_value = Spanned::new("b", 0..1);
+
+            assert!(same_value_earlier_start < same_value_longer_span);
+            assert!(same_value_longer_span < later_value);
+        }
+
+        #[test]
+        fn keeps_a_zero_length_span_ordered_by_its_position() {
+            let at_five = Spanned::new("a", 5..5);
+            let at_six = Spanned::new("a", 6..6);
+
+            assert_eq!(at_five.span(), 5..5);
+            assert!(at_five < at_six);
         }
     }
 }

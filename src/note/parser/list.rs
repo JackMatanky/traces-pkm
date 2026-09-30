@@ -284,7 +284,8 @@ pub(super) enum SubTaskCompletion {
 }
 
 impl SubTaskCompletion {
-    /// Initial state for a newly opened item before any child tasks exist.
+    /// Returns the initial completion state for a newly opened item before any
+    /// child tasks exist.
     ///
     /// A newly opened item contains zero child tasks, so its descendant tree
     /// contains no incomplete tasks until a child task is observed.
@@ -358,9 +359,9 @@ impl ItemBuffers {
     ///
     /// Writes a newline unless the buffer is empty or already newline-
     /// terminated, so nested block starts (a blockquote's inner paragraph, for
-    /// example) never double-separate. While `MarkerAccumulator` is buffering,
-    /// both buffers are empty, so a separator can never precede withheld
-    /// marker bytes.
+    /// example) never double-separate. While [`MarkerAccumulator`] is
+    /// buffering, both buffers are empty, so a separator can never precede
+    /// withheld marker bytes.
     fn separate_block(&mut self) {
         for buffer in [&mut self.text, &mut self.scan] {
             if !buffer.is_empty() && !buffer.ends_with('\n') {
@@ -1110,6 +1111,18 @@ mod tests {
                 panic!("must be task");
             };
             assert_eq!(parent_task.is_fully_complete(), false);
+        }
+
+        #[test]
+        fn returns_true_when_complete_task_is_nested_under_plain_child() {
+            let note =
+                parse("- [ ] Parent\n  - Plain bullet\n    - [x] Done subtask");
+
+            let parent = note.lists().first().expect("parent present");
+            let ListItemType::Task(parent_task) = parent.kind() else {
+                panic!("must be task");
+            };
+            assert_eq!(parent_task.is_fully_complete(), true);
         }
 
         #[test]

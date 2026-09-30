@@ -55,8 +55,8 @@ pub(super) fn tokenize_item_text(
 /// Returns the character immediately before the current match.
 ///
 /// Returns `None` if the match starts at the beginning of the source. Shared by
-/// [`body_field_callback`] and `tag_callback`, both of which need a look-behind
-/// check that logos' regex dialect cannot express.
+/// [`body_field_callback`] and [`tag_callback`], both of which need a
+/// look-behind check that logos' regex dialect cannot express.
 fn char_before<'source, T>(lex: &Lexer<'source, T>) -> Option<char>
 where
     T: Logos<'source, Source = str>,
@@ -214,11 +214,11 @@ fn wrapped_field_callback(
     Filter::Emit((key, parse_inline_value(value), FieldForm::Wrapped))
 }
 
-/// Parses a task emoji shorthand into an inline field.
+/// Parses a task emoji shorthand into a [`TaskDate`].
 ///
-/// Starts after the already-consumed emoji token and emits a field keyed by
-/// `key` when the following text is optional inline whitespace plus exactly
-/// [`ISO_DATE_LEN`] bytes forming a valid ISO date.
+/// Starts after the already-consumed emoji token and emits a [`TaskDate`] of
+/// kind `date_type` when the following text is optional inline whitespace plus
+/// exactly [`ISO_DATE_LEN`] bytes forming a valid ISO date.
 ///
 /// Always skips when `lex.extras` is [`TaskShorthands::Exclude`].
 fn task_date_callback(

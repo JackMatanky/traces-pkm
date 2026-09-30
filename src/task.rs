@@ -1081,6 +1081,20 @@ mod tests {
         ) {
             assert_eq!(kind.completed(), expected);
         }
+
+        #[rstest]
+        #[case::done(TaskStatusType::Done, true)]
+        #[case::cancelled(TaskStatusType::Cancelled, true)]
+        #[case::todo(TaskStatusType::Todo, false)]
+        #[case::in_progress(TaskStatusType::InProgress, false)]
+        #[case::on_hold(TaskStatusType::OnHold, false)]
+        #[case::non_task(TaskStatusType::NonTask, false)]
+        fn rolls_completion_up_to_a_boolean_per_status_type(
+            #[case] kind: TaskStatusType,
+            #[case] expected: bool,
+        ) {
+            assert_eq!(kind.is_complete(), expected);
+        }
     }
 
     mod status_map {

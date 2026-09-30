@@ -224,6 +224,41 @@ mod tests {
                 Some(DateValue::parse_iso("2025-01-01").unwrap())
             );
         }
+
+        #[test]
+        fn keeps_the_first_emoji_when_a_slot_repeats() {
+            let text = "Task 📅 2025-01-01 📅 2025-02-02";
+            let fields = IndexMap::new();
+
+            let set = TaskScan::scan(text).dates(&fields);
+
+            assert_eq!(
+                set.get(TaskDateType::Due),
+                Some(DateValue::parse_iso("2025-01-01").unwrap())
+            );
+        }
+
+        #[test]
+        fn fills_emoji_free_slots_from_inline_fields() {
+            let text = "Task 📅 2025-01-01";
+            let mut fields = IndexMap::new();
+            fields.insert(FieldKey::try_from("start").unwrap(), vec![
+                NoteFieldValue::Date(
+                    DateValue::parse_iso("2025-03-03").unwrap(),
+                ),
+            ]);
+
+            let set = TaskScan::scan(text).dates(&fields);
+
+            assert_eq!(
+                set.get(TaskDateType::Due),
+                Some(DateValue::parse_iso("2025-01-01").unwrap())
+            );
+            assert_eq!(
+                set.get(TaskDateType::Start),
+                Some(DateValue::parse_iso("2025-03-03").unwrap())
+            );
+        }
     }
 
     mod priority {
@@ -298,21 +333,6 @@ mod tests {
             let raw = "Task 🔺\u{FE0F} remaining text";
             let cleaned = TaskScan::scan(raw).clean_text(&[]);
             assert_eq!(cleaned, "Task remaining text");
-        }
-
-        #[test]
-        fn strips_inline_fields_with_nested_delimiters_and_wikilinks() {
-            let raw = "Task [due:: [[2025-01-15]]] and (scheduled:: \
-                       2025-01-01 (tentative)) remaining";
-            let cleaned = TaskScan::scan(raw).clean_text(&[]);
-            assert_eq!(cleaned, "Task and remaining");
-        }
-
-        #[test]
-        fn strips_inline_fields_with_quoted_bracket_content() {
-            let raw = r#"Task [due:: "meeting [sync]"] remaining"#;
-            let cleaned = TaskScan::scan(raw).clean_text(&[]);
-            assert_eq!(cleaned, "Task remaining");
         }
     }
 

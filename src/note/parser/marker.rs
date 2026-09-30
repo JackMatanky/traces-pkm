@@ -560,6 +560,19 @@ mod tests {
         }
 
         #[test]
+        fn preserves_a_multibyte_symbol_split_across_chunks() {
+            let mut acc = MarkerAccumulator::new();
+            let mut buffers = ItemBuffers::new();
+            acc.push_text("[✓", &mut buffers, false);
+            assert_eq!(buffers.text, "");
+            acc.push_text("] done", &mut buffers, false);
+            assert!(acc.is_marked());
+            assert_eq!(acc.marker_symbol(), Some('✓'));
+            assert_eq!(buffers.text, "done");
+            assert_eq!(buffers.scan, "done");
+        }
+
+        #[test]
         fn recognizes_bare_marker_at_line_end() {
             let mut acc = MarkerAccumulator::new();
             let mut buffers = ItemBuffers::new();
