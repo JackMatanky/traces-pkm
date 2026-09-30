@@ -13,12 +13,10 @@ use indexmap::IndexMap;
 
 use super::{
     FlushedFields,
-    lexer::InlineTokenLexer,
     marker::{MarkerPrefix, scan_marker_at_line_end, scan_marker_prefix},
 };
 use crate::{
-    DateValue, FieldKey, SourceLine, Tag, TaskDates, TaskPriority,
-    TaskStatusMap,
+    FieldKey, SourceLine, Tag, TaskStatusMap,
     note::{ListItem, ListItemType, ListText, NoteFieldValue, TaskListItem},
 };
 
@@ -96,8 +94,12 @@ impl ListTracker {
             return None;
         }
         let text = std::mem::take(&mut item.scan_buffer);
-        let lexer = InlineTokenLexer::new(item.classification.is_marked());
-        let raw_fields = lexer.extract_fields(&text);
+        let shorthands = if item.classification.is_marked() {
+            super::lexer::TaskShorthands::Include
+        } else {
+            super::lexer::TaskShorthands::Exclude
+        };
+        let raw_fields = super::lexer::scan_fields(&text, shorthands);
         // Two independently owned copies, not a borrow-checker workaround:
         // `item.fields` lets a task/list item resolve its own metadata
         // (`ListItem::fields`), while the returned copy feeds the caller's
@@ -109,12 +111,12 @@ impl ListTracker {
         let mut page_fields: IndexMap<FieldKey, Vec<NoteFieldValue>> =
             IndexMap::new();
         for (key, value) in raw_fields {
-            // ponytail: clone needed for two-out pattern (item + page fields)
+            // Clone needed for two-out pattern (item + page fields)
             item_fields.entry(key.clone()).or_default().push(value.clone());
             page_fields.entry(key).or_default().push(value);
         }
         item.fields = item_fields;
-        let tags = lexer.extract_tags(&text);
+        let tags = super::tag::scan_tags(&text);
         item.tags.extend(tags.iter().cloned());
         Some((page_fields, tags))
     }
@@ -180,8 +182,10 @@ impl ListTracker {
         if let Some(item_frame) = self.item_stack.pop() {
             // Borrowed before `text_buffer`/`fields` move out of the frame.
             let fully_complete = item_frame.is_descendant_tree_complete();
-            let clean =
-                compute_clean_text(&item_frame.text_buffer, tag_filters);
+            let clean = super::task::clean_task_text(
+                &item_frame.text_buffer,
+                tag_filters,
+            );
             let text = ListText::new(item_frame.text_buffer, clean);
             let item_type = match item_frame.classification {
                 ItemClassificationState::Marked(symbol) => {
@@ -192,12 +196,14 @@ impl ListTracker {
                             .iter()
                             .any(|tag| tag_filters.contains(tag))
                     {
-                        let priority = extract_task_priority(
+                        let priority = super::task::extract_task_priority(
                             text.raw(),
                             &item_frame.fields,
                         );
-                        let dates =
-                            extract_task_dates(text.raw(), &item_frame.fields);
+                        let dates = super::task::extract_task_dates(
+                            text.raw(),
+                            &item_frame.fields,
+                        );
                         ListItemType::Task(TaskListItem::new(
                             dates,
                             priority,
@@ -266,436 +272,6 @@ impl ListTracker {
     }
 }
 
-/// Extracts task priority from text emojis or an inline `[priority:: <level>]`
-/// field.
-///
-/// Priority emojis take precedence over inline fields. When multiple priority
-/// emojis are present, the first one in document order wins. Returns [`None`]
-/// if no priority is specified.
-fn extract_task_priority(
-    text: &str,
-    fields: &IndexMap<FieldKey, Vec<NoteFieldValue>>,
-) -> Option<TaskPriority> {
-    let mut first_priority = None;
-    let mut first_pos = usize::MAX;
-
-    for (emoji, priority) in [
-        ("\u{1F53A}", TaskPriority::Highest),
-        ("\u{23EB}", TaskPriority::High),
-        ("\u{1F53C}", TaskPriority::Medium),
-        ("\u{1F53D}", TaskPriority::Low),
-        ("\u{23EC}", TaskPriority::Lowest),
-    ] {
-        if let Some(pos) = text.find(emoji)
-            && pos < first_pos
-        {
-            first_pos = pos;
-            first_priority = Some(priority);
-        }
-    }
-
-    if let Some(priority) = first_priority {
-        return Some(priority);
-    }
-
-    for (key, values) in fields {
-        if !key.is_canonical_match("priority") {
-            continue;
-        }
-        for val in values {
-            let Some(s) = val.as_str() else {
-                continue;
-            };
-            if let Ok(p) = s.parse::<TaskPriority>() {
-                // `Normal` is represented as `None` on `TaskListItem` (see
-                // [`TaskPriority::Normal`]), so an explicit `normal` field
-                // collapses to `None` just like an unspecified priority.
-                return if matches!(p, TaskPriority::Normal) {
-                    None
-                } else {
-                    Some(p)
-                };
-            }
-        }
-    }
-
-    None
-}
-
-/// Extracts task dates from text emoji syntax and inline field syntax.
-///
-/// Supported dates: created (`➕`), scheduled (`⏳`), start (`🛫`), due (`📅`),
-/// done (`✅`), and cancelled (`❌`). When both emoji and inline field syntax
-/// are present for the same date field, emoji syntax wins.
-fn extract_task_dates(
-    text: &str,
-    fields: &IndexMap<FieldKey, Vec<NoteFieldValue>>,
-) -> TaskDates {
-    TaskDates::new(
-        extract_single_date(text, fields, &["\u{2795}"], &["created"]),
-        extract_single_date(text, fields, &["\u{23F3}"], &["scheduled"]),
-        extract_single_date(text, fields, &["\u{1F6EB}"], &["start"]),
-        extract_single_date(
-            text,
-            fields,
-            &[
-                "\u{1F4C5}\u{FE0F}",
-                "\u{1F4C5}",
-                "\u{1F5D3}\u{FE0F}",
-                "\u{1F5D3}",
-            ],
-            &["due"],
-        ),
-        extract_single_date(text, fields, &["\u{2705}"], &[
-            "done",
-            "completion",
-        ]),
-        extract_single_date(text, fields, &["\u{274C}"], &["cancelled"]),
-    )
-}
-
-/// Extracts a single date by first searching for any of `emojis` in `text`,
-/// then falling back to checking `fields` for any of `field_keys`.
-fn extract_single_date(
-    text: &str,
-    fields: &IndexMap<FieldKey, Vec<NoteFieldValue>>,
-    emojis: &[&str],
-    field_keys: &[&str],
-) -> Option<DateValue> {
-    for emoji in emojis {
-        if let Some(date) = parse_emoji_date(text, emoji) {
-            return Some(date);
-        }
-    }
-
-    for key_name in field_keys {
-        for (key, values) in fields {
-            if !key.is_canonical_match(key_name) {
-                continue;
-            }
-            for val in values {
-                if let Some(date) = val.as_date() {
-                    return Some(date.into());
-                }
-            }
-        }
-    }
-
-    None
-}
-
-/// Parses an ISO date immediately following `emoji` (with optional whitespace).
-fn parse_emoji_date(text: &str, emoji: &str) -> Option<DateValue> {
-    let mut search_from = 0;
-    while let Some(pos) = text.get(search_from..).and_then(|t| t.find(emoji)) {
-        let match_start = search_from.saturating_add(pos);
-        let emoji_end = match_start.saturating_add(emoji.len());
-        let after_emoji = &text[emoji_end..];
-        let var_len = if after_emoji.starts_with('\u{FE0F}') {
-            '\u{FE0F}'.len_utf8()
-        } else {
-            0
-        };
-        let after_var = &after_emoji[var_len..];
-        let ws_len = after_var
-            .char_indices()
-            .find(|&(_, c)| c != ' ' && c != '\t')
-            .map_or(after_var.len(), |(offset, _)| offset);
-        let after_ws = &after_var[ws_len..];
-        if after_ws.len() >= 10 {
-            let candidate = &after_ws[..10];
-            let next_char_valid = after_ws[10..]
-                .chars()
-                .next()
-                .is_none_or(|ch| !ch.is_alphanumeric());
-            if next_char_valid
-                && DateValue::is_iso_shape(candidate)
-                && let Ok(value) = DateValue::parse_iso(candidate)
-            {
-                return Some(value);
-            }
-        }
-        search_from = emoji_end.saturating_add(var_len);
-    }
-    None
-}
-
-/// Computes normalized clean list text by stripping task marker prefix,
-/// configured task tag filters, date syntax, priority emojis, and inline task
-/// fields.
-///
-/// When `tag_filters` is empty, no tags are stripped.
-fn compute_clean_text(raw_text: &str, tag_filters: &[Tag]) -> String {
-    let mut remove_spans: Vec<(usize, usize)> = Vec::new();
-
-    // 1. Tag filters (only if configured)
-    if !tag_filters.is_empty() {
-        find_tag_filter_spans(raw_text, tag_filters, &mut remove_spans);
-    }
-
-    // 2. Date syntax (emoji dates)
-    find_emoji_date_spans(raw_text, &mut remove_spans);
-
-    // 3. Priority emojis
-    find_priority_emoji_spans(raw_text, &mut remove_spans);
-
-    // 4. Inline task fields: [field:: value] or (field:: value)
-    find_inline_task_field_spans(raw_text, &mut remove_spans);
-
-    if remove_spans.is_empty() {
-        return normalize_whitespace(raw_text);
-    }
-
-    // Merge overlapping/adjacent removal spans
-    remove_spans.sort_unstable_by_key(|&(start, _)| start);
-    let mut merged: Vec<(usize, usize)> =
-        Vec::with_capacity(remove_spans.len());
-    for (start, end) in remove_spans {
-        if let Some(last) = merged.last_mut()
-            && start <= last.1
-        {
-            last.1 = last.1.max(end);
-            continue;
-        }
-        merged.push((start, end));
-    }
-
-    // Extract unremoved slices
-    let mut cleaned = String::with_capacity(raw_text.len());
-    let mut current_idx = 0;
-    for (start, end) in merged {
-        if start > current_idx
-            && let Some(slice) = raw_text.get(current_idx..start)
-        {
-            cleaned.push_str(slice);
-        }
-        current_idx = current_idx.max(end);
-    }
-    if current_idx < raw_text.len()
-        && let Some(slice) = raw_text.get(current_idx..)
-    {
-        cleaned.push_str(slice);
-    }
-
-    normalize_whitespace(&cleaned)
-}
-
-/// Scans `text` for configured task tag filters and records their byte spans.
-fn find_tag_filter_spans(
-    text: &str,
-    tag_filters: &[Tag],
-    spans: &mut Vec<(usize, usize)>,
-) {
-    let mut iter = text.char_indices().peekable();
-    let mut prev_char: Option<char> = None;
-
-    while let Some((idx, ch)) = iter.next() {
-        let is_word_char =
-            prev_char.is_some_and(|c| c.is_alphanumeric() || c == '_');
-        prev_char = Some(ch);
-        if ch != '#' || is_word_char {
-            continue;
-        }
-        if let Some((start, end, candidate)) =
-            scan_tag_candidate(text, idx, &mut iter)
-            && tag_filters.iter().any(|filter| filter.as_str() == candidate)
-        {
-            spans.push((start, end));
-        }
-    }
-}
-
-/// Scans a single tag candidate starting at `start_idx`.
-fn scan_tag_candidate<'a>(
-    text: &'a str,
-    start_idx: usize,
-    iter: &mut std::iter::Peekable<std::str::CharIndices<'_>>,
-) -> Option<(usize, usize, &'a str)> {
-    let tag_len = Tag::prefix_len(text.get(start_idx..)?)?;
-    let tag_end = start_idx.saturating_add(tag_len);
-    while iter.peek().is_some_and(|(idx, _)| *idx < tag_end) {
-        iter.next();
-    }
-    let candidate = text.get(start_idx..tag_end)?;
-    Some((start_idx, tag_end, candidate))
-}
-
-/// Scans `text` for date shorthand emojis and records their removal byte spans.
-fn find_emoji_date_spans(text: &str, spans: &mut Vec<(usize, usize)>) {
-    let date_emojis = [
-        "\u{1F4C5}\u{FE0F}",
-        "\u{1F4C5}",
-        "\u{1F5D3}\u{FE0F}",
-        "\u{1F5D3}",
-        "\u{2795}",
-        "\u{1F6EB}",
-        "\u{23F3}",
-        "\u{2705}",
-        "\u{274C}",
-    ];
-
-    for emoji in date_emojis {
-        let mut search_from = 0;
-        while let Some(pos) =
-            text.get(search_from..).and_then(|t| t.find(emoji))
-        {
-            let match_start = search_from.saturating_add(pos);
-            let emoji_end = match_start.saturating_add(emoji.len());
-            let after_emoji = &text[emoji_end..];
-            let var_len = if after_emoji.starts_with('\u{FE0F}') {
-                '\u{FE0F}'.len_utf8()
-            } else {
-                0
-            };
-            let after_var = &after_emoji[var_len..];
-            let ws_len = after_var
-                .char_indices()
-                .find(|&(_, c)| c != ' ' && c != '\t')
-                .map_or(after_var.len(), |(offset, _)| offset);
-            let after_ws = &after_var[ws_len..];
-            if after_ws.len() >= 10 {
-                let candidate = &after_ws[..10];
-                let next_char_valid = after_ws[10..]
-                    .chars()
-                    .next()
-                    .is_none_or(|ch| !ch.is_alphanumeric());
-                if next_char_valid
-                    && DateValue::is_iso_shape(candidate)
-                    && DateValue::parse_iso(candidate).is_ok()
-                {
-                    let span_end = emoji_end
-                        .saturating_add(var_len)
-                        .saturating_add(ws_len)
-                        .saturating_add(10);
-                    spans.push((match_start, span_end));
-                    search_from = span_end;
-                    continue;
-                }
-            }
-            search_from = emoji_end.saturating_add(var_len);
-        }
-    }
-}
-
-/// Scans `text` for priority emojis and records their removal byte spans.
-fn find_priority_emoji_spans(text: &str, spans: &mut Vec<(usize, usize)>) {
-    let priority_emojis = [
-        "\u{1F53A}\u{FE0F}",
-        "\u{1F53A}",
-        "\u{23EB}\u{FE0F}",
-        "\u{23EB}",
-        "\u{1F53C}\u{FE0F}",
-        "\u{1F53C}",
-        "\u{1F53D}\u{FE0F}",
-        "\u{1F53D}",
-        "\u{23EC}\u{FE0F}",
-        "\u{23EC}",
-    ];
-
-    for emoji in priority_emojis {
-        let mut search_from = 0;
-        while let Some(pos) =
-            text.get(search_from..).and_then(|t| t.find(emoji))
-        {
-            let match_start = search_from.saturating_add(pos);
-            let match_end = match_start.saturating_add(emoji.len());
-            spans.push((match_start, match_end));
-            search_from = match_end;
-        }
-    }
-}
-
-/// Scans `text` for Dataview-style inline task fields and records their removal
-/// byte spans.
-fn find_inline_task_field_spans(text: &str, spans: &mut Vec<(usize, usize)>) {
-    for (open_delim, close_delim) in [('[', ']'), ('(', ')')] {
-        let mut search_from = 0;
-        while let Some(open_pos) =
-            text.get(search_from..).and_then(|t| t.find(open_delim))
-        {
-            let match_start = search_from.saturating_add(open_pos);
-            let open_end = match_start.saturating_add(open_delim.len_utf8());
-            let remainder = &text[open_end..];
-            if let Some(match_end) = scan_inline_task_field(
-                match_start,
-                remainder,
-                open_delim,
-                close_delim,
-            ) {
-                spans.push((match_start, match_end));
-                search_from = match_end;
-            } else {
-                search_from = open_end;
-            }
-        }
-    }
-}
-
-/// Scans a single bracketed or parenthesized inline task field starting at
-/// `match_start`.
-fn scan_inline_task_field(
-    match_start: usize,
-    remainder: &str,
-    open_delim: char,
-    close_delim: char,
-) -> Option<usize> {
-    let sep_pos = remainder.find("::")?;
-    let key = remainder.get(..sep_pos)?.trim();
-    if key.is_empty()
-        || key.chars().any(|ch| matches!(ch, '[' | ']' | '(' | ')'))
-        || !is_task_field_key(key)
-    {
-        return None;
-    }
-    let after_sep = remainder.get(sep_pos.saturating_add(2)..)?;
-    let close_pos = after_sep.find(close_delim)?;
-    Some(
-        match_start
-            .saturating_add(open_delim.len_utf8())
-            .saturating_add(sep_pos)
-            .saturating_add(2)
-            .saturating_add(close_pos)
-            .saturating_add(close_delim.len_utf8()),
-    )
-}
-
-/// Returns `true` if `key` matches a recognized task metadata field name.
-fn is_task_field_key(key: &str) -> bool {
-    matches!(
-        key.trim().to_ascii_lowercase().as_str(),
-        "created"
-            | "start"
-            | "scheduled"
-            | "due"
-            | "done"
-            | "cancelled"
-            | "priority"
-            | "completion"
-    )
-}
-
-/// Collapses consecutive whitespace in `text` while preserving newlines.
-fn normalize_whitespace(text: &str) -> String {
-    let mut result = String::with_capacity(text.len());
-    let mut first_line = true;
-    for line in text.split('\n') {
-        let mut words = line.split_whitespace();
-        let Some(first_word) = words.next() else {
-            continue;
-        };
-        if !first_line {
-            result.push('\n');
-        }
-        result.push_str(first_word);
-        for word in words {
-            result.push(' ');
-            result.push_str(word);
-        }
-        first_line = false;
-    }
-    result
-}
-
 /// The incremental classification state of an active list item during parsing.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum ItemClassificationState {
@@ -714,24 +290,6 @@ impl ItemClassificationState {
     #[must_use]
     const fn is_marked(self) -> bool {
         matches!(self, Self::Marked(_))
-    }
-
-    /// Returns the detected marker symbol, if any.
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "kept for ItemClassificationState accessor symmetry; \
-                      tested in unit suite"
-        )
-    )]
-    const fn symbol(self) -> Option<char> {
-        match self {
-            Self::Marked(symbol) => Some(symbol),
-            Self::Pending | Self::Plain => None,
-        }
     }
 }
 
@@ -904,7 +462,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        Note, TaskStatusType,
+        DateValue, Note, TaskDateType, TaskPriority, TaskStatusType,
         note::{MarkdownParserInput, parse_markdown},
         parse_note_str as parse,
     };
@@ -1038,16 +596,8 @@ mod tests {
         #[test]
         fn item_classification_state_accessors() {
             assert!(!ItemClassificationState::Pending.is_marked());
-            assert_eq!(ItemClassificationState::Pending.symbol(), None);
-
             assert!(!ItemClassificationState::Plain.is_marked());
-            assert_eq!(ItemClassificationState::Plain.symbol(), None);
-
             assert!(ItemClassificationState::Marked('x').is_marked());
-            assert_eq!(
-                ItemClassificationState::Marked('x').symbol(),
-                Some('x')
-            );
         }
 
         #[rstest]
@@ -1750,12 +1300,12 @@ mod tests {
             let task = first_task(&note).expect("task present");
             let dates = task.dates();
 
-            assert_eq!(dates.created(), date(2025, 1, 1));
-            assert_eq!(dates.start(), date(2025, 1, 5));
-            assert_eq!(dates.scheduled(), date(2025, 1, 10));
-            assert_eq!(dates.due(), date(2025, 1, 15));
-            assert_eq!(dates.done(), date(2025, 1, 20));
-            assert_eq!(dates.cancelled(), date(2025, 1, 25));
+            assert_eq!(dates.get(TaskDateType::Created), date(2025, 1, 1));
+            assert_eq!(dates.get(TaskDateType::Start), date(2025, 1, 5));
+            assert_eq!(dates.get(TaskDateType::Scheduled), date(2025, 1, 10));
+            assert_eq!(dates.get(TaskDateType::Due), date(2025, 1, 15));
+            assert_eq!(dates.get(TaskDateType::Done), date(2025, 1, 20));
+            assert_eq!(dates.get(TaskDateType::Cancelled), date(2025, 1, 25));
         }
 
         #[rstest]
@@ -1765,7 +1315,7 @@ mod tests {
             let note = parse(&format!("- [ ] Task {emoji} 2025-01-15"));
             let task = first_task(&note).expect("task present");
 
-            assert_eq!(task.dates().due(), date(2025, 1, 15));
+            assert_eq!(task.dates().get(TaskDateType::Due), date(2025, 1, 15));
         }
 
         #[test]
@@ -1774,7 +1324,7 @@ mod tests {
             let note = parse(input);
             let task = first_task(&note).expect("task present");
 
-            assert_eq!(task.dates().due(), date(2025, 3, 1));
+            assert_eq!(task.dates().get(TaskDateType::Due), date(2025, 3, 1));
         }
 
         #[test]
@@ -1783,7 +1333,37 @@ mod tests {
             let note = parse(input);
             let task = first_task(&note).expect("task present");
 
-            assert_eq!(task.dates().due(), None);
+            assert_eq!(task.dates().get(TaskDateType::Due), None);
+        }
+
+        #[test]
+        fn rejects_datetime_shorthand_with_alphanumeric_terminator() {
+            // `📅 2025-01-15T12:00` is not a valid shorthand date: both the
+            // lexer and the date scanner must reject it so no due date is
+            // extracted from plain text.
+            let input = "- [ ] Task 📅 2025-01-15T12:00";
+            let note = parse(input);
+            let task = first_task(&note).expect("task present");
+
+            assert_eq!(task.dates().get(TaskDateType::Due), None);
+        }
+
+        #[test]
+        fn skips_multibyte_text_after_date_emoji_without_panicking() {
+            // Byte 10 of the multibyte candidate is not a char boundary; the
+            // scanner must skip it and still find the valid date that follows.
+            let input = "- [ ] Task 📅 你好你好 📅 2025-01-15";
+            let note = parse(input);
+            let task = first_task(&note).expect("task present");
+
+            assert_eq!(task.dates().get(TaskDateType::Due), date(2025, 1, 15));
+            assert!(
+                note.lists()
+                    .first()
+                    .expect("item present")
+                    .clean_text()
+                    .contains("你好你好")
+            );
         }
 
         #[test]
@@ -1792,7 +1372,7 @@ mod tests {
             let note = parse(input);
             let task = first_task(&note).expect("task present");
 
-            assert_eq!(task.dates().start(), None);
+            assert_eq!(task.dates().get(TaskDateType::Start), None);
         }
     }
 
@@ -1846,6 +1426,77 @@ mod tests {
             );
 
             assert_eq!(item.text().clean(), "Review PR [custom:: keep-me]");
+        }
+    }
+
+    mod characterization_regression_net {
+        use pretty_assertions::assert_eq;
+
+        use crate::{DateValue, TaskDateType, TaskPriority};
+
+        #[test]
+        fn skips_invalid_date_after_emoji_and_finds_subsequent_valid_date() {
+            let note =
+                crate::parse_note_str("- [ ] Task 📅 2026-13-45 📅 2025-01-15");
+            let item = note.lists().first().expect("item present");
+            let task = item.kind().as_task().expect("task item");
+            assert_eq!(
+                task.dates().get(TaskDateType::Due),
+                Some(DateValue::parse_iso("2025-01-15").unwrap())
+            );
+            assert!(item.clean_text().contains("📅 2026-13-45"));
+            assert!(!item.clean_text().contains("2025-01-15"));
+        }
+
+        #[test]
+        fn strips_priority_emoji_with_variation_selector_from_clean_text() {
+            let note =
+                crate::parse_note_str("- [ ] Task 🔺\u{FE0F} remaining text");
+            let item = note.lists().first().expect("item present");
+            let task = item.kind().as_task().expect("task item");
+            assert_eq!(task.priority(), Some(TaskPriority::Highest));
+            assert!(!item.clean_text().contains("\u{1F53A}"));
+            assert!(!item.clean_text().contains("\u{FE0F}"));
+        }
+
+        #[test]
+        fn collapses_inline_field_normal_priority_to_none() {
+            let note = crate::parse_note_str("- [ ] Task [priority:: normal]");
+            let item = note.lists().first().expect("item present");
+            let task = item.kind().as_task().expect("task item");
+            assert_eq!(task.priority(), None);
+        }
+
+        #[test]
+        fn prefers_done_alias_over_completion_alias_when_both_present() {
+            let note = crate::parse_note_str(
+                "- [ ] Task [done:: 2025-01-01] [completion:: 2025-01-02]",
+            );
+            let item = note.lists().first().expect("item present");
+            let task = item.kind().as_task().expect("task item");
+            assert_eq!(
+                task.dates().get(TaskDateType::Done),
+                Some(DateValue::parse_iso("2025-01-01").unwrap())
+            );
+        }
+
+        #[test]
+        fn strips_emoji_dates_from_plain_bullet_item_without_extracting_fields()
+        {
+            let note = crate::parse_note_str("- Plain bullet 📅 2025-01-15");
+            let item = note.lists().first().expect("item present");
+            assert!(item.kind().is_plain());
+            assert!(item.fields().is_none());
+            assert_eq!(item.clean_text(), "Plain bullet");
+        }
+
+        #[test]
+        fn strips_multiple_distinct_due_emojis_from_clean_text() {
+            let note = crate::parse_note_str(
+                "- [ ] Task 📅 2025-01-15 and 🗓 2025-02-02",
+            );
+            let item = note.lists().first().expect("item present");
+            assert_eq!(item.clean_text(), "Task and");
         }
     }
 

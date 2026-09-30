@@ -23,7 +23,7 @@
 //! - [`Note`]: Parsed record for one Markdown file.
 //! - [`ListItem`], [`ListItemType`], [`TaskListItem`]: Ordered and unordered
 //!   list items, including classified task items and checkboxes.
-//! - [`ListText`], [`TaskDates`](crate::task::TaskDates),
+//! - [`ListText`], [`TaskDateSet`](crate::task::TaskDateSet),
 //!   [`TaskPriority`](crate::task::TaskPriority): Normalized list text,
 //!   extracted task dates, and priority levels.
 //! - [`Link`], [`LinkType`], [`LinkTarget`]: Outgoing links from Markdown

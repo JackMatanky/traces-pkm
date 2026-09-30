@@ -104,9 +104,9 @@ impl QueryRow {
             .map(ListItem::clean_text)
     }
 
-    /// Returns the numeric severity rank of the task's priority for task
-    /// rows, or `None` for non-task rows, page-level rows, and tasks
-    /// without a priority.
+    /// Returns the numeric severity rank of the task's priority for task rows,
+    /// or `None` for non-task rows, page-level rows, and tasks without a
+    /// priority.
     ///
     /// Consumed by sort key materialization. Rendering keeps using
     /// [`TaskPriority::as_str`].
@@ -119,8 +119,8 @@ impl QueryRow {
             .map(TaskPriority::rank)
     }
 
-    /// Returns the task status symbol for task rows, or `None` for non-task
-    /// or page-level rows.
+    /// Returns the task status symbol for task rows, or `None` for non-task or
+    /// page-level rows.
     #[inline]
     #[must_use]
     pub fn status_symbol(&self) -> Option<TaskStatusSymbol> {
@@ -394,27 +394,8 @@ impl QueryRow {
                     priority.as_str(),
                 ))
             }),
-            TaskField::DueDate => task.dates().due().map_or(null, |date| {
-                QueryFieldValueRef::Note(NoteFieldValueRef::Date(date))
-            }),
-            TaskField::DoneDate => task.dates().done().map_or(null, |date| {
-                QueryFieldValueRef::Note(NoteFieldValueRef::Date(date))
-            }),
-            TaskField::CreatedDate => {
-                task.dates().created().map_or(null, |date| {
-                    QueryFieldValueRef::Note(NoteFieldValueRef::Date(date))
-                })
-            }
-            TaskField::StartDate => task.dates().start().map_or(null, |date| {
-                QueryFieldValueRef::Note(NoteFieldValueRef::Date(date))
-            }),
-            TaskField::ScheduledDate => {
-                task.dates().scheduled().map_or(null, |date| {
-                    QueryFieldValueRef::Note(NoteFieldValueRef::Date(date))
-                })
-            }
-            TaskField::CancelledDate => {
-                task.dates().cancelled().map_or(null, |date| {
+            TaskField::Date(kind) => {
+                task.dates().get(kind).map_or(null, |date| {
                     QueryFieldValueRef::Note(NoteFieldValueRef::Date(date))
                 })
             }
@@ -425,8 +406,8 @@ impl QueryRow {
     }
 
     /// Orders two rows by their position in the underlying [`WorkspaceIndex`]:
-    /// document order for note rows, and item order within their note for
-    /// list and task rows. This is the total order behind minijinja's row
+    /// document order for note rows, and item order within their note for list
+    /// and task rows. This is the total order behind minijinja's row
     /// comparisons and `sort` filter.
     #[inline]
     #[must_use]

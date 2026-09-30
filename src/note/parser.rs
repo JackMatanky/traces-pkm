@@ -5,16 +5,16 @@
 //!
 //! # Architecture
 //!
-//! The parser is organized into five specialized submodules:
+//! The parser is organized into seven specialized submodules:
 //!
 //! - [`inline`]: [`inline::parse_inline_value`] parses raw inline field value
 //!   text into strongly typed [`NoteFieldValue`] records (comma lists, quoted
 //!   strings, durations, wikilinks, booleans, dates, numbers, tags).
 //! - [`input`]: [`MarkdownParserInput`] encapsulates borrowed path, source
 //!   text, and configuration references for parsing.
-//! - [`lexer`]: [`InlineTokenLexer`] extracts `Key:: Value`, `[Key:: Value]`,
-//!   and `(Key:: Value)` inline fields, task emoji shorthands, and `#tag`
-//!   tokens from plain-text scan buffers using [`logos`].
+//! - [`lexer`]: [`lexer::scan_fields`] extracts `Key:: Value`, `[Key:: Value]`,
+//!   and `(Key:: Value)` inline fields and task emoji shorthands from
+//!   plain-text scan buffers using [`logos`].
 //! - [`list`]: [`ListTracker`] manages explicit list and list-item stacks so
 //!   nested Markdown never recurses through the call stack, driving the
 //!   item-leading marker state machine, tag filter classification, and flushing
@@ -22,6 +22,11 @@
 //! - [`marker`]: custom task marker scanner that recognizes `[<symbol>]`
 //!   markers at item-leading positions with pulldown-cmark-compatible
 //!   whitespace rules.
+//! - [`tag`]: [`tag::scan_tags`] and [`tag::find_tag_filter_spans`] handle
+//!   Markdown tag extraction and configured task tag filter matching.
+//! - [`task`]: [`task::extract_task_dates`], [`task::extract_task_priority`],
+//!   and [`task::clean_task_text`] handle task shorthand dates, priorities, and
+//!   display text normalization.
 //!
 //! Parser state lives in [`ParserContext`], which dispatches events to
 //! specialized handlers and assembles the final [`Note`]. List-item line
@@ -57,9 +62,10 @@ mod input;
 mod lexer;
 mod list;
 mod marker;
+mod tag;
+mod task;
 
 pub use input::MarkdownParserInput;
-use lexer::InlineTokenLexer;
 use list::ListTracker;
 
 /// Block parser options: YAML metadata blocks and Obsidian wikilinks.
@@ -291,9 +297,9 @@ impl<'a> ParserContext<'a> {
             self.frontmatter,
             self.list_nesting.lists,
             self.outlinks,
+            self.inline_fields,
+            tags,
         )
-        .with_inline_fields(self.inline_fields)
-        .with_tags(tags)
     }
 
     fn start_metadata_block(&mut self) {
@@ -367,11 +373,13 @@ impl<'a> ParserContext<'a> {
     fn end_text_block(&mut self) {
         self.block = BlockContext::None;
         if !self.list_nesting.is_item_active() {
-            let lexer = InlineTokenLexer::new(false);
-            for (key, value) in lexer.extract_fields(&self.body_buffer) {
+            for (key, value) in lexer::scan_fields(
+                &self.body_buffer,
+                lexer::TaskShorthands::Exclude,
+            ) {
                 self.inline_fields.entry(key).or_default().push(value);
             }
-            self.tags.extend(lexer.extract_tags(&self.body_buffer));
+            self.tags.extend(tag::scan_tags(&self.body_buffer));
             self.body_buffer.clear();
         }
     }

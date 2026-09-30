@@ -139,8 +139,8 @@ pub use query::{
 pub use schema::{Schema, SchemaFieldDef, SchemaService, SchemaServiceError};
 pub use tag::{Tag, TagError};
 pub use task::{
-    TaskDates, TaskPriority, TaskStatus, TaskStatusMap, TaskStatusSymbol,
-    TaskStatusType,
+    TaskDate, TaskDateSet, TaskDateSetIter, TaskDateType, TaskError,
+    TaskPriority, TaskStatus, TaskStatusMap, TaskStatusSymbol, TaskStatusType,
 };
 #[cfg(not(any(test, feature = "test-utils")))]
 #[expect(unused_imports, reason = "crate re-export")]

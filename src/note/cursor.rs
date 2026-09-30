@@ -37,21 +37,6 @@ impl<'a> SourceText<'a> {
         self.0.get(range)
     }
 
-    /// Returns `true` if the source at `pos` starts with `needle`.
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "kept for SourceText API completeness; tested in unit \
-                      suite"
-        )
-    )]
-    pub(super) fn starts_with(&self, pos: usize, needle: &str) -> bool {
-        self.from(pos).is_some_and(|source| source.starts_with(needle))
-    }
-
     /// Advances `pos` by `bytes` and returns the new offset.
     #[inline]
     #[must_use]
@@ -104,21 +89,6 @@ mod tests {
     fn len_returns_the_byte_length() {
         assert_eq!(SourceText::new("hello").len(), 5);
         assert_eq!(SourceText::new("").len(), 0);
-    }
-
-    #[test]
-    fn starts_with_matches_at_the_given_position() {
-        let source = SourceText::new("hello world");
-
-        assert!(source.starts_with(6, "world"));
-        assert!(source.starts_with(0, "hello"));
-    }
-
-    #[test]
-    fn starts_with_returns_false_when_needle_does_not_match() {
-        let source = SourceText::new("hello world");
-
-        assert!(!source.starts_with(0, "goodbye"));
     }
 
     #[test]

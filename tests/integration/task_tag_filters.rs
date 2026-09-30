@@ -11,8 +11,8 @@ use chrono::NaiveDate;
 use pretty_assertions::{assert_eq, assert_ne};
 use traces_pkm::{
     IndexerService, ListItem, ListItemType, QueryBuilder, QueryService,
-    QuerySet, SourceSelector, TaskConfig, TaskPriority, TaskStatusType,
-    TestProject,
+    QuerySet, SourceSelector, TaskConfig, TaskDateType, TaskPriority,
+    TaskStatusType, TestProject,
 };
 
 #[test]
@@ -201,7 +201,7 @@ fn classifies_multi_note_vault_lifecycle_with_custom_markers_and_computes_comple
         beta_subtask.kind().as_task().expect("beta subtask is a task");
     assert_eq!(beta_subtask.clean_text(), "Beta subtask");
     assert_eq!(
-        beta_subtask_task.dates().due().map(Into::into),
+        beta_subtask_task.dates().get(TaskDateType::Due).map(Into::into),
         NaiveDate::from_ymd_opt(2026, 10, 15)
     );
     assert_eq!(beta_subtask_task.priority(), Some(TaskPriority::Medium));
@@ -255,7 +255,7 @@ fn assert_resolved_parent(alpha_items: &[ListItem]) {
     assert_eq!(resolved_parent.clean_text(), "Resolved parent");
     assert_eq!(resolved_parent_task.is_fully_complete(), true);
     assert_eq!(
-        resolved_parent_task.dates().due().map(Into::into),
+        resolved_parent_task.dates().get(TaskDateType::Due).map(Into::into),
         NaiveDate::from_ymd_opt(2026, 10, 1)
     );
     assert_eq!(resolved_parent_task.priority(), Some(TaskPriority::Highest));

@@ -19,186 +19,10 @@
 //!
 //! [`NoteFieldValue`]: crate::NoteFieldValue
 //! [`FileMeta`]: crate::FileMeta
-use crate::{FieldKey, query::error::FieldPathError, strsim::closest_match};
 
-/// A `file.<field>` accessor backed by [`FileMeta`] metadata.
-///
-/// Accepted accessor names, including aliases such as `ctime` for `created_at`,
-/// are listed in [`ACCESSOR_NAMES`](Self::ACCESSOR_NAMES).
-///
-/// [`FileMeta`]: crate::FileMeta
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) enum FileField {
-    Path,
-    Name,
-    Folder,
-    Size,
-    /// Accesses [`crate::FileMeta::created_at`] (falling back to
-    /// [`crate::FileMeta::modified_at`]) as a datetime without a UTC offset.
-    CreatedDateTime,
-    /// Accesses [`crate::FileMeta::created_at`] (falling back to
-    /// [`crate::FileMeta::modified_at`]) as a bare date.
-    CreatedDate,
-    /// Accesses [`crate::FileMeta::modified_at`] as a datetime without a UTC
-    /// offset.
-    ModifiedDateTime,
-    /// Accesses [`crate::FileMeta::modified_at`] as a bare date.
-    ModifiedDate,
-    /// Accesses note-level tags from the row's file.
-    Tags,
-}
-
-impl FileField {
-    /// Accepted `file.<field>` accessor names, including aliases.
-    pub(crate) const ACCESSOR_NAMES: &'static [&'static str] = &[
-        "path",
-        "name",
-        "folder",
-        "size",
-        "created_at",
-        "ctime",
-        "cdate",
-        "modified_at",
-        "mtime",
-        "mdate",
-        "tags",
-    ];
-
-    /// Parses the field portion of a `file.<field>` accessor string.
-    ///
-    /// Returns `None` for unknown names so callers can report the full
-    /// `file.<field>` path.
-    pub(crate) fn parse(name: &str) -> Option<Self> {
-        match name {
-            "path" => Some(Self::Path),
-            "name" => Some(Self::Name),
-            "folder" => Some(Self::Folder),
-            "size" => Some(Self::Size),
-            "created_at" | "ctime" => Some(Self::CreatedDateTime),
-            "cdate" => Some(Self::CreatedDate),
-            "modified_at" | "mtime" => Some(Self::ModifiedDateTime),
-            "mdate" => Some(Self::ModifiedDate),
-            "tags" => Some(Self::Tags),
-            _ => None,
-        }
-    }
-}
-
-/// A task-specific list field.
-///
-/// These fields resolve to [`crate::NoteFieldValue::Null`] on plain bullets and
-/// non-task checkboxes.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) enum TaskField {
-    Status,
-    StatusType,
-    StatusSymbol,
-    Completed,
-    Priority,
-    DueDate,
-    DoneDate,
-    CreatedDate,
-    StartDate,
-    ScheduledDate,
-    CancelledDate,
-    FullyComplete,
-}
-
-impl TaskField {
-    /// Accepted task-specific `list.<field>` accessor names.
-    #[cfg(test)]
-    pub(super) const ACCESSOR_NAMES: &'static [&'static str] = &[
-        "status",
-        "status_type",
-        "status_symbol",
-        "completed",
-        "priority",
-        "due",
-        "done",
-        "created",
-        "start",
-        "scheduled",
-        "cancelled",
-        "fully_complete",
-    ];
-
-    /// Parses a task-specific list field name.
-    pub(super) fn parse(name: &str) -> Option<Self> {
-        match name {
-            "status" => Some(Self::Status),
-            "status_type" => Some(Self::StatusType),
-            "status_symbol" => Some(Self::StatusSymbol),
-            "completed" => Some(Self::Completed),
-            "priority" => Some(Self::Priority),
-            "due" => Some(Self::DueDate),
-            "done" => Some(Self::DoneDate),
-            "created" => Some(Self::CreatedDate),
-            "start" => Some(Self::StartDate),
-            "scheduled" => Some(Self::ScheduledDate),
-            "cancelled" => Some(Self::CancelledDate),
-            "fully_complete" => Some(Self::FullyComplete),
-            _ => None,
-        }
-    }
-}
-
-/// A universal or task-specific `list.<field>` accessor.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) enum ListField {
-    Text,
-    RawText,
-    Line,
-    Parent,
-    Depth,
-    Tags,
-    IsTask,
-    Kind,
-    IsOrdered,
-    Task(TaskField),
-}
-
-impl ListField {
-    /// Accepted `list.<field>` accessor names.
-    pub(crate) const ACCESSOR_NAMES: &'static [&'static str] = &[
-        "text",
-        "raw_text",
-        "line",
-        "parent",
-        "depth",
-        "tags",
-        "is_task",
-        "kind",
-        "is_ordered",
-        "status",
-        "status_type",
-        "status_symbol",
-        "completed",
-        "priority",
-        "due",
-        "done",
-        "created",
-        "start",
-        "scheduled",
-        "cancelled",
-        "fully_complete",
-    ];
-
-    /// Parses the field portion of a canonical `list.<field>` accessor.
-    pub(crate) fn parse(name: &str) -> Option<Self> {
-        match name {
-            "text" => Some(Self::Text),
-            "raw_text" => Some(Self::RawText),
-            "line" => Some(Self::Line),
-            "parent" => Some(Self::Parent),
-            "depth" => Some(Self::Depth),
-            "tags" => Some(Self::Tags),
-            "is_task" => Some(Self::IsTask),
-            "kind" => Some(Self::Kind),
-            "is_ordered" => Some(Self::IsOrdered),
-            _ => TaskField::parse(name).map(Self::Task),
-        }
-    }
-}
+use crate::{
+    FieldKey, TaskDateType, query::error::FieldPathError, strsim::closest_match,
+};
 
 /// A resolved query field path.
 ///
@@ -322,6 +146,173 @@ impl FieldPath {
     }
 }
 
+/// A `file.<field>` accessor backed by [`FileMeta`](crate::FileMeta) metadata.
+///
+/// Accepted accessor names, including aliases such as `ctime` for `created_at`,
+/// are listed in [`ACCESSOR_NAMES`](Self::ACCESSOR_NAMES).
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum FileField {
+    Path,
+    Name,
+    Folder,
+    Size,
+    /// Accesses [`crate::FileMeta::created_at`] (falling back to
+    /// [`crate::FileMeta::modified_at`]) as a bare date.
+    CreatedDate,
+    /// Accesses [`crate::FileMeta::created_at`] (falling back to
+    /// [`crate::FileMeta::modified_at`]) as a datetime without a UTC offset.
+    CreatedDateTime,
+    /// Accesses [`crate::FileMeta::modified_at`] as a bare date.
+    ModifiedDate,
+    /// Accesses [`crate::FileMeta::modified_at`] as a datetime without a UTC
+    /// offset.
+    ModifiedDateTime,
+    /// Accesses note-level tags from the row's file.
+    Tags,
+}
+
+impl FileField {
+    /// Accepted `file.<field>` accessor names, including aliases.
+    pub(crate) const ACCESSOR_NAMES: &'static [&'static str] = &[
+        "path",
+        "name",
+        "folder",
+        "size",
+        "created_at",
+        "ctime",
+        "cdate",
+        "modified_at",
+        "mtime",
+        "mdate",
+        "tags",
+    ];
+
+    /// Parses the field portion of a `file.<field>` accessor string.
+    ///
+    /// Returns `None` for unknown names so callers can report the full
+    /// `file.<field>` path.
+    pub(crate) fn parse(name: &str) -> Option<Self> {
+        match name {
+            "path" => Some(Self::Path),
+            "name" => Some(Self::Name),
+            "folder" => Some(Self::Folder),
+            "size" => Some(Self::Size),
+            "created_at" | "ctime" => Some(Self::CreatedDateTime),
+            "cdate" => Some(Self::CreatedDate),
+            "modified_at" | "mtime" => Some(Self::ModifiedDateTime),
+            "mdate" => Some(Self::ModifiedDate),
+            "tags" => Some(Self::Tags),
+            _ => None,
+        }
+    }
+}
+
+/// A task-specific list field.
+///
+/// These fields resolve to [`crate::NoteFieldValue::Null`] on plain bullets and
+/// non-task checkboxes.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum TaskField {
+    Status,
+    StatusType,
+    StatusSymbol,
+    Completed,
+    Priority,
+    /// A task lifecycle date slot, resolved through [`crate::TaskDateSet`].
+    Date(TaskDateType),
+    FullyComplete,
+}
+
+impl TaskField {
+    /// Accepted task-specific `list.<field>` accessor names.
+    #[cfg(test)]
+    pub(super) const ACCESSOR_NAMES: &'static [&'static str] = &[
+        "status",
+        "status_type",
+        "status_symbol",
+        "completed",
+        "priority",
+        "due",
+        "done",
+        "created",
+        "start",
+        "scheduled",
+        "cancelled",
+        "fully_complete",
+    ];
+
+    /// Parses a task-specific list field name.
+    pub(super) fn parse(name: &str) -> Option<Self> {
+        match name {
+            "status" => Some(Self::Status),
+            "status_type" => Some(Self::StatusType),
+            "status_symbol" => Some(Self::StatusSymbol),
+            "completed" => Some(Self::Completed),
+            "priority" => Some(Self::Priority),
+            "fully_complete" => Some(Self::FullyComplete),
+            _ => name.parse::<TaskDateType>().ok().map(Self::Date),
+        }
+    }
+}
+
+/// A universal or task-specific `list.<field>` accessor.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ListField {
+    Text,
+    RawText,
+    Line,
+    Parent,
+    Depth,
+    Tags,
+    IsTask,
+    Kind,
+    IsOrdered,
+    Task(TaskField),
+}
+
+impl ListField {
+    /// Accepted `list.<field>` accessor names.
+    pub(crate) const ACCESSOR_NAMES: &'static [&'static str] = &[
+        "text",
+        "raw_text",
+        "line",
+        "parent",
+        "depth",
+        "tags",
+        "is_task",
+        "kind",
+        "is_ordered",
+        "status",
+        "status_type",
+        "status_symbol",
+        "completed",
+        "priority",
+        "due",
+        "done",
+        "created",
+        "start",
+        "scheduled",
+        "cancelled",
+        "fully_complete",
+    ];
+
+    /// Parses the field portion of a canonical `list.<field>` accessor.
+    pub(crate) fn parse(name: &str) -> Option<Self> {
+        match name {
+            "text" => Some(Self::Text),
+            "raw_text" => Some(Self::RawText),
+            "line" => Some(Self::Line),
+            "parent" => Some(Self::Parent),
+            "depth" => Some(Self::Depth),
+            "tags" => Some(Self::Tags),
+            "is_task" => Some(Self::IsTask),
+            "kind" => Some(Self::Kind),
+            "is_ordered" => Some(Self::IsOrdered),
+            _ => TaskField::parse(name).map(Self::Task),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -359,12 +350,21 @@ mod tests {
         #[case::status_symbol("status_symbol", TaskField::StatusSymbol)]
         #[case::completed("completed", TaskField::Completed)]
         #[case::priority("priority", TaskField::Priority)]
-        #[case::due("due", TaskField::DueDate)]
-        #[case::done("done", TaskField::DoneDate)]
-        #[case::created("created", TaskField::CreatedDate)]
-        #[case::start("start", TaskField::StartDate)]
-        #[case::scheduled("scheduled", TaskField::ScheduledDate)]
-        #[case::cancelled("cancelled", TaskField::CancelledDate)]
+        #[case::due("due", TaskField::Date(crate::TaskDateType::Due))]
+        #[case::done("done", TaskField::Date(crate::TaskDateType::Done))]
+        #[case::created(
+            "created",
+            TaskField::Date(crate::TaskDateType::Created)
+        )]
+        #[case::start("start", TaskField::Date(crate::TaskDateType::Start))]
+        #[case::scheduled(
+            "scheduled",
+            TaskField::Date(crate::TaskDateType::Scheduled)
+        )]
+        #[case::cancelled(
+            "cancelled",
+            TaskField::Date(crate::TaskDateType::Cancelled)
+        )]
         #[case::fully_complete("fully_complete", TaskField::FullyComplete)]
         fn parses_all_task_field_variants(
             #[case] name: &str,
@@ -405,7 +405,10 @@ mod tests {
         #[case::is_task("is_task", ListField::IsTask)]
         #[case::kind("kind", ListField::Kind)]
         #[case::is_ordered("is_ordered", ListField::IsOrdered)]
-        #[case::embedded_due("due", ListField::Task(TaskField::DueDate))]
+        #[case::embedded_due(
+            "due",
+            ListField::Task(TaskField::Date(crate::TaskDateType::Due))
+        )]
         #[case::embedded_completed(
             "completed",
             ListField::Task(TaskField::Completed)
