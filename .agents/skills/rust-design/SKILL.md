@@ -118,7 +118,7 @@ Prefer specific caller knowledge and semantic trade-offs to claims such as
 
 ## Process
 
-Focused reviews and audits use steps 1–4 and 6 for candidates selected for
+Focused reviews and audits use steps 1-4 and 6 for candidates selected for
 deepening; an implementation also completes step 5. A focused review with none
 may stop after step 2. An audit with none stops only after every in-scope
 inventory unit has been probed and every material tool finding has a recorded
@@ -212,10 +212,12 @@ interface cost: compile-time guarantees are useful when they justify what
 callers must learn.
 
 **Complete when:** proposed types, ownership, errors, traits, and visibility
-serve the intended seams; each abstraction has a semantic responsibility and
-each generic or trait has a demonstrated need. Claims about invalid states or
-exposure have an observed existing path or an explicit proposed state/path
-enumeration.
+serve the intended seams; each abstraction has a semantic responsibility,
+each generic or trait has a demonstrated need, and each new dependency
+demonstrates a need that stdlib and already-declared dependencies cannot
+meet, verified through rust-docs-mcp per [`TOOLING.md`](TOOLING.md). Claims
+about invalid states or exposure have an observed existing path or an
+explicit proposed state/path enumeration.
 
 ### 5. Verify an implementation
 

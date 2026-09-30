@@ -51,15 +51,15 @@ must know to use a seam correctly.
 
 Classify atoms as:
 
-- `type` — domain concepts or representations the caller must understand
-- `invariant` — preconditions or validity rules the caller must preserve
-- `order` — ordering, lifecycle, or transition requirements
-- `error` — failure distinctions on which the caller must act
-- `config` — configuration or environmental requirements
-- `ownership` — ownership, borrowing, lifetime, concurrency, or aliasing
+- `type`: domain concepts or representations the caller must understand
+- `invariant`: preconditions or validity rules the caller must preserve
+- `order`: ordering, lifecycle, or transition requirements
+- `error`: failure distinctions on which the caller must act
+- `config`: configuration or environmental requirements
+- `ownership`: ownership, borrowing, lifetime, concurrency, or aliasing
   constraints
-- `performance` — performance characteristics required for correct use
-- `leak` — lower-level implementation concepts exposed across the seam
+- `performance`: performance characteristics required for correct use
+- `leak`: lower-level implementation concepts exposed across the seam
 
 Two facts are separate atoms when a caller can satisfy one while violating or
 remaining ignorant of the other.
@@ -74,7 +74,7 @@ if callers must understand it.
 
 Keep the atom list beside the count so disagreements remain inspectable.
 
-## Interface Knowledge Load — `IKL`
+## Interface Knowledge Load: `IKL`
 
 For seam `S`, record the knowledge vector:
 
@@ -110,7 +110,7 @@ different interfaces.
 Prefer lower caller knowledge for equivalent capability, while retaining
 semantic distinctions callers genuinely need.
 
-## Knowledge Compression — `KC`
+## Knowledge Compression: `KC`
 
 For child `C` and parent `P`, isolate the knowledge in `P` concerning the
 responsibility being moved behind `C`.
@@ -136,7 +136,7 @@ Use `KC` only when `K_before > 0` and both counts cover the same responsibility.
 When `K_before = 0`, `KC` is `N/A`; the absolute `PS` below and the underlying
 parent-knowledge list still show any new burden.
 
-### Parent Simplification — `PS`
+### Parent Simplification: `PS`
 
 Keep the absolute reduction as well:
 
@@ -150,7 +150,7 @@ PS(C → P) = K_before − K_after
 means unchanged burden, and negative means new parent burden. Preserve the
 before/after lists even if the counts cancel.
 
-## Cross-Seam Leakage — `L`
+## Cross-Seam Leakage: `L`
 
 For seam `S`:
 
@@ -188,7 +188,7 @@ Interpretation:
 Do not count a concept as leakage when it is legitimately part of the seam's
 semantics.
 
-## Seam Bypass Ratio — `BR`
+## Seam Bypass Ratio: `BR`
 
 For intended seam `S`, freeze its external caller cohort, entry points, module
 boundary, and edge unit before measurement. Count each distinct external
@@ -223,7 +223,7 @@ edges instead of treating it as a perfect boundary.
 A bypass may be legitimate; if so, the intended seam description was incomplete
 or the relationship deserves its own seam.
 
-## Change Propagation Distance — `PD`
+## Change Propagation Distance: `PD`
 
 For representative change scenario `q`:
 
@@ -251,7 +251,7 @@ to cross that contract.
 
 Do not count files touched. Count architectural seams crossed.
 
-## Deletion Dividend — `DD`
+## Deletion Dividend: `DD`
 
 A redesign should account for structure made obsolete by its new ownership.
 
@@ -275,7 +275,7 @@ removed or actually superseded structure, not planned future cleanup.
 A zero deletion dividend does not invalidate genuinely new capability, but a
 deepening redesign that only adds structure deserves scrutiny.
 
-## Seam Variation — `V`
+## Seam Variation: `V`
 
 For seam `S`:
 
@@ -293,7 +293,7 @@ Do not create artificial adapters to increase `V`.
 A test adapter counts only when the underlying dependency category justifies a
 real substitutable seam.
 
-## Visibility Reachability — `VE`
+## Visibility Reachability: `VE`
 
 For Rust item `x`, compare legitimate callers with actual reachability through
 declared visibility and re-exports in a named workspace and relevant
@@ -308,7 +308,7 @@ workspace. Record paths and callers, rather than a numeric rank. If legitimate
 callers cannot reach the item, record a separate interface defect. An intended
 public contract can justify exposure beyond known current call sites.
 
-## Generic Propagation Depth — `GPD`
+## Generic Propagation Depth: `GPD`
 
 For generic parameter, trait abstraction, or adapter type `g`:
 
@@ -327,7 +327,7 @@ High `GPD` is evidence that implementation variation may be leaking upward.
 It is not automatically wrong; record the reason when the propagation is
 intentional.
 
-## Invalid-State Ratio — `ISR`
+## Invalid-State Ratio: `ISR`
 
 Use only when the relevant state space is finite and exactly enumerable.
 
@@ -360,7 +360,7 @@ Use this when comparing:
 When `R = 0`, `ISR` is `N/A`. Do not estimate `R` when the state space cannot be
 counted meaningfully.
 
-## Illegal-Transition Expressibility — `ITE`
+## Illegal-Transition Expressibility: `ITE`
 
 Use when the design contains a finite semantic state machine. Fix the universe
 of relevant source states and semantic operations or events before comparison;
@@ -384,7 +384,7 @@ no illegal transitions, not a zero rate. Compare gains in `ITE` against `IKL`:
 eliminating illegal transitions does not automatically justify a substantially
 harder caller interface.
 
-## Test Reach-Through — `TR`
+## Test Reach-Through: `TR`
 
 Define the population as tests intended to verify `M`'s responsibility,
 including integration tests. Count each test once. The numerator is the subset
@@ -399,7 +399,7 @@ When no tests verify `M`, `TR` is `N/A`; report the verification gap.
 Use `TR` to detect tests coupled to internal representation, not to drive
 the ratio blindly to zero.
 
-## Seam Mutation Adequacy — `MA`
+## Seam Mutation Adequacy: `MA`
 
 Use scoped mutation testing when the design claim needs verification strength.
 Define the policy owned by `M`, including relevant descendants behind its

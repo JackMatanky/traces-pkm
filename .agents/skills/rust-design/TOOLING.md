@@ -60,7 +60,12 @@ complete:
    test-strength claims and isolate seam tests before reporting `MA`. State
    which behaviour was actually verified; a proposal is not a test result.
 
-Use cached Rust crate docs when external API semantics affect the design.
+Before anything else, resolve external crate semantics through the
+repository's rust-docs-mcp tools rather than recalled knowledge, web
+search, or guessing from source. Treat remembered API behavior as a
+hypothesis to verify there, and cache a missing crate before reasoning
+about its API.
+
 Complexity, duplication, CRAP, coverage percentage, size, counts, and graph
 centrality are candidate indicators. They suggest where to inspect but do not
 enter a design acceptance gate. A simpler graph is not inherently a deeper

@@ -180,6 +180,7 @@ Look for:
 - wrappers preserved after earlier redesigns
 - apparently unreachable or bypassed code
 - dependencies used only by obsolete structure
+- reimplemented stdlib or already-declared dependencies
 - duplicated configuration or policy
 
 Confirm reachability across `cfg` and feature combinations, macro-generated uses,
