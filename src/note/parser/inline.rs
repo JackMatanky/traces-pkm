@@ -29,63 +29,60 @@ impl ParsedAtom {
 }
 
 /// Parses raw inline value text into a [`NoteFieldValue`].
+///
+/// Trims surrounding whitespace; empty or whitespace-only text parses as
+/// [`NoteFieldValue::Null`].
 #[inline]
 #[must_use]
 pub(super) fn parse_inline_value(raw: &str) -> NoteFieldValue {
-    InlineValueParser::new(raw).parse()
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return NoteFieldValue::Null;
+    }
+    InlineValueParser::new(trimmed).parse()
 }
 
 /// Recursive-descent parser for inline-field value text.
 ///
-/// [`Self::parse`] is the entry point: it parses the first atom once, returning
-/// it when it spans the whole value. When the atom is followed by a comma, it
-/// continues via [`Self::parse_comma_list_from`]. It falls back to a raw
-/// [`NoteFieldValue::String`] when neither matches, and parses empty text as
-/// [`NoteFieldValue::Null`].
+/// Constructed with already-trimmed, non-empty text. [`Self::parse`] is the
+/// entry point: it parses the first atom once, returning it when it spans the
+/// whole value. When the atom is followed by a comma, it continues via
+/// [`Self::parse_comma_list_from`]. It falls back to a raw
+/// [`NoteFieldValue::String`] when neither matches.
 struct InlineValueParser<'a> {
-    text: &'a str,
     source: SourceText<'a>,
 }
 
 impl<'a> InlineValueParser<'a> {
     #[inline]
-    const fn new(text: &'a str) -> Self {
+    const fn new(source: &'a str) -> Self {
         Self {
-            text,
-            source: SourceText::new(text),
+            source: SourceText::new(source),
         }
     }
 
-    /// Parses the whole (already-trimmed) value text into a [`NoteFieldValue`].
+    /// Parses the whole (already-trimmed, non-empty) value text into a
+    /// [`NoteFieldValue`].
     ///
     /// Parses the first atom once, returning it if it spans the whole text. If
     /// followed by a comma, parses remaining atoms via
     /// [`Self::parse_comma_list_from`]. Falls back to
-    /// [`NoteFieldValue::String`] holding the raw text when neither matches.
-    /// Empty text parses as [`NoteFieldValue::Null`].
+    /// [`NoteFieldValue::String`] holding the text when neither matches.
     fn parse(&self) -> NoteFieldValue {
-        let trimmed = self.text.trim();
-        if trimmed.is_empty() {
-            return NoteFieldValue::Null;
-        }
-        let sub_parser = Self::new(trimmed);
-        let Some(first) = sub_parser.parse_atom_at(0) else {
-            return NoteFieldValue::String(trimmed.to_owned());
+        let Some(first) = self.parse_atom_at(0) else {
+            return NoteFieldValue::String(self.source.as_ref().to_owned());
         };
-        let after_first = sub_parser.skip_whitespace(first.end);
-        if after_first == sub_parser.source.len() {
+        let after_first = self.skip_whitespace(first.end);
+        if after_first == self.source.len() {
             return first.value;
         }
-        if sub_parser
-            .source
-            .from(after_first)
-            .is_some_and(|s| s.starts_with(','))
+        if self.source.from(after_first).is_some_and(|s| s.starts_with(','))
             && let Some(values) =
-                sub_parser.parse_comma_list_from(first.value, after_first)
+                self.parse_comma_list_from(first.value, after_first)
         {
             return NoteFieldValue::List(values.into_boxed_slice());
         }
-        NoteFieldValue::String(trimmed.to_owned())
+        NoteFieldValue::String(self.source.as_ref().to_owned())
     }
 
     /// Parses `,`-separated atoms starting after the first atom at `pos`.

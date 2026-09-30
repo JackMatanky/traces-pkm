@@ -99,6 +99,21 @@ pub(super) fn scan_marker_prefix(text: &str) -> MarkerPrefix<'_> {
     }
 }
 
+/// Parses `text` as exactly one complete `[<symbol>]` marker.
+///
+/// The shared shape grammar for the line-end path: accepts only text that is
+/// precisely an opening bracket, one symbol character, and a closing bracket.
+/// Multibyte symbols are supported; the closing bracket itself is not a valid
+/// symbol.
+fn split_marker_exact(text: &str) -> Option<char> {
+    let inner = text.strip_prefix(OPEN_BRACKET)?.strip_suffix(CLOSE_BRACKET)?;
+    let mut chars = inner.chars();
+    match (chars.next(), chars.next()) {
+        (Some(symbol), None) if symbol != CLOSE_BRACKET => Some(symbol),
+        _ => None,
+    }
+}
+
 /// Scans `text` for an item-leading marker, treating end-of-input as the
 /// trailing whitespace.
 ///
@@ -115,20 +130,10 @@ pub(super) fn scan_marker_at_line_end(text: &str) -> Option<MarkerScan<'_>> {
     match scan_marker_prefix(text) {
         MarkerPrefix::Complete(scan) => Some(scan),
         MarkerPrefix::Incomplete => {
-            let mut chars = text.chars();
-            match (chars.next(), chars.next(), chars.next(), chars.next()) {
-                (Some(o), Some(symbol), Some(c), None)
-                    if o == OPEN_BRACKET
-                        && c == CLOSE_BRACKET
-                        && symbol != CLOSE_BRACKET =>
-                {
-                    Some(MarkerScan {
-                        symbol,
-                        remainder: "",
-                    })
-                }
-                _ => None,
-            }
+            split_marker_exact(text).map(|symbol| MarkerScan {
+                symbol,
+                remainder: "",
+            })
         }
         MarkerPrefix::Rejected => None,
     }
@@ -459,7 +464,8 @@ mod tests {
     #[case::plain_text("Task")]
     #[case::open_bracket("[")]
     #[case::symbol_only("[x")]
-    fn rejects_truncated_non_markers_at_line_end(#[case] text: &str) {
+    #[case::text_after_marker("[x]x")]
+    fn rejects_non_markers_at_line_end(#[case] text: &str) {
         assert_eq!(scan_marker_at_line_end(text), None);
     }
 
