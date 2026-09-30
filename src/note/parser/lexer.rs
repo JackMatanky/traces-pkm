@@ -45,9 +45,8 @@ const ISO_DATE_LEN: usize = 10;
 
 /// Field-token mode controlling whether task emoji shorthands are recognized.
 ///
-/// Used as [`FieldToken`]'s logos `extras` value so
-/// [`scan_fields`] chooses its lexer behavior without
-/// passing a bare `bool`.
+/// Used as [`FieldToken`]'s logos `extras` value so [`scan_fields`] chooses its
+/// lexer behavior without passing a bare `bool`.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub(super) enum TaskShorthands {
     /// Recognizes task emoji shorthands.
@@ -197,6 +196,16 @@ fn task_field_callback(
     let Ok(value) = DateValue::parse_iso(candidate) else {
         return Filter::Skip;
     };
+    // Alphanumeric terminators reject the shorthand, mirroring
+    // `super::task::scan_date_after`: `📅 2025-01-15T12:00` is not a date and
+    // must stay plain text so both scanning paths agree.
+    if after_ws
+        .get(ISO_DATE_LEN..)
+        .and_then(|tail| tail.chars().next())
+        .is_some_and(char::is_alphanumeric)
+    {
+        return Filter::Skip;
+    }
     let Ok(key) = FieldKey::try_from(key) else {
         return Filter::Skip;
     };
@@ -542,6 +551,15 @@ mod tests {
                     DateValue::parse_iso(expected_date).expect("valid date")
                 ))
             );
+        }
+        #[test]
+        fn rejects_task_emoji_shorthand_with_alphanumeric_terminator() {
+            // Mirrors `super::task::scan_date_after`: a datetime suffix is not
+            // a valid shorthand date, so no field is emitted.
+            let fields =
+                scan_fields("🗓️ 2026-07-30T12:00", TaskShorthands::Include);
+
+            assert_eq!(fields, []);
         }
         #[test]
         fn accepts_a_bare_key_preceded_by_leading_whitespace() {

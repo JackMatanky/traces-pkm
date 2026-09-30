@@ -5,8 +5,8 @@ use std::ops::Range;
 use indexmap::IndexMap;
 
 use crate::{
-    DateValue, FieldKey, Tag, TaskDate, TaskDateSet, TaskDateType,
-    TaskPriority, note::NoteFieldValue,
+    DateValue, FieldKey, FieldKeyRef, Tag, TaskDate, TaskDateSet, TaskDateType,
+    TaskPriority, delimiter::DelimiterType, note::NoteFieldValue,
 };
 
 /// Scans `text` starting at byte offset `from` for `emoji` followed by an ISO
@@ -37,22 +37,23 @@ pub(super) fn scan_date_after(
             .find(|&(_, c)| c != ' ' && c != '\t')
             .map_or(after_var.len(), |(offset, _)| offset);
         let after_ws = &after_var[ws_len..];
-        if after_ws.len() >= 10 {
-            let candidate = &after_ws[..10];
-            let next_char_valid = after_ws[10..]
-                .chars()
-                .next()
-                .is_none_or(|ch| !ch.is_alphanumeric());
-            if next_char_valid
-                && DateValue::is_iso_shape(candidate)
-                && let Ok(date) = DateValue::parse_iso(candidate)
-            {
-                let span_end = emoji_end
-                    .saturating_add(var_len)
-                    .saturating_add(ws_len)
-                    .saturating_add(10);
-                return Some((match_start..span_end, date));
-            }
+        let Some(candidate) = after_ws.get(..10) else {
+            from = emoji_end.saturating_add(var_len);
+            continue;
+        };
+        let next_char_valid = after_ws
+            .get(10..)
+            .and_then(|tail| tail.chars().next())
+            .is_none_or(|ch| !ch.is_alphanumeric());
+        if next_char_valid
+            && DateValue::is_iso_shape(candidate)
+            && let Ok(date) = DateValue::parse_iso(candidate)
+        {
+            let span_end = emoji_end
+                .saturating_add(var_len)
+                .saturating_add(ws_len)
+                .saturating_add(10);
+            return Some((match_start..span_end, date));
         }
         from = emoji_end.saturating_add(var_len);
     }
@@ -69,17 +70,14 @@ pub(super) fn extract_task_dates(
 ) -> TaskDateSet {
     let mut set = TaskDateSet::default();
 
-    // 1. Emoji dates (first-wins per slot)
+    // 1. Emoji dates (first-wins per slot; table order ranks spellings)
     for &(base_emoji, kind) in TaskDateType::EMOJIS {
-        let mut from = 0;
-        while from < text.len() {
-            if let Some((range, date)) = scan_date_after(text, from, base_emoji)
-            {
-                set.insert(TaskDate::new(kind, date));
-                from = range.end;
-            } else {
-                break;
-            }
+        if set.get(kind).is_some() {
+            // An earlier table spelling already claimed this slot.
+            continue;
+        }
+        if let Some((_, date)) = scan_date_after(text, 0, base_emoji) {
+            set.insert(TaskDate::new(kind, date));
         }
     }
 
@@ -100,21 +98,17 @@ pub(super) fn extract_task_dates(
 }
 
 /// Returns the first date value matching `key_name` across `fields`.
+///
+/// [`FieldKeyRef`] resolves the canonical entry in O(1); keys in `fields` are
+/// unique under canonical equality, so at most one entry matches.
 fn first_date_in_field(
     fields: &IndexMap<FieldKey, Vec<NoteFieldValue>>,
     key_name: &str,
 ) -> Option<DateValue> {
-    for (key, values) in fields {
-        if !key.is_canonical_match(key_name) {
-            continue;
-        }
-        for val in values {
-            if let Some(date) = val.as_date() {
-                return Some(date.into());
-            }
-        }
-    }
-    None
+    fields
+        .get(&FieldKeyRef::new(key_name))?
+        .iter()
+        .find_map(|val| val.as_date().map(Into::into))
 }
 
 /// Extracts task priority from text emojis or an inline `[priority:: <level>]`
@@ -269,20 +263,20 @@ pub(super) fn clean_task_text(raw_text: &str, tag_filters: &[Tag]) -> String {
 /// Scans `text` for Dataview-style inline task fields and records their removal
 /// byte spans.
 fn find_inline_task_field_spans(text: &str, spans: &mut Vec<(usize, usize)>) {
-    for (open_delim, close_delim) in [('[', ']'), ('(', ')')] {
+    for kind in [DelimiterType::Bracket, DelimiterType::Parenthesis] {
+        let Some(open_char) = kind.open_char() else {
+            continue;
+        };
         let mut search_from = 0;
         while let Some(open_pos) =
-            text.get(search_from..).and_then(|t| t.find(open_delim))
+            text.get(search_from..).and_then(|t| t.find(open_char))
         {
             let match_start = search_from.saturating_add(open_pos);
-            let open_end = match_start.saturating_add(open_delim.len_utf8());
+            let open_end = match_start.saturating_add(open_char.len_utf8());
             let remainder = &text[open_end..];
-            if let Some(match_end) = scan_inline_task_field(
-                match_start,
-                remainder,
-                open_delim,
-                close_delim,
-            ) {
+            if let Some(match_end) =
+                scan_inline_task_field(match_start, remainder, kind)
+            {
                 spans.push((match_start, match_end));
                 search_from = match_end;
             } else {
@@ -297,9 +291,9 @@ fn find_inline_task_field_spans(text: &str, spans: &mut Vec<(usize, usize)>) {
 fn scan_inline_task_field(
     match_start: usize,
     remainder: &str,
-    open_delim: char,
-    close_delim: char,
+    kind: DelimiterType,
 ) -> Option<usize> {
+    let open_char = kind.open_char()?;
     let sep_pos = remainder.find("::")?;
     let key = remainder.get(..sep_pos)?.trim();
     if key.is_empty()
@@ -309,30 +303,28 @@ fn scan_inline_task_field(
         return None;
     }
     let after_sep = remainder.get(sep_pos.saturating_add(2)..)?;
-    let close_pos = after_sep.find(close_delim)?;
+    let close_offset = kind.find_closing(after_sep)?;
     Some(
         match_start
-            .saturating_add(open_delim.len_utf8())
+            .saturating_add(open_char.len_utf8())
             .saturating_add(sep_pos)
             .saturating_add(2)
-            .saturating_add(close_pos)
-            .saturating_add(close_delim.len_utf8()),
+            .saturating_add(close_offset)
+            .saturating_add(kind.close_len()),
     )
 }
 
 /// Returns `true` if `key` matches a recognized task metadata field name.
+///
+/// Derives the allowlist from [`TaskDateType::field_keys`] plus `priority`, so
+/// the date aliases have a single source of truth. `key` is expected to be
+/// already trimmed.
 fn is_task_field_key(key: &str) -> bool {
-    matches!(
-        key.trim().to_ascii_lowercase().as_str(),
-        "created"
-            | "start"
-            | "scheduled"
-            | "due"
-            | "done"
-            | "cancelled"
-            | "priority"
-            | "completion"
-    )
+    TaskDateType::ALL
+        .iter()
+        .flat_map(|kind| kind.field_keys().iter().copied())
+        .chain(std::iter::once("priority"))
+        .any(|candidate| key.eq_ignore_ascii_case(candidate))
 }
 
 /// Collapses consecutive whitespace in `text` while preserving newlines.
@@ -395,6 +387,22 @@ mod tests {
         fn rejects_alphanumeric_date_terminator() {
             let text = "Task 📅 2025-01-15T12:00:00";
             assert_eq!(scan_date_after(text, 0, "\u{1F4C5}"), None);
+        }
+
+        #[test]
+        fn skips_multibyte_candidate_without_panicking() {
+            // Byte 10 of the candidate falls inside a multibyte character, so
+            // slicing there must not panic; the candidate is skipped instead.
+            let text = "📅 你好你好";
+            assert_eq!(scan_date_after(text, 0, "\u{1F4C5}"), None);
+        }
+
+        #[test]
+        fn finds_valid_date_after_skipping_multibyte_candidate() {
+            let text = "📅 你好你好 📅 2025-01-15";
+            let (range, date) = scan_date_after(text, 0, "\u{1F4C5}").unwrap();
+            assert_eq!(date, DateValue::parse_iso("2025-01-15").unwrap());
+            assert_eq!(&text[range], "📅 2025-01-15");
         }
     }
 
@@ -493,6 +501,42 @@ mod tests {
             let cleaned =
                 clean_task_text("Task 🔺\u{FE0F} remaining text", &[]);
             assert_eq!(cleaned, "Task remaining text");
+        }
+
+        #[test]
+        fn strips_inline_fields_with_nested_delimiters_and_wikilinks() {
+            let cleaned = clean_task_text(
+                "Task [due:: [[2025-01-15]]] and (scheduled:: 2025-01-01 \
+                 (tentative)) remaining",
+                &[],
+            );
+            assert_eq!(cleaned, "Task and remaining");
+        }
+
+        #[test]
+        fn strips_inline_fields_with_quoted_bracket_content() {
+            let cleaned = clean_task_text(
+                r#"Task [due:: "meeting [sync]"] remaining"#,
+                &[],
+            );
+            assert_eq!(cleaned, "Task remaining");
+        }
+    }
+
+    mod is_task_field_key {
+        use super::*;
+
+        #[test]
+        fn recognizes_task_field_keys_case_insensitively() {
+            assert!(is_task_field_key("Due"));
+            assert!(is_task_field_key("COMPLETION"));
+            assert!(is_task_field_key("priority"));
+        }
+
+        #[test]
+        fn rejects_keys_outside_the_task_field_allowlist() {
+            assert!(!is_task_field_key("store"));
+            assert!(!is_task_field_key(""));
         }
     }
 }

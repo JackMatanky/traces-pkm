@@ -104,9 +104,9 @@ impl QueryRow {
             .map(ListItem::clean_text)
     }
 
-    /// Returns the numeric severity rank of the task's priority for task
-    /// rows, or `None` for non-task rows, page-level rows, and tasks
-    /// without a priority.
+    /// Returns the numeric severity rank of the task's priority for task rows,
+    /// or `None` for non-task rows, page-level rows, and tasks without a
+    /// priority.
     ///
     /// Consumed by sort key materialization. Rendering keeps using
     /// [`TaskPriority::as_str`].
@@ -119,8 +119,8 @@ impl QueryRow {
             .map(TaskPriority::rank)
     }
 
-    /// Returns the task status symbol for task rows, or `None` for non-task
-    /// or page-level rows.
+    /// Returns the task status symbol for task rows, or `None` for non-task or
+    /// page-level rows.
     #[inline]
     #[must_use]
     pub fn status_symbol(&self) -> Option<TaskStatusSymbol> {
@@ -394,15 +394,7 @@ impl QueryRow {
                     priority.as_str(),
                 ))
             }),
-            TaskField::DueDate
-            | TaskField::DoneDate
-            | TaskField::CreatedDate
-            | TaskField::StartDate
-            | TaskField::ScheduledDate
-            | TaskField::CancelledDate => {
-                let Some(kind) = field.date_kind() else {
-                    return QueryFieldValueRef::Note(NoteFieldValueRef::Null);
-                };
+            TaskField::Date(kind) => {
                 task.dates().get(kind).map_or(null, |date| {
                     QueryFieldValueRef::Note(NoteFieldValueRef::Date(date))
                 })
@@ -414,8 +406,8 @@ impl QueryRow {
     }
 
     /// Orders two rows by their position in the underlying [`WorkspaceIndex`]:
-    /// document order for note rows, and item order within their note for
-    /// list and task rows. This is the total order behind minijinja's row
+    /// document order for note rows, and item order within their note for list
+    /// and task rows. This is the total order behind minijinja's row
     /// comparisons and `sort` filter.
     #[inline]
     #[must_use]

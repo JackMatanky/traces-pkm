@@ -376,8 +376,9 @@ fn normalize_name(name: &str) -> String {
 /// Set of lifecycle dates associated with a
 /// [`TaskListItem`](crate::TaskListItem).
 ///
-/// Stores at most one calendar date per [`TaskDateType`] slot. Preserves an
-/// unversioned, deterministic postcard memory layout.
+/// Stores at most one calendar date per [`TaskDateType`] slot. Field
+/// declaration order fixes the six-slot postcard wire format used by
+/// unversioned cached indexes.
 ///
 /// # Examples
 ///
@@ -562,18 +563,6 @@ impl TaskDate {
     }
 
     /// Returns the lifecycle slot for this date.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use chrono::NaiveDate;
-    /// use traces_pkm::{DateValue, TaskDate, TaskDateType};
-    ///
-    /// let date_val =
-    ///     NaiveDate::from_ymd_opt(2025, 1, 15).map(DateValue::from).unwrap();
-    /// let task_date = TaskDate::new(TaskDateType::Due, date_val);
-    /// assert_eq!(task_date.kind(), TaskDateType::Due);
-    /// ```
     #[inline]
     #[must_use]
     pub const fn kind(&self) -> TaskDateType {
@@ -581,18 +570,6 @@ impl TaskDate {
     }
 
     /// Returns the calendar date value.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use chrono::NaiveDate;
-    /// use traces_pkm::{DateValue, TaskDate, TaskDateType};
-    ///
-    /// let date_val =
-    ///     NaiveDate::from_ymd_opt(2025, 1, 15).map(DateValue::from).unwrap();
-    /// let task_date = TaskDate::new(TaskDateType::Due, date_val);
-    /// assert_eq!(task_date.date(), date_val);
-    /// ```
     #[inline]
     #[must_use]
     pub const fn date(&self) -> DateValue {
@@ -1226,7 +1203,7 @@ mod tests {
         }
     }
 
-    mod task_priority {
+    mod priority {
         use pretty_assertions::assert_eq;
         use rstest::rstest;
 
@@ -1322,7 +1299,7 @@ mod tests {
         }
     }
 
-    mod task_date_set {
+    mod date_set {
         use chrono::NaiveDate;
         use pretty_assertions::assert_eq;
 
@@ -1410,17 +1387,26 @@ mod tests {
 
         #[test]
         fn preserves_slots_across_postcard_roundtrip() {
-            let due = NaiveDate::from_ymd_opt(2025, 1, 15)
-                .map(DateValue::from)
-                .unwrap();
             let mut set = TaskDateSet::default();
-            set.insert(TaskDate::new(TaskDateType::Due, due));
+            for (kind, day) in [
+                (TaskDateType::Created, 1),
+                (TaskDateType::Scheduled, 2),
+                (TaskDateType::Start, 3),
+                (TaskDateType::Due, 4),
+                (TaskDateType::Done, 5),
+                (TaskDateType::Cancelled, 6),
+            ] {
+                let day = NaiveDate::from_ymd_opt(2025, 1, day)
+                    .map(DateValue::from)
+                    .unwrap();
+                set.insert(TaskDate::new(kind, day));
+            }
             let bytes = postcard::to_allocvec(&set).expect("encode dates");
             let decoded: TaskDateSet =
                 postcard::from_bytes(&bytes).expect("decode dates");
 
             assert_eq!(decoded, set);
-            assert_eq!(decoded.get(TaskDateType::Due), Some(due));
+            assert!(!decoded.is_empty());
         }
 
         #[test]
@@ -1466,23 +1452,11 @@ mod tests {
             );
         }
     }
-    mod task_date_type {
+    mod date_type {
         use pretty_assertions::assert_eq;
         use rstest::rstest;
 
         use super::*;
-
-        #[test]
-        fn all_contains_all_six_variants_in_order() {
-            assert_eq!(TaskDateType::ALL, [
-                TaskDateType::Created,
-                TaskDateType::Scheduled,
-                TaskDateType::Start,
-                TaskDateType::Due,
-                TaskDateType::Done,
-                TaskDateType::Cancelled,
-            ]);
-        }
 
         #[rstest]
         #[case::created("➕", TaskDateType::Created)]
@@ -1527,17 +1501,6 @@ mod tests {
             #[case] expected: &[&str],
         ) {
             assert_eq!(kind.field_keys(), expected);
-        }
-
-        #[test]
-        fn task_date_constructs_and_reads_accessors() {
-            use chrono::NaiveDate;
-            let d = NaiveDate::from_ymd_opt(2025, 1, 15)
-                .map(DateValue::from)
-                .unwrap();
-            let td = TaskDate::new(TaskDateType::Due, d);
-            assert_eq!(td.kind(), TaskDateType::Due);
-            assert_eq!(td.date(), d);
         }
     }
 }

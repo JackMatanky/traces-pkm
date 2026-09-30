@@ -2,8 +2,8 @@
 //!
 //! This module defines the flat list-item data model. Items are stored in
 //! strict document order inside a [`Note`](crate::Note); hierarchy is
-//! reconstructed from each item's `depth` and `parent` source line rather
-//! than from child containers.
+//! reconstructed from each item's `depth` and `parent` source line rather than
+//! from child containers.
 //!
 //! # Key Types
 //!
@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 
 use super::field::NoteFieldValue;
 use crate::{FieldKey, SourceLine, Tag, TaskDateSet, TaskPriority, TaskStatus};
+
 /// Compact inline field map for a list item.
 pub(crate) type ListFieldMap = IndexMap<FieldKey, Box<[NoteFieldValue]>>;
 
@@ -34,7 +35,7 @@ pub(crate) type ListFieldMap = IndexMap<FieldKey, Box<[NoteFieldValue]>>;
 // `NoteFieldValue`, whose `Number` variant holds `f64`, so `Eq` is
 // unrepresentable on this struct and the clippy nursery lint
 // `derive_partial_eq_without_eq` (visible only under `-W clippy::nursery`)
-// flags it in error — its suggestion does not compile.
+// flags it in error, but its suggestion does not compile.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct ListItem {
     text: ListText,
@@ -1002,6 +1003,52 @@ mod tests {
                     NaiveDate::from_ymd_opt(2025, 2, 1).map(Into::into)
                 );
             }
+        }
+
+        /// Frozen postcard bytes of a fully populated `TaskListItem`,
+        /// serialized by the pre-redesign types at commit `e797368b` (all six
+        /// `DateValue` slots, priority `High`, status Done via `x`, and
+        /// `fully_complete: true`). Cached postcard indexes carry no format
+        /// version marker, so this test fails if a field is added, removed, or
+        /// reordered in any struct on the item's serialization path.
+        #[test]
+        fn decodes_pre_c1_task_list_item_wire_fixture() {
+            const HEX: &str = concat!(
+                "010a323032352d30312d3031",
+                "010a323032352d30312d3032",
+                "010a323032352d30312d3033",
+                "010a323032352d30312d3034",
+                "010a323032352d30312d3035",
+                "010a323032352d30312d3036",
+                "0104017804446f6e650301",
+            );
+            let bytes: Vec<u8> = (0..HEX.len())
+                .step_by(2)
+                .map(|i| {
+                    u8::from_str_radix(&HEX[i..i + 2], 16).expect("valid hex")
+                })
+                .collect();
+            let decoded: TaskListItem =
+                postcard::from_bytes(&bytes).expect("decode pre-c1 item");
+
+            for (kind, day) in [
+                (TaskDateType::Created, 1),
+                (TaskDateType::Scheduled, 2),
+                (TaskDateType::Start, 3),
+                (TaskDateType::Due, 4),
+                (TaskDateType::Done, 5),
+                (TaskDateType::Cancelled, 6),
+            ] {
+                assert_eq!(
+                    decoded.dates().get(kind),
+                    NaiveDate::from_ymd_opt(2025, 1, day).map(Into::into)
+                );
+            }
+            assert_eq!(decoded.priority(), Some(TaskPriority::High));
+            assert_eq!(decoded.status().symbol().as_char(), 'x');
+            assert_eq!(decoded.status().name(), "Done");
+            assert_eq!(decoded.status().kind(), TaskStatusType::Done);
+            assert!(decoded.is_fully_complete());
         }
     }
 

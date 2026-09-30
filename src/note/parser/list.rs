@@ -111,7 +111,7 @@ impl ListTracker {
         let mut page_fields: IndexMap<FieldKey, Vec<NoteFieldValue>> =
             IndexMap::new();
         for (key, value) in raw_fields {
-            // ponytail: clone needed for two-out pattern (item + page fields)
+            // Clone needed for two-out pattern (item + page fields)
             item_fields.entry(key.clone()).or_default().push(value.clone());
             page_fields.entry(key).or_default().push(value);
         }
@@ -1334,6 +1334,36 @@ mod tests {
             let task = first_task(&note).expect("task present");
 
             assert_eq!(task.dates().get(TaskDateType::Due), None);
+        }
+
+        #[test]
+        fn rejects_datetime_shorthand_with_alphanumeric_terminator() {
+            // `📅 2025-01-15T12:00` is not a valid shorthand date: both the
+            // lexer and the date scanner must reject it so no due date is
+            // extracted from plain text.
+            let input = "- [ ] Task 📅 2025-01-15T12:00";
+            let note = parse(input);
+            let task = first_task(&note).expect("task present");
+
+            assert_eq!(task.dates().get(TaskDateType::Due), None);
+        }
+
+        #[test]
+        fn skips_multibyte_text_after_date_emoji_without_panicking() {
+            // Byte 10 of the multibyte candidate is not a char boundary; the
+            // scanner must skip it and still find the valid date that follows.
+            let input = "- [ ] Task 📅 你好你好 📅 2025-01-15";
+            let note = parse(input);
+            let task = first_task(&note).expect("task present");
+
+            assert_eq!(task.dates().get(TaskDateType::Due), date(2025, 1, 15));
+            assert!(
+                note.lists()
+                    .first()
+                    .expect("item present")
+                    .clean_text()
+                    .contains("你好你好")
+            );
         }
 
         #[test]
