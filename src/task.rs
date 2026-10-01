@@ -1,21 +1,30 @@
 //! Task status, priority, and lifecycle-date domain model shared by note
 //! parsing, display, and querying.
 //!
-//! - [`TaskStatus`]: a named, typed status keyed by its marker symbol.
-//! - [`TaskStatusMap`]: a lookup table built once at config resolution, indexed
-//!   by symbol, name, and type. [`TaskStatusMap::resolve`] is the custom marker
-//!   scanner's entry point: known symbols resolve to their configured status,
-//!   unknown symbols fall back to an incomplete todo.
-//! - [`TaskStatusType`]: the workflow classification of a status (todo,
-//!   in-progress, on-hold, done, cancelled, non-task).
-//! - [`TaskStatusSymbol`]: the marker character inside `[<char>]`.
-//! - [`TaskDateSet`]: set of lifecycle dates (created, scheduled, start, due,
-//!   done, cancelled).
+//! # Key Types
+//!
+//! - [`TaskStatus`]: named, typed status keyed by its marker symbol.
+//! - [`TaskStatusMap`]: lookup table for resolving marker symbols to configured
+//!   statuses.
+//! - [`TaskStatusType`]: workflow classification (todo, in-progress, on-hold,
+//!   done, cancelled, non-task).
+//! - [`TaskStatusSymbol`]: marker character inside `[<char>]`.
+//! - [`TaskDateSet`]: set of up to six lifecycle dates.
 //! - [`TaskDate`]: single lifecycle date occurrence paired with its slot.
 //! - [`TaskDateType`]: enum of the six lifecycle date slots.
 //! - [`TaskPriority`]: six-level task priority enum mapped to emoji and text
 //!   representations.
-
+//!
+//! # Examples
+//!
+//! ```rust
+//! use traces_pkm::{TaskPriority, TaskStatus, TaskStatusType};
+//!
+//! let status = TaskStatus::default();
+//! assert_eq!(status.name(), "Todo");
+//! assert_eq!(status.kind(), TaskStatusType::Todo);
+//! assert_eq!(TaskPriority::Highest.as_str(), "highest");
+//! ```
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
@@ -23,6 +32,20 @@ use serde::{Deserialize, Serialize};
 use crate::{DateValue, delimiter::DelimiterType};
 
 /// A named, typed task status keyed by its marker [`TaskStatusSymbol`].
+///
+/// Encapsulates the marker character, display name, and workflow classification
+/// type for task items.
+///
+/// # Examples
+///
+/// ```rust
+/// use traces_pkm::{TaskStatus, TaskStatusSymbol, TaskStatusType};
+///
+/// let status = TaskStatus::default();
+/// assert_eq!(status.symbol().as_char(), ' ');
+/// assert_eq!(status.name(), "Todo");
+/// assert_eq!(status.kind(), TaskStatusType::Todo);
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct TaskStatus {
     symbol: TaskStatusSymbol,
@@ -76,11 +99,20 @@ impl Default for TaskStatus {
     }
 }
 
-/// A [`TaskStatus`] lookup table, built once at config resolution.
+/// A [`TaskStatus`] lookup table, built once during configuration resolution.
 ///
 /// Provides lookup by marker symbol, display name, and workflow type. Default
 /// statuses are always present; configuration can add new statuses or override
 /// default ones that share a symbol.
+///
+/// # Examples
+///
+/// ```rust
+/// use traces_pkm::TaskStatusMap;
+///
+/// let map = TaskStatusMap::default();
+/// assert!(format!("{map:?}").contains("Todo"));
+/// ```
 #[derive(Clone, Debug)]
 pub struct TaskStatusMap {
     symbols: HashMap<TaskStatusSymbol, TaskStatus>,
@@ -230,6 +262,18 @@ impl Default for TaskStatusMap {
 }
 
 /// The workflow classification of a [`TaskStatus`].
+///
+/// Maps statuses to standard lifecycle states used in task views and completion
+/// rollups.
+///
+/// # Examples
+///
+/// ```rust
+/// use traces_pkm::TaskStatusType;
+///
+/// assert_ne!(TaskStatusType::Done, TaskStatusType::InProgress);
+/// assert_eq!(TaskStatusType::NonTask, TaskStatusType::NonTask);
+/// ```
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub enum TaskStatusType {
     /// Not yet started.
@@ -250,9 +294,10 @@ pub enum TaskStatusType {
 impl TaskStatusType {
     /// Derives the tri-state completion value for this status type.
     ///
-    /// `Some(true)` for [`Self::Done`], `None` for [`Self::Cancelled`] (a
-    /// terminal state outside the complete/incomplete binary), and
-    /// `Some(false)` for every other status type.
+    /// Returns:
+    /// - `Some(true)` for [`Self::Done`]
+    /// - `None` for [`Self::Cancelled`]
+    /// - `Some(false)` for all other status types
     #[inline]
     #[must_use]
     pub(crate) const fn completed(self) -> Option<bool> {
@@ -267,10 +312,8 @@ impl TaskStatusType {
 
     /// Derives the boolean completion rollup for this status type.
     ///
-    /// The subtask-aggregation form of [`Self::completed`]: `false` only for
-    /// statuses that are known-incomplete (`Some(false)`); cancelled items roll
-    /// up as complete, exactly as the tri-state `!= Some(false)` comparison
-    /// treats them. The query layer keeps the tri-state form.
+    /// Returns `true` for completed or cancelled tasks, and `false` for
+    /// incomplete tasks.
     #[inline]
     #[must_use]
     pub(crate) const fn is_complete(self) -> bool {
@@ -281,9 +324,17 @@ impl TaskStatusType {
 /// The marker character inside `[<char>]`, e.g. `' '`, `'x'`, `'/'`, `'-'`.
 ///
 /// Wraps a single `char` without validation, serving as the lookup key for
-/// standard and custom-scanned task markers. Unknown single-character markers
-/// are still valid symbols; this type carries no validation beyond being a
-/// `char`.
+/// standard and custom-scanned task markers.
+///
+/// # Examples
+///
+/// ```rust
+/// use traces_pkm::TaskStatusSymbol;
+///
+/// let sym = TaskStatusSymbol::new('x');
+/// assert_eq!(sym.as_char(), 'x');
+/// assert_eq!(sym, 'x');
+/// ```
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub struct TaskStatusSymbol(char);
 
@@ -385,12 +436,19 @@ fn normalize_name(name: &str) -> String {
     out
 }
 
-/// Set of lifecycle dates associated with a
-/// [`TaskListItem`](crate::TaskListItem).
+/// Set of up to six task lifecycle dates, at most one per [`TaskDateType`]
+/// slot.
 ///
-/// Stores at most one calendar date per [`TaskDateType`] slot. Field
-/// declaration order fixes the six-slot postcard wire format used by
-/// unversioned cached indexes.
+/// Holds one optional calendar date per lifecycle kind:
+///
+/// - [`TaskDateType::Created`]
+/// - [`TaskDateType::Scheduled`]
+/// - [`TaskDateType::Start`]
+/// - [`TaskDateType::Due`]
+/// - [`TaskDateType::Done`]
+/// - [`TaskDateType::Cancelled`]
+///
+/// Slots without a parsed date stay unset.
 ///
 /// # Examples
 ///
@@ -484,8 +542,7 @@ impl TaskDateSet {
             && self.cancelled.is_none()
     }
 
-    /// Returns an iterator over all occupied lifecycle dates in declaration
-    /// order.
+    /// Returns an iterator over occupied lifecycle dates in declaration order.
     ///
     /// # Examples
     ///
@@ -506,43 +563,6 @@ impl TaskDateSet {
     #[must_use]
     pub fn iter(&self) -> TaskDateSetIter {
         self.into_iter()
-    }
-}
-
-/// An iterator over the occupied lifecycle dates in a [`TaskDateSet`].
-///
-/// Yields [`TaskDate`] elements in declaration order:
-/// [`TaskDateType::Created`], [`TaskDateType::Scheduled`],
-/// [`TaskDateType::Start`], [`TaskDateType::Due`], [`TaskDateType::Done`], and
-/// [`TaskDateType::Cancelled`].
-#[derive(Clone, Debug)]
-pub struct TaskDateSetIter {
-    set: TaskDateSet,
-    index: usize,
-}
-
-impl Iterator for TaskDateSetIter {
-    type Item = TaskDate;
-
-    #[inline]
-    fn next(&mut self) -> Option<Self::Item> {
-        while self.index < TaskDateType::ALL.len() {
-            let Some(&kind) = TaskDateType::ALL.get(self.index) else {
-                break;
-            };
-            self.index = self.index.saturating_add(1);
-            if let Some(date) = self.set.get(kind) {
-                return Some(TaskDate::new(kind, date));
-            }
-        }
-        None
-    }
-
-    #[inline]
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining_slots =
-            TaskDateType::ALL.len().saturating_sub(self.index);
-        (0, Some(remaining_slots))
     }
 }
 
@@ -586,6 +606,44 @@ impl Extend<TaskDate> for TaskDateSet {
         for date in iter {
             self.insert(date);
         }
+    }
+}
+
+/// An iterator over the occupied lifecycle dates in a [`TaskDateSet`].
+///
+/// Yields [`TaskDate`] elements in declaration order:
+/// 1. [`TaskDateType::Created`]
+/// 2. [`TaskDateType::Scheduled`]
+/// 3. [`TaskDateType::Start`]
+/// 4. [`TaskDateType::Due`]
+/// 5. [`TaskDateType::Done`]
+/// 6. [`TaskDateType::Cancelled`]
+#[derive(Clone, Debug)]
+pub struct TaskDateSetIter {
+    set: TaskDateSet,
+    /// Position within [`TaskDateType::ALL`], bounded by the six-slot array.
+    index: u8,
+}
+
+impl Iterator for TaskDateSetIter {
+    type Item = TaskDate;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(&kind) = TaskDateType::ALL.get(usize::from(self.index)) {
+            self.index = self.index.saturating_add(1);
+            if let Some(date) = self.set.get(kind) {
+                return Some(TaskDate::new(kind, date));
+            }
+        }
+        None
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining_slots =
+            TaskDateType::ALL.len().saturating_sub(usize::from(self.index));
+        (0, Some(remaining_slots))
     }
 }
 
@@ -1017,6 +1075,12 @@ impl std::fmt::Display for TaskPriority {
     }
 }
 
+/// Parses a task priority from a name or emoji.
+///
+/// # Errors
+///
+/// - [`TaskError::InvalidPriority`] if `s` does not match a recognized priority
+///   name or emoji.
 impl std::str::FromStr for TaskPriority {
     type Err = TaskError;
 
