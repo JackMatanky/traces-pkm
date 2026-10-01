@@ -19,6 +19,7 @@ struct ParsedAtom {
 }
 
 impl ParsedAtom {
+    /// Creates an atom pairing `value` with the exclusive byte offset `end`.
     #[inline]
     const fn new(value: NoteFieldValue, end: usize) -> Self {
         Self {
@@ -44,7 +45,7 @@ pub(super) fn parse_inline_value(raw: &str) -> NoteFieldValue {
 
 /// Recursive-descent parser for inline-field value text.
 ///
-/// Constructed with already-trimmed, non-empty text. [`Self::parse`] is the
+/// Constructed with already-trimmed, nonempty text. [`Self::parse`] is the
 /// entry point: it parses the first atom once, returning it when it spans the
 /// whole value. When the atom is followed by a comma, it continues via
 /// [`Self::parse_comma_list_from`]. It falls back to a raw
@@ -54,6 +55,7 @@ struct InlineValueParser<'a> {
 }
 
 impl<'a> InlineValueParser<'a> {
+    /// Creates a new recursive-descent parser wrapping `source`.
     #[inline]
     const fn new(source: &'a str) -> Self {
         Self {
@@ -61,7 +63,7 @@ impl<'a> InlineValueParser<'a> {
         }
     }
 
-    /// Parses the whole (already-trimmed, non-empty) value text into a
+    /// Parses the whole (already-trimmed, nonempty) value text into a
     /// [`NoteFieldValue`].
     ///
     /// Parses the first atom once, returning it if it spans the whole text. If
@@ -87,8 +89,8 @@ impl<'a> InlineValueParser<'a> {
 
     /// Parses `,`-separated atoms starting after the first atom at `pos`.
     ///
-    /// `pos` must point to the `,` following the first atom.
-    /// Returns `Some` if all subsequent items parse as valid atoms.
+    /// `pos` must point to the `,` following the first atom. Returns `Some` if
+    /// all subsequent items parse as valid atoms.
     fn parse_comma_list_from(
         &self,
         first: NoteFieldValue,
@@ -254,9 +256,11 @@ impl<'a> InlineValueParser<'a> {
         Some(ParsedAtom::new(NoteFieldValue::String(raw.to_owned()), end))
     }
 
-    /// Whether `pos` is at the end of the text, immediately before whitespace,
-    /// or immediately before a `,`. An atom must end at such a position to
-    /// avoid greedily consuming into the next atom or trailing text.
+    /// Returns `true` if `pos` is at an atom boundary: end of text, whitespace,
+    /// or comma.
+    ///
+    /// An atom must end at such a position to avoid greedily consuming into the
+    /// next atom or trailing text.
     fn is_atom_boundary(&self, pos: usize) -> bool {
         self.source.from(pos).is_some_and(|source| {
             source

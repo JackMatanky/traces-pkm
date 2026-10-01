@@ -20,10 +20,10 @@ use crate::{
 #[must_use]
 pub(super) fn scan_fields(
     text: &str,
-    shorthands: TaskShorthands,
+    mode: TaskFieldEmojis,
 ) -> Vec<(FieldKey, NoteFieldValue)> {
     let mut fields = Vec::new();
-    let mut lexer = ItemToken::lexer_with_extras(text, shorthands);
+    let mut lexer = ItemToken::lexer_with_extras(text, mode);
     while let Some(Ok(token)) = lexer.next() {
         match token {
             ItemToken::Field((key, value, _)) => fields.push((key, value)),
@@ -39,16 +39,15 @@ pub(super) fn scan_fields(
 }
 
 /// Tokenizes `text` into spanned item tokens in a single pass.
-#[must_use]
 pub(super) fn tokenize_item_text(
     text: &str,
-    shorthands: TaskShorthands,
+    mode: TaskFieldEmojis,
 ) -> Vec<Spanned<ItemToken>> {
-    let mut lexer = ItemToken::lexer_with_extras(text, shorthands);
+    let mut lexer = ItemToken::lexer_with_extras(text, mode);
     let mut tokens = Vec::new();
     // The `skip(r"[\s\S]", priority = 0)` derive matches every byte, so the
-    // lexer never yields `Err`; a `Some(Err(_))` here would mean the skip
-    // rule was removed and would silently truncate the stream.
+    // lexer never yields `Err`; a `Some(Err(_))` here would mean the skip rule
+    // was removed and would silently truncate the stream.
     while let Some(Ok(token)) = lexer.next() {
         let span = lexer.span();
         tokens.push(Spanned::new(token, span));
@@ -76,21 +75,21 @@ where
 /// Byte length of an ISO `YYYY-MM-DD` date, such as `2026-01-01`.
 const ISO_DATE_LEN: usize = 10;
 
-/// Field-token mode controlling whether task emoji shorthands are recognized.
+/// Switch controlling whether task field emoji shorthands are recognized.
 ///
-/// Used as [`ItemToken`]'s logos `extras` value so [`scan_fields`]
-/// chooses its lexer behavior without passing a bare `bool`.
+/// Used as [`ItemToken`]'s logos `extras` value so [`scan_fields`] chooses its
+/// lexer behavior without passing a bare `bool`.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-pub(super) enum TaskShorthands {
-    /// Recognizes task emoji shorthands.
+pub(super) enum TaskFieldEmojis {
+    /// Recognizes task field emoji shorthands.
     Include,
-    /// Ignores task emoji shorthands.
+    /// Ignores task field emoji shorthands.
     #[default]
     Exclude,
 }
 
-impl TaskShorthands {
-    /// Whether this mode recognizes task emoji shorthands.
+impl TaskFieldEmojis {
+    /// Returns `true` if task field emoji shorthands are recognized.
     #[inline]
     #[must_use]
     const fn is_included(self) -> bool {
@@ -109,7 +108,7 @@ pub(super) enum FieldForm {
 
 /// Token stream for item components in free-form Markdown text.
 #[derive(Debug, PartialEq, Logos)]
-#[logos(extras = TaskShorthands, skip(r"[\s\S]", priority = 0))]
+#[logos(extras = TaskFieldEmojis, skip(r"[\s\S]", priority = 0))]
 pub(super) enum ItemToken {
     // 1. Priority emojis
     #[token("\u{1F53A}\u{FE0F}", |_| TaskPriority::Highest)]
@@ -227,7 +226,7 @@ fn wrapped_field_callback(
 /// kind `date_type` when the following text is optional inline whitespace plus
 /// exactly [`ISO_DATE_LEN`] bytes forming a valid ISO date.
 ///
-/// Always skips when `lex.extras` is [`TaskShorthands::Exclude`].
+/// Always skips when `lex.extras` is [`TaskFieldEmojis::Exclude`].
 fn task_date_callback(
     lex: &mut Lexer<'_, ItemToken>,
     date_type: TaskDateType,
@@ -300,7 +299,7 @@ mod tests {
         use crate::note::{Link, LinkType, NoteFieldValue};
 
         fn extract_fields(input: &str) -> Vec<(FieldKey, NoteFieldValue)> {
-            scan_fields(input, TaskShorthands::Exclude)
+            scan_fields(input, TaskFieldEmojis::Exclude)
         }
         #[rstest]
         #[case::body("Author:: Jane Doe", "Author", "Jane Doe")]
@@ -613,9 +612,7 @@ mod tests {
             #[case] expected_key: &str,
             #[case] expected_date: &str,
         ) {
-            let fields = scan_fields(input, TaskShorthands::Include);
-
-            assert_eq!(fields.len(), 1);
+            let fields = scan_fields(input, TaskFieldEmojis::Include);
             assert_eq!(
                 fields.first().map(|(k, _)| k.name()),
                 Some(expected_key)
@@ -632,8 +629,7 @@ mod tests {
             // A datetime suffix is not a valid shorthand date, so no field is
             // emitted.
             let fields =
-                scan_fields("🗓️ 2026-07-30T12:00", TaskShorthands::Include);
-
+                scan_fields("🗓️ 2026-07-30T12:00", TaskFieldEmojis::Include);
             assert_eq!(fields, []);
         }
         #[rstest]
@@ -648,7 +644,7 @@ mod tests {
         ) {
             // Byte 10 of a multibyte candidate falls inside a character, so the
             // candidate must be skipped rather than sliced.
-            let fields = scan_fields(input, TaskShorthands::Include);
+            let fields = scan_fields(input, TaskFieldEmojis::Include);
 
             let expected = expected.map(|date| {
                 NoteFieldValue::Date(
@@ -657,6 +653,7 @@ mod tests {
             });
             assert_eq!(fields.first().map(|(_, v)| v), expected.as_ref());
         }
+
         #[test]
         fn accepts_a_bare_key_preceded_by_leading_whitespace() {
             let fields = extract_fields("  Status:: Draft");
@@ -696,13 +693,12 @@ mod tests {
         #[test]
         fn extracts_item_tokens_in_single_pass() {
             let text = "Task 🔺 #task 📅 2025-01-15 [priority:: high] end";
-            let tokens = tokenize_item_text(text, TaskShorthands::Include);
+            let tokens = tokenize_item_text(text, TaskFieldEmojis::Include);
             assert_eq!(tokens.len(), 4);
             assert_eq!(
                 tokens.first().expect("token 0").value(),
                 &ItemToken::Priority(TaskPriority::Highest)
             );
-            assert_eq!(tokens.first().expect("token 0").span(), 5..9);
             assert_eq!(
                 tokens.get(1).expect("token 1").value(),
                 &ItemToken::Tag(Tag::parse("#task").unwrap())

@@ -1,9 +1,9 @@
-//! Task text scanning: one tokenization pass paired with the text it came
-//! from, plus date, priority, and clean-text extraction over those tokens.
+//! Task text scanning: one tokenization pass paired with the text it came from,
+//! plus date, priority, and clean-text extraction over those tokens.
 
 use indexmap::IndexMap;
 
-use super::lexer::{FieldForm, ItemToken, TaskShorthands, tokenize_item_text};
+use super::lexer::{FieldForm, ItemToken, TaskFieldEmojis, tokenize_item_text};
 use crate::{
     DateValue, FieldKey, FieldKeyRef, Spanned, Tag, TaskDate, TaskDateSet,
     TaskDateType, TaskPriority, note::NoteFieldValue,
@@ -13,8 +13,7 @@ use crate::{
 ///
 /// [`super::list::ListTracker::end_item`] tokenizes the text once with task
 /// shorthands enabled; dates, priority, and clean text all read from this one
-/// scan, so the tokens can never drift out of sync with the text they
-/// describe.
+/// scan, so the tokens can never drift out of sync with the text they describe.
 pub(super) struct TaskScan<'a> {
     raw: &'a str,
     tokens: Vec<Spanned<ItemToken>>,
@@ -25,7 +24,7 @@ impl<'a> TaskScan<'a> {
     pub(super) fn scan(raw: &'a str) -> Self {
         Self {
             raw,
-            tokens: tokenize_item_text(raw, TaskShorthands::Include),
+            tokens: tokenize_item_text(raw, TaskFieldEmojis::Include),
         }
     }
 

@@ -268,9 +268,9 @@ impl TaskStatusType {
     /// Derives the boolean completion rollup for this status type.
     ///
     /// The subtask-aggregation form of [`Self::completed`]: `false` only for
-    /// statuses that are known-incomplete (`Some(false)`); cancelled items
-    /// roll up as complete, exactly as the tri-state `!= Some(false)`
-    /// comparison treats them. The query layer keeps the tri-state form.
+    /// statuses that are known-incomplete (`Some(false)`); cancelled items roll
+    /// up as complete, exactly as the tri-state `!= Some(false)` comparison
+    /// treats them. The query layer keeps the tri-state form.
     #[inline]
     #[must_use]
     pub(crate) const fn is_complete(self) -> bool {
@@ -725,7 +725,10 @@ impl TaskDateType {
     /// use traces_pkm::TaskDateType;
     ///
     /// assert_eq!(TaskDateType::from_emoji("📅"), Some(TaskDateType::Due));
-    /// assert_eq!(TaskDateType::from_emoji("📅\u{FE0F}"), Some(TaskDateType::Due));
+    /// assert_eq!(
+    ///     TaskDateType::from_emoji("📅\u{FE0F}"),
+    ///     Some(TaskDateType::Due)
+    /// );
     /// assert_eq!(TaskDateType::from_emoji("invalid"), None);
     /// ```
     #[inline]

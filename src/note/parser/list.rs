@@ -93,12 +93,12 @@ impl ListTracker {
             return None;
         }
         let text = item.buffers.take_scan();
-        let shorthands = if item.marker.is_marked() {
-            super::lexer::TaskShorthands::Include
+        let mode = if item.marker.is_marked() {
+            super::lexer::TaskFieldEmojis::Include
         } else {
-            super::lexer::TaskShorthands::Exclude
+            super::lexer::TaskFieldEmojis::Exclude
         };
-        let raw_fields = super::lexer::scan_fields(&text, shorthands);
+        let raw_fields = super::lexer::scan_fields(&text, mode);
         let tags = super::tag::scan_tags(&text);
         // Two independently owned copies, not a borrow-checker workaround:
         // `item.fields` lets a task/list item resolve its own metadata
@@ -272,7 +272,7 @@ impl ListTracker {
     }
 }
 
-/// Tracks whether any descendant task within a list item's sub-tree is
+/// Tracks whether any descendant task within a list item's subtree is
 /// incomplete.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub(super) enum SubTaskCompletion {
@@ -311,8 +311,7 @@ impl SubTaskCompletion {
         }
     }
 
-    /// Returns `true` if all descendant tasks in the sub-tree are complete.
-    #[inline]
+    /// Returns `true` if all descendant tasks in the subtree are complete.
     #[must_use]
     pub(super) const fn is_fully_complete(self) -> bool {
         matches!(self, Self::AllComplete)
@@ -332,6 +331,7 @@ pub(super) struct ItemBuffers {
 }
 
 impl ItemBuffers {
+    /// Creates an empty pair of display text and scan buffers.
     pub(super) const fn new() -> Self {
         Self {
             text: String::new(),

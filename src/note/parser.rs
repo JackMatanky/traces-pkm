@@ -30,10 +30,10 @@
 //!   normalized display text from that single scan.
 //!
 //! Parser state lives in [`ParserContext`], which dispatches events to
-//! specialized handlers and assembles the final [`Note`]. List-item line
-//! numbers come from the shared [`crate::ByteTracker`], which precomputes
-//! line-start byte offsets for $O(\log n)$ byte-to-line translation without
-//! scanning the source string multiple times.
+//! dedicated handlers and assembles the final [`Note`]. List-item line numbers
+//! come from the shared [`crate::ByteTracker`], which precomputes line-start
+//! byte offsets for $O(\log n)$ byte-to-line translation without scanning the
+//! source string multiple times.
 //!
 //! # Metadata Extraction
 //!
@@ -69,7 +69,8 @@ mod task;
 pub use input::MarkdownParserInput;
 use list::ListTracker;
 
-/// Block parser options: YAML metadata blocks and Obsidian wikilinks.
+/// Options configuring the Markdown parser: YAML frontmatter metadata blocks
+/// and Obsidian-style wikilinks.
 const MARKDOWN_OPTIONS: Options =
     Options::ENABLE_YAML_STYLE_METADATA_BLOCKS.union(Options::ENABLE_WIKILINKS);
 
@@ -107,7 +108,7 @@ pub fn parse_markdown(input: &MarkdownParserInput<'_>) -> Note {
 /// Reuses [`Frontmatter::get_values`]'s scalar/list flattening: a list value
 /// yields one candidate per element, a scalar string yields one candidate.
 /// Every candidate, whether it came from a list element or the scalar itself,
-/// is then split on commas and each whitespace-trimmed segment becomes its own
+/// is then split on commas. Each whitespace-trimmed segment becomes its own
 /// candidate, so a single list element containing a literal comma (`tags:\n -
 /// "a, b"`) yields two candidates the same way a comma-separated scalar (`tags:
 /// a, b`) does. Each candidate is parsed leniently via
@@ -127,9 +128,9 @@ fn frontmatter_tags<'a>(
         })
 }
 
-/// The top-level block currently being parsed.
+/// Top-level syntactic block currently being traversed.
 ///
-/// Metadata, code, and text blocks are mutually exclusive.
+/// Metadata, code, and text blocks represent mutually exclusive parsing states.
 #[derive(Default, Eq, PartialEq)]
 enum BlockContext {
     #[default]
@@ -139,10 +140,8 @@ enum BlockContext {
     Text,
 }
 
-/// Inline fields list flushed from a list item.
+/// Flushed inline fields collected from an item buffer.
 type FlushedFields = Vec<(FieldKey, NoteFieldValue)>;
-
-/// Metadata flushed from a closed list item's scan buffer.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct FlushedMetadata {
     fields: FlushedFields,
@@ -150,7 +149,7 @@ pub(super) struct FlushedMetadata {
 }
 
 impl FlushedMetadata {
-    /// Creates a new flushed metadata record.
+    /// Creates a new flushed metadata record from extracted fields and tags.
     #[inline]
     #[must_use]
     pub(super) const fn new(
@@ -195,27 +194,26 @@ impl FlushedMetadata {
     }
 }
 
-/// State accumulated while walking Markdown events for one note.
+/// State accumulated while traversing Markdown events for a single note.
 struct ParserContext<'a> {
     frontmatter: Option<Frontmatter>,
     block: BlockContext,
     metadata_buffer: String,
     outlinks: Vec<Link>,
-    /// The link currently being walked, if any.
+    /// Link currently being traversed and accumulating display text, if any.
     active_link: Option<ActiveLink>,
     list_nesting: ListTracker,
     body_buffer: String,
     inline_fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
     tags: Vec<Tag>,
     /// Precomputed line-start offsets for the source being parsed, used to
-    /// populate [`ListItem`](super::ListItem)'s `line`/`parent` position
-    /// fields.
+    /// populate the position fields of [`ListItem`](super::ListItem).
     line_tracker: ByteTracker,
     /// Resolves scanned marker symbols to their [`TaskStatus`], used to
-    /// classify status-marked list items in
-    /// [`list::ListTracker::end_item`](self::list::ListTracker::end_item).
+    /// classify status-marked list items in [`list::ListTracker::end_item`].
     ///
     /// [`TaskStatus`]: crate::TaskStatus
+    /// [`list::ListTracker::end_item`]: self::list::ListTracker::end_item
     task_statuses: &'a TaskStatusMap,
     /// Tag filters that classify status-marked items as Tasks vs Checkboxes.
     tag_filters: &'a [Tag],
@@ -237,10 +235,11 @@ impl<'a> ParserContext<'a> {
     ) -> Self {
         // Sizing heuristic: body text occupies most of a typical note, while
         // metadata, outlinks, inline fields, and tags are sparser but rarely
-        // empty (typical Obsidian notes carry 5–10 wikilinks, 3–10 tags, and
-        // 2–8 inline fields). Sizing to 8 keeps those vectors inside a single
-        // allocator size class (same cost as capacity 4) while eliminating the
-        // growth reallocation entirely for the majority of notes.
+        // empty (typical Obsidian notes carry 5 to 10 wikilinks, 3 to 10 tags,
+        // and 2 to 8 inline fields). Sizing to 8 keeps those vectors inside a
+        // single allocator size class (same cost as capacity 4) while
+        // eliminating the growth reallocation entirely for the majority of
+        // notes.
         let body_capacity = source.len().saturating_mul(3) / 4;
         Self {
             frontmatter: None,
@@ -306,8 +305,8 @@ impl<'a> ParserContext<'a> {
             Event::Text(text) => self.push_text(&text),
             Event::SoftBreak | Event::HardBreak => self.push_break(),
             // A blockquote inside an item is a block-level child: resolve the
-            // pending marker exactly as the catch-all did, then separate the
-            // quote from prior buffer content.
+            // pending marker before separating the quote from prior buffer
+            // content.
             Event::Start(CmarkTag::BlockQuote(_)) => {
                 self.list_nesting.resolve_pending_marker();
                 self.list_nesting.start_nested_block();
@@ -315,7 +314,7 @@ impl<'a> ParserContext<'a> {
             // Inline markup occupying an item's leading slot means the task
             // marker is not at the content start, mirroring pulldown-cmark,
             // which scans for the marker before parsing any inline content.
-            // `- **[x] Task**` and `` - `[x]` Task `` stay plain.
+            // `- **[x] Task**` and `` - `[x]` Task `` remain plain list items.
             Event::Start(
                 CmarkTag::Emphasis
                 | CmarkTag::Strong
@@ -360,11 +359,14 @@ impl<'a> ParserContext<'a> {
         )
     }
 
+    /// Enters a frontmatter metadata block and clears the metadata buffer.
     fn start_metadata_block(&mut self) {
         self.block = BlockContext::MetadataBlock;
         self.metadata_buffer.clear();
     }
 
+    /// Leaves a frontmatter metadata block and parses any buffered YAML
+    /// frontmatter.
     fn end_metadata_block(&mut self) {
         self.block = BlockContext::None;
         let raw_text = mem::take(&mut self.metadata_buffer);
@@ -406,11 +408,13 @@ impl<'a> ParserContext<'a> {
         }
     }
 
+    /// Enters a code block and separates nested blocks in active item buffers.
     fn start_code_block(&mut self) {
         self.list_nesting.start_nested_block();
         self.block = BlockContext::CodeBlock;
     }
 
+    /// Leaves a code block and restores default block context.
     const fn end_code_block(&mut self) {
         self.block = BlockContext::None;
     }
@@ -434,7 +438,7 @@ impl<'a> ParserContext<'a> {
         if !self.list_nesting.is_item_active() {
             for (key, value) in lexer::scan_fields(
                 &self.body_buffer,
-                lexer::TaskShorthands::Exclude,
+                lexer::TaskFieldEmojis::Exclude,
             ) {
                 self.inline_fields.entry(key).or_default().push(value);
             }
@@ -552,6 +556,7 @@ struct ActiveLink {
 }
 
 impl ActiveLink {
+    /// Creates an active link with an empty text buffer.
     const fn new(kind: LinkType, target: String) -> Self {
         Self {
             target,

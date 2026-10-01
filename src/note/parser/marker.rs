@@ -117,11 +117,12 @@ fn split_marker_exact(text: &str) -> Option<char> {
 /// Scans `text` for an item-leading marker, treating end-of-input as the
 /// trailing whitespace.
 ///
-/// A list item's line ends without a whitespace [`Event::Text`] chunk (the
+/// A list item's line ends without a whitespace [`Event::Text`] chunk when the
 /// newline is consumed structurally by a nested list, a soft break, or the
-/// item's end), so `- [x]` as an entire item still carries a marker, exactly as
-/// pulldown-cmark treats the line terminator as whitespace. Returns `None` when
-/// `text` is not a complete `[<char>]` marker shape.
+/// item's end. Because of this, `- [x]` as an entire item still carries a
+/// marker, matching `pulldown-cmark`'s treatment of the line terminator as
+/// whitespace. Returns `None` when `text` is not a complete `[<char>]` marker
+/// shape.
 ///
 /// [`Event::Text`]: pulldown_cmark::Event::Text
 #[inline]
@@ -139,10 +140,11 @@ pub(super) fn scan_marker_at_line_end(text: &str) -> Option<MarkerScan<'_>> {
     }
 }
 
-/// Whether `ch` counts as the marker's trailing whitespace.
+/// Returns `true` if `ch` counts as a task marker's trailing whitespace.
 ///
-/// ASCII whitespace only, mirroring `pulldown-cmark`'s `is_ascii_whitespace`:
-/// Unicode spaces such as NBSP are ordinary text and do not complete a marker.
+/// Matches ASCII whitespace only, mirroring `pulldown-cmark`'s
+/// `is_ascii_whitespace`: Unicode spaces such as NBSP are ordinary text and do
+/// not complete a marker.
 #[inline]
 #[must_use]
 const fn is_marker_whitespace(ch: char) -> bool {
