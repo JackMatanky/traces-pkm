@@ -73,7 +73,7 @@
 
 **Review passes:** two-axis code-review (standards + spec), then dedicated `rust-unit-testing` and `rust-doc` reviews; all hard findings fixed — derive order, Structure A split, verb-first renames/splits, `# Errors` on `TryFrom`, stale "tracking strategy local" module clause, softened 4 GiB claim, `dictionary.txt` additions (`UTF`, `representable`). Accepted caveat recorded in Comments: >4 GiB input silently misattributes line numbers — flagged for ticket 04.
 
-**Downstream:** `Status: resolved` here is ticket 04's unblock condition (`Blocked by: 01`); span shape for 04 and md-pkm-lsp 19 is bare `Range<ByteOffset>` per `## Answer`.
+**Downstream:** `Status: resolved` here is ticket 04's unblock condition (`Blocked by: 01`). *Correction (2026-10-01):* the span-shape guidance below (bare `Range<ByteOffset>` as the Answer's choice, "first field lands with ticket 04") predates the position refactor — the codebase landed a `ByteSpan` struct instead (`src/position.rs:86`, `f9d0103b`), and ticket 04 has since been rewritten as **Heading-only** with no spans at all; occurrence spans moved to md-pkm-lsp research ticket 40 and grilling ticket 41, and md-pkm-lsp 19's `ByteSpan` naming is unaffected. The two follow-ups above that aimed at ticket 04 (the >4 GiB line-attribution caveat, and the `ByteOffset::Default`-now-`BytePos::Default` zero-caller question) are therefore unassigned — standing caveats, not part of 04.
 
 ## Agent Brief
 
