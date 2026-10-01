@@ -774,17 +774,17 @@ fn render_error_location(error: &minijinja::Error) -> Option<String> {
     ))
 }
 
-/// Returns the 1-based column of `byte_offset` within its line of `source`.
+/// Returns the 1-based column of `byte_pos` within its line of `source`.
 ///
-/// `None` if `byte_offset` falls outside `source` or on a non-character
-/// boundary (defensive: minijinja's own span offsets always land on a boundary
+/// `None` if `byte_pos` falls outside `source` or on a non-character
+/// boundary (defensive: minijinja's own span positions always land on a boundary
 /// of the same source it reports, but this stays panic-free either way instead
 /// of asserting that invariant).
-fn line_column(source: &str, byte_offset: usize) -> Option<usize> {
-    let up_to_offset = source.get(..byte_offset)?;
+fn line_column(source: &str, byte_pos: usize) -> Option<usize> {
+    let up_to_pos = source.get(..byte_pos)?;
     let line_start =
-        up_to_offset.rfind('\n').map_or(0, |idx| idx.saturating_add(1));
-    Some(source.get(line_start..byte_offset)?.chars().count().saturating_add(1))
+        up_to_pos.rfind('\n').map_or(0, |idx| idx.saturating_add(1));
+    Some(source.get(line_start..byte_pos)?.chars().count().saturating_add(1))
 }
 
 #[cfg(test)]

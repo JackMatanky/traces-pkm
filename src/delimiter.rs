@@ -227,47 +227,47 @@ impl DelimiterType {
         }
     }
 
-    /// Finds the byte offset of this delimiter's matching closing token in
+    /// Finds the byte position of this delimiter's matching closing token in
     /// `input`, managing nested `()`, `[]`, `{}`, `[[]]`, and string quotes
     /// (`"..."`, `'...'`).
     ///
     /// `input` begins immediately after this opening delimiter was consumed.
-    /// Returns `Some(byte_offset)` of the matching closing delimiter, or `None`
+    /// Returns `Some(pos)` of the matching closing delimiter, or `None`
     /// if delimiters are unclosed, mismatched, or truncated.
     #[must_use]
     pub(crate) fn find_closing(self, input: &str) -> Option<usize> {
         let mut stack = DelimiterStack::with_root(self);
         let mut escaped = false;
-        let mut byte_offset = 0usize;
+        let mut pos = 0usize;
 
-        while byte_offset < input.len() {
-            let rest = input.get(byte_offset..)?;
+        while pos < input.len() {
+            let rest = input.get(pos..)?;
             let ch = rest.chars().next()?;
             let ch_len = ch.len_utf8();
 
             if Self::advance_escaped(ch, &mut escaped) {
-                byte_offset = byte_offset.saturating_add(ch_len);
+                pos = pos.saturating_add(ch_len);
                 continue;
             }
 
             if stack.advance_quote_state(ch) {
-                byte_offset = byte_offset.saturating_add(ch_len);
+                pos = pos.saturating_add(ch_len);
                 continue;
             }
 
             if let Some(is_closed) = stack.check_double_bracket_close(rest) {
                 if is_closed {
-                    return Some(byte_offset);
+                    return Some(pos);
                 }
-                byte_offset = byte_offset.saturating_add(2);
+                pos = pos.saturating_add(2);
                 continue;
             }
 
             if matches!(ch, ')' | ']' | '}') {
                 match stack.handle_char_close(ch) {
-                    Ok(true) => return Some(byte_offset),
+                    Ok(true) => return Some(pos),
                     Ok(false) => {
-                        byte_offset = byte_offset.saturating_add(ch_len);
+                        pos = pos.saturating_add(ch_len);
                         continue;
                     }
                     Err(()) => return None,
@@ -276,17 +276,17 @@ impl DelimiterType {
 
             if rest.starts_with("[[") {
                 stack.push(Self::DoubleBracket);
-                byte_offset = byte_offset.saturating_add(2);
+                pos = pos.saturating_add(2);
                 continue;
             }
 
             if let Some(open_kind) = Self::from_open_char(ch) {
                 stack.push(open_kind);
-                byte_offset = byte_offset.saturating_add(ch_len);
+                pos = pos.saturating_add(ch_len);
                 continue;
             }
 
-            byte_offset = byte_offset.saturating_add(ch_len);
+            pos = pos.saturating_add(ch_len);
         }
 
         None

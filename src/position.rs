@@ -39,9 +39,9 @@ impl LineIndex {
     pub(crate) fn new(source: &str) -> Self {
         let mut line_starts = Vec::with_capacity((source.len() / 32).max(16));
         line_starts.push(BytePos::new(0));
-        for (offset, _) in source.match_indices('\n') {
+        for (pos, _) in source.match_indices('\n') {
             line_starts
-                .push(BytePos::saturating_from(offset.saturating_add(1)));
+                .push(BytePos::saturating_from(pos.saturating_add(1)));
         }
         Self(line_starts.into_boxed_slice())
     }
@@ -114,14 +114,14 @@ impl ByteSpan {
         self.end
     }
 
-    /// Returns the starting byte offset as `usize`.
+    /// Returns the starting byte position as `usize`.
     #[inline]
     #[must_use]
     pub(crate) fn start_usize(self) -> usize {
         usize::from(self.start)
     }
 
-    /// Returns the exclusive ending byte offset as `usize`.
+    /// Returns the exclusive ending byte position as `usize`.
     #[inline]
     #[must_use]
     pub(crate) fn end_usize(self) -> usize {
@@ -471,14 +471,14 @@ impl<T> Spanned<T> {
         self.span.end()
     }
 
-    /// Returns the starting byte offset as `usize`.
+    /// Returns the starting byte position as `usize`.
     #[inline]
     #[must_use]
     pub(crate) fn start_usize(&self) -> usize {
         self.span.start_usize()
     }
 
-    /// Returns the exclusive ending byte offset as `usize`.
+    /// Returns the exclusive ending byte position as `usize`.
     #[inline]
     #[must_use]
     pub(crate) fn end_usize(&self) -> usize {
@@ -576,13 +576,13 @@ mod tests {
         #[case::crlf_line_start("one\r\ntwo", 5, 2)]
         fn resolves_expected_line_for_pos_in_source(
             #[case] source: &str,
-            #[case] offset: u32,
+            #[case] pos: u32,
             #[case] expected_line: u32,
         ) {
             let index = LineIndex::new(source);
 
             assert_eq!(
-                index.line_at(BytePos::new(offset)),
+                index.line_at(BytePos::new(pos)),
                 line(expected_line)
             );
         }
