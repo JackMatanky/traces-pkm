@@ -1,5 +1,8 @@
-//! Task text scanning: one tokenization pass paired with the text it came from,
-//! plus date, priority, and clean-text extraction over those tokens.
+//! Task text processing, date and priority extraction, and text normalization.
+//!
+//! [`TaskScan`] tokenizes list item text in a single pass to extract task
+//! lifecycle dates, priority levels, and cleaned display text without repeated
+//! parsing passes.
 
 use indexmap::IndexMap;
 
@@ -9,11 +12,11 @@ use crate::{
     TaskDateType, TaskPriority, note::NoteFieldValue,
 };
 
-/// An item's raw display text paired with the tokens tokenized from it.
+/// Single-pass tokenization view of list item text.
 ///
-/// [`super::list::ListTracker::end_item`] tokenizes the text once with task
-/// shorthands enabled; dates, priority, and clean text all read from this one
-/// scan, so the tokens can never drift out of sync with the text they describe.
+/// Encapsulates raw display text paired with its parsed token stream, ensuring
+/// date, priority, and clean text extraction remain synchronized with the
+/// underlying text.
 pub(super) struct TaskScan<'a> {
     raw: &'a str,
     tokens: Vec<Spanned<ItemToken>>,
@@ -31,8 +34,12 @@ impl<'a> TaskScan<'a> {
     /// Extracts task lifecycle dates from emoji shorthands and inline task
     /// fields.
     ///
-    /// Emoji dates take precedence over inline fields. When duplicate dates
-    /// appear for the same lifecycle slot, first-wins semantics apply.
+    /// Precedence and resolution rules:
+    /// - Emoji date shorthands take precedence over inline key-value fields.
+    /// - When multiple dates appear for the same lifecycle kind, the first
+    ///   occurrence wins.
+    /// - Unmatched lifecycle dates fall back to searching `fields` by canonical
+    ///   key names.
     pub(super) fn dates(
         &self,
         fields: &IndexMap<FieldKey, Vec<NoteFieldValue>>,
@@ -65,13 +72,15 @@ impl<'a> TaskScan<'a> {
         set
     }
 
-    /// Extracts task priority from text emojis or an inline
-    /// `[priority:: <level>]` field.
+    /// Extracts task priority from text emojis or an inline `[priority::
+    /// <level>]` field.
     ///
-    /// Priority emojis take precedence over inline fields. When multiple
-    /// priority emojis are present, the first one in document order wins.
-    /// Returns [`None`] if no priority is specified or if priority resolves to
-    /// [`TaskPriority::Normal`].
+    /// Precedence and resolution rules:
+    /// - Priority emojis take precedence over inline fields.
+    /// - When multiple priority emojis are present, the first in document order
+    ///   wins.
+    /// - Returns [`None`] if no priority is specified or if priority resolves
+    ///   to [`TaskPriority::Normal`].
     pub(super) fn priority(
         &self,
         fields: &IndexMap<FieldKey, Vec<NoteFieldValue>>,
@@ -92,17 +101,21 @@ impl<'a> TaskScan<'a> {
         Some(value)
     }
 
-    /// Computes normalized clean list text by stripping configured task tag
-    /// filters, date syntax, priority emojis, and inline task fields.
+    /// Computes normalized list text by stripping task metadata and collapsing
+    /// whitespace.
     ///
-    /// Expects `raw` to already have any leading task marker prefix removed.
+    /// Strips:
+    /// - Priority emojis
+    /// - Task date shorthands and wrapped date fields
+    /// - Tags matching configured `tag_filters`
+    ///
+    /// Expects `raw` to have any leading task marker prefix already removed.
     pub(super) fn clean_text(&self, tag_filters: &[Tag]) -> String {
         // Token spans from a single logos pass are disjoint and ordered, so
         // unremoved text slices can be accumulated directly without an
         // intermediate allocation of removal spans.
         let mut cleaned = String::with_capacity(self.raw.len());
         let mut current_idx = 0;
-
         for token in &self.tokens {
             let should_remove = match token.value() {
                 ItemToken::Priority(_) | ItemToken::Date(_) => true,
