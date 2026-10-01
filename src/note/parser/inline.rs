@@ -94,7 +94,8 @@ impl<'a> InlineValueParser<'a> {
         first: NoteFieldValue,
         mut pos: usize,
     ) -> Option<Vec<NoteFieldValue>> {
-        let mut values = vec![first];
+        let mut values = Vec::with_capacity(4);
+        values.push(first);
         loop {
             pos = self.source.advance(pos, 1);
             pos = self.skip_whitespace(pos);
@@ -138,7 +139,7 @@ impl<'a> InlineValueParser<'a> {
     /// closing, unescaped `"`.
     fn parse_quoted_string_at(&self, pos: usize) -> Option<ParsedAtom> {
         let rest = self.source.from(pos)?.strip_prefix('"')?;
-        let mut value = String::new();
+        let mut value = String::with_capacity(rest.len());
         let mut escaped = false;
         for (offset, ch) in rest.char_indices() {
             if escaped {

@@ -106,12 +106,9 @@ impl ListTracker {
         // document-order stream every page-level query already relies on. Both
         // outlive this function inside different serialized structs, so neither
         // can borrow from the other.
-        let mut item_fields: IndexMap<FieldKey, Vec<NoteFieldValue>> =
-            IndexMap::new();
         for (key, value) in &raw_fields {
-            item_fields.entry(key.clone()).or_default().push(value.clone());
+            item.fields.entry(key.clone()).or_default().push(value.clone());
         }
-        item.fields = item_fields;
         item.tags.extend(tags.iter().cloned());
         Some((raw_fields, tags))
     }
@@ -277,9 +274,12 @@ impl ListTracker {
 
 /// Tracks whether any descendant task within a list item's sub-tree is
 /// incomplete.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub(super) enum SubTaskCompletion {
     AllComplete,
+    /// Conservative fallback: unknown or default completion state is
+    /// fail-closed.
+    #[default]
     HasIncomplete,
 }
 
@@ -316,15 +316,6 @@ impl SubTaskCompletion {
     #[must_use]
     pub(super) const fn is_fully_complete(self) -> bool {
         matches!(self, Self::AllComplete)
-    }
-}
-
-impl Default for SubTaskCompletion {
-    /// Conservative fallback: unknown or default completion state is
-    /// fail-closed.
-    #[inline]
-    fn default() -> Self {
-        Self::HasIncomplete
     }
 }
 
@@ -593,6 +584,29 @@ mod tests {
             let has_author =
                 fields.iter().any(|(k, _)| k.is_canonical_match("author"));
             assert!(has_author, "flushed fields must contain Author");
+        }
+
+        #[test]
+        fn retains_fields_across_nested_list_flush() {
+            let mut tracker = ListTracker::default();
+            tracker.start_list(false);
+            tracker.start_item(SourceLine::new(1).expect("non-zero"));
+            tracker.push_text("Status:: Draft", false);
+
+            let flushed1 = tracker.start_list(false);
+            assert!(flushed1.is_some());
+
+            tracker.end_list();
+            tracker.push_text("Author:: Jane", false);
+
+            let flushed2 = tracker.end_item(&[], &TaskStatusMap::default());
+            assert!(flushed2.is_some());
+
+            assert_eq!(tracker.lists.len(), 1);
+            let item = tracker.lists.first().unwrap();
+            let fields = item.fields().expect("fields present");
+            assert!(fields.iter().any(|(k, _)| k.is_canonical_match("status")));
+            assert!(fields.iter().any(|(k, _)| k.is_canonical_match("author")));
         }
 
         #[test]
