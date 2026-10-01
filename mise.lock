@@ -285,7 +285,7 @@ backend = "core:rust"
 specifiers = ["nightly-2026-10-01"]
 
 [tools.rust.options]
-components = "clippy,llvm-tools-preview,rustfmt"
+components = "clippy,llvm-tools,rustfmt"
 profile = "minimal"
 
 [[tools.taplo]]

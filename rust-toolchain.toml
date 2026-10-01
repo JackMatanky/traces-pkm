@@ -9,4 +9,4 @@
 [toolchain]
 channel = "nightly-2026-10-01"
 profile = "minimal"
-components = ["clippy", "rustfmt", "llvm-tools-preview"]
+components = ["clippy", "rustfmt", "llvm-tools"]
