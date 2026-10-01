@@ -13,7 +13,7 @@ use indexmap::IndexMap;
 
 use super::{FlushedMetadata, marker::MarkerAccumulator};
 use crate::{
-    FieldKey, SourceLine, Tag, TaskStatusMap,
+    BytePos, FieldKey, SourceLine, SpanStart, Tag, TaskStatusMap,
     note::{ListItem, ListItemType, ListText, NoteFieldValue, TaskListItem},
 };
 
@@ -135,7 +135,7 @@ impl ListTracker {
     /// Sets initial item hierarchy:
     /// - `depth`: 0-indexed nesting level derived from the list stack
     /// - `parent`: source line of the enclosing active list item, if any
-    pub(super) fn start_item(&mut self, line: SourceLine) {
+    pub(super) fn start_item(&mut self, line: SourceLine, start: SpanStart) {
         let depth = u8::try_from(self.list_stack.len().saturating_sub(1))
             .unwrap_or(u8::MAX);
         let parent = self.item_stack.last().map(|item| item.line);
@@ -152,6 +152,7 @@ impl ListTracker {
             marker: MarkerAccumulator::new(),
             subtask_completion: SubTaskCompletion::initial(),
             descendants: Vec::new(),
+            start,
         });
     }
 
@@ -166,9 +167,11 @@ impl ListTracker {
         &mut self,
         tag_filters: &[Tag],
         statuses: &TaskStatusMap,
+        end: BytePos,
     ) -> Option<FlushedMetadata> {
         let flushed = self.flush_active_item_scan_buffer();
         if let Some(item_frame) = self.item_stack.pop() {
+            let _span = item_frame.start.close(end);
             let fully_complete =
                 item_frame.subtask_completion.is_fully_complete();
             // One tokenization pass feeds priority, date, and clean-text
@@ -422,6 +425,7 @@ struct ItemFrame {
     marker: MarkerAccumulator,
     subtask_completion: SubTaskCompletion,
     descendants: Vec<ListItem>,
+    start: SpanStart,
 }
 
 impl ItemFrame {
@@ -476,8 +480,10 @@ mod tests {
             assert!(!tracker.is_item_active());
 
             tracker.start_list(false);
-            tracker.start_item(SourceLine::new(1).expect("non-zero"));
-
+            tracker.start_item(
+                SourceLine::new(1).expect("non-zero"),
+                SpanStart::default(),
+            );
             assert!(
                 tracker.is_item_active(),
                 "is_item_active must return true after start_item"
@@ -487,15 +493,20 @@ mod tests {
         #[test]
         fn inline_code_pushes_to_last_item_not_first() {
             let mut tracker = ListTracker::default();
-            tracker.start_list(false);
-            tracker.start_item(SourceLine::new(1).expect("non-zero"));
+            tracker.start_item(
+                SourceLine::new(1).expect("non-zero"),
+                SpanStart::default(),
+            );
             tracker.push_text("before ", false);
-            tracker.start_item(SourceLine::new(2).expect("non-zero"));
+            tracker.start_item(
+                SourceLine::new(2).expect("non-zero"),
+                SpanStart::default(),
+            );
 
             tracker.inline_code("code");
 
-            tracker.end_item(&[], &TaskStatusMap::default());
-            tracker.end_item(&[], &TaskStatusMap::default());
+            tracker.end_item(&[], &TaskStatusMap::default(), BytePos::new(0));
+            tracker.end_item(&[], &TaskStatusMap::default(), BytePos::new(0));
             tracker.end_list();
 
             let item1_text =
@@ -535,7 +546,10 @@ mod tests {
         fn start_nested_block_returns_true_with_active_item() {
             let mut tracker = ListTracker::default();
             tracker.start_list(false);
-            tracker.start_item(SourceLine::new(1).expect("non-zero"));
+            tracker.start_item(
+                SourceLine::new(1).expect("non-zero"),
+                SpanStart::default(),
+            );
             assert!(
                 tracker.start_nested_block(),
                 "start_nested_block must return true with active item"
@@ -546,7 +560,10 @@ mod tests {
         fn start_list_flushes_active_item_scan_buffer() {
             let mut tracker = ListTracker::default();
             tracker.start_list(false);
-            tracker.start_item(SourceLine::new(1).expect("non-zero"));
+            tracker.start_item(
+                SourceLine::new(1).expect("non-zero"),
+                SpanStart::default(),
+            );
             tracker.push_text("Status:: Draft", false);
 
             let flushed = tracker.start_list(false);
@@ -567,10 +584,17 @@ mod tests {
         fn end_item_flushes_scan_buffer() {
             let mut tracker = ListTracker::default();
             tracker.start_list(false);
-            tracker.start_item(SourceLine::new(1).expect("non-zero"));
+            tracker.start_item(
+                SourceLine::new(1).expect("non-zero"),
+                SpanStart::default(),
+            );
             tracker.push_text("Author:: Jane", false);
 
-            let flushed = tracker.end_item(&[], &TaskStatusMap::default());
+            let flushed = tracker.end_item(
+                &[],
+                &TaskStatusMap::default(),
+                BytePos::new(0),
+            );
             assert!(flushed.is_some(), "end_item must flush scan buffer");
             let metadata = flushed.unwrap();
             let has_author = metadata
@@ -584,16 +608,22 @@ mod tests {
         fn retains_fields_across_nested_list_flush() {
             let mut tracker = ListTracker::default();
             tracker.start_list(false);
-            tracker.start_item(SourceLine::new(1).expect("non-zero"));
+            tracker.start_item(
+                SourceLine::new(1).expect("non-zero"),
+                SpanStart::default(),
+            );
             tracker.push_text("Status:: Draft", false);
-
             let flushed1 = tracker.start_list(false);
             assert!(flushed1.is_some());
 
             tracker.end_list();
             tracker.push_text("Author:: Jane", false);
 
-            let flushed2 = tracker.end_item(&[], &TaskStatusMap::default());
+            let flushed2 = tracker.end_item(
+                &[],
+                &TaskStatusMap::default(),
+                BytePos::new(0),
+            );
             assert!(flushed2.is_some());
 
             assert_eq!(tracker.lists.len(), 1);
@@ -841,10 +871,12 @@ mod tests {
         fn classifies_marked_item_as_task_when_tag_filters_are_empty() {
             let mut tracker = ListTracker::default();
             tracker.start_list(false);
-            tracker.start_item(SourceLine::new(1).expect("non-zero"));
+            tracker.start_item(
+                SourceLine::new(1).expect("non-zero"),
+                SpanStart::default(),
+            );
             tracker.push_text("[x] Task without tag", false);
-            tracker.end_item(&[], &TaskStatusMap::default());
-            tracker.end_list();
+            tracker.end_item(&[], &TaskStatusMap::default(), BytePos::new(0));
 
             let item = tracker.lists.first().expect("item present");
             assert!(matches!(item.kind(), ListItemType::Task(_)));
@@ -854,10 +886,17 @@ mod tests {
         fn classifies_marked_item_as_task_when_tag_matches_filter() {
             let mut tracker = ListTracker::default();
             tracker.start_list(false);
-            tracker.start_item(SourceLine::new(1).expect("non-zero"));
+            tracker.start_item(
+                SourceLine::new(1).expect("non-zero"),
+                SpanStart::default(),
+            );
             tracker.push_text("[x] Task with tag #task", false);
             let tag_filters = [Tag::parse("#task").unwrap()];
-            tracker.end_item(&tag_filters, &TaskStatusMap::default());
+            tracker.end_item(
+                &tag_filters,
+                &TaskStatusMap::default(),
+                BytePos::new(0),
+            );
             tracker.end_list();
 
             let item = tracker.lists.first().expect("item present");
@@ -868,10 +907,17 @@ mod tests {
         fn item_tags_survive_classification_as_queryable_data() {
             let mut tracker = ListTracker::default();
             tracker.start_list(false);
-            tracker.start_item(SourceLine::new(1).expect("non-zero"));
+            tracker.start_item(
+                SourceLine::new(1).expect("non-zero"),
+                SpanStart::default(),
+            );
             tracker.push_text("[x] Task #task #project", false);
             let tag_filters = [Tag::parse("#task").unwrap()];
-            tracker.end_item(&tag_filters, &TaskStatusMap::default());
+            tracker.end_item(
+                &tag_filters,
+                &TaskStatusMap::default(),
+                BytePos::new(0),
+            );
             tracker.end_list();
 
             let item = tracker.lists.first().expect("item present");
@@ -887,10 +933,17 @@ mod tests {
         fn classifies_marked_item_as_checkbox_when_tag_does_not_match_filter() {
             let mut tracker = ListTracker::default();
             tracker.start_list(false);
-            tracker.start_item(SourceLine::new(1).expect("non-zero"));
+            tracker.start_item(
+                SourceLine::new(1).expect("non-zero"),
+                SpanStart::default(),
+            );
             tracker.push_text("[x] Checkbox with different tag #other", false);
             let tag_filters = [Tag::parse("#task").unwrap()];
-            tracker.end_item(&tag_filters, &TaskStatusMap::default());
+            tracker.end_item(
+                &tag_filters,
+                &TaskStatusMap::default(),
+                BytePos::new(0),
+            );
             tracker.end_list();
 
             let item = tracker.lists.first().expect("item present");
@@ -902,10 +955,17 @@ mod tests {
          {
             let mut tracker = ListTracker::default();
             tracker.start_list(false);
-            tracker.start_item(SourceLine::new(1).expect("non-zero"));
+            tracker.start_item(
+                SourceLine::new(1).expect("non-zero"),
+                SpanStart::default(),
+            );
             tracker.push_text("[x] Checkbox without tags", false);
             let tag_filters = [Tag::parse("#task").unwrap()];
-            tracker.end_item(&tag_filters, &TaskStatusMap::default());
+            tracker.end_item(
+                &tag_filters,
+                &TaskStatusMap::default(),
+                BytePos::new(0),
+            );
             tracker.end_list();
 
             let item = tracker.lists.first().expect("item present");
@@ -917,13 +977,20 @@ mod tests {
          {
             let mut tracker = ListTracker::default();
             tracker.start_list(false);
-            tracker.start_item(SourceLine::new(1).expect("non-zero"));
+            tracker.start_item(
+                SourceLine::new(1).expect("non-zero"),
+                SpanStart::default(),
+            );
             tracker.push_text(
                 "[x] Task with multiple tags #other #task #work",
                 false,
             );
             let tag_filters = [Tag::parse("#task").unwrap()];
-            tracker.end_item(&tag_filters, &TaskStatusMap::default());
+            tracker.end_item(
+                &tag_filters,
+                &TaskStatusMap::default(),
+                BytePos::new(0),
+            );
             tracker.end_list();
 
             let item = tracker.lists.first().expect("item present");
@@ -935,11 +1002,18 @@ mod tests {
          {
             let mut tracker = ListTracker::default();
             tracker.start_list(false);
-            tracker.start_item(SourceLine::new(1).expect("non-zero"));
+            tracker.start_item(
+                SourceLine::new(1).expect("non-zero"),
+                SpanStart::default(),
+            );
             tracker.push_text("[x] Task matching second filter #todo", false);
             let tag_filters =
                 [Tag::parse("#task").unwrap(), Tag::parse("#todo").unwrap()];
-            tracker.end_item(&tag_filters, &TaskStatusMap::default());
+            tracker.end_item(
+                &tag_filters,
+                &TaskStatusMap::default(),
+                BytePos::new(0),
+            );
             tracker.end_list();
 
             let item = tracker.lists.first().expect("item present");
@@ -950,11 +1024,18 @@ mod tests {
         fn rejects_prefix_match_for_exact_nested_tag() {
             let mut tracker = ListTracker::default();
             tracker.start_list(false);
-            tracker.start_item(SourceLine::new(1).expect("non-zero"));
+            tracker.start_item(
+                SourceLine::new(1).expect("non-zero"),
+                SpanStart::default(),
+            );
             tracker
                 .push_text("[x] Checkbox with nested tag #task/project", false);
             let tag_filters = [Tag::parse("#task").unwrap()];
-            tracker.end_item(&tag_filters, &TaskStatusMap::default());
+            tracker.end_item(
+                &tag_filters,
+                &TaskStatusMap::default(),
+                BytePos::new(0),
+            );
             tracker.end_list();
 
             let item = tracker.lists.first().expect("item present");
@@ -965,10 +1046,17 @@ mod tests {
         fn accepts_exact_nested_tag_match() {
             let mut tracker = ListTracker::default();
             tracker.start_list(false);
-            tracker.start_item(SourceLine::new(1).expect("non-zero"));
+            tracker.start_item(
+                SourceLine::new(1).expect("non-zero"),
+                SpanStart::default(),
+            );
             tracker.push_text("[x] Task with nested tag #task/project", false);
             let tag_filters = [Tag::parse("#task/project").unwrap()];
-            tracker.end_item(&tag_filters, &TaskStatusMap::default());
+            tracker.end_item(
+                &tag_filters,
+                &TaskStatusMap::default(),
+                BytePos::new(0),
+            );
             tracker.end_list();
 
             let item = tracker.lists.first().expect("item present");
@@ -979,10 +1067,17 @@ mod tests {
         fn keeps_unmarked_item_plain_even_with_matching_tag() {
             let mut tracker = ListTracker::default();
             tracker.start_list(false);
-            tracker.start_item(SourceLine::new(1).expect("non-zero"));
+            tracker.start_item(
+                SourceLine::new(1).expect("non-zero"),
+                SpanStart::default(),
+            );
             tracker.push_text("Plain item with tag #task", false);
             let tag_filters = [Tag::parse("#task").unwrap()];
-            tracker.end_item(&tag_filters, &TaskStatusMap::default());
+            tracker.end_item(
+                &tag_filters,
+                &TaskStatusMap::default(),
+                BytePos::new(0),
+            );
             tracker.end_list();
 
             let item = tracker.lists.first().expect("item present");
@@ -1548,9 +1643,16 @@ mod tests {
     fn parse_item_with_filters(text: &str, tag_filters: &[Tag]) -> ListItem {
         let mut tracker = ListTracker::default();
         tracker.start_list(false);
-        tracker.start_item(SourceLine::new(1).expect("non-zero"));
+        tracker.start_item(
+            SourceLine::new(1).expect("non-zero"),
+            SpanStart::default(),
+        );
         tracker.push_text(text, false);
-        tracker.end_item(tag_filters, &TaskStatusMap::default());
+        tracker.end_item(
+            tag_filters,
+            &TaskStatusMap::default(),
+            BytePos::new(0),
+        );
         tracker.end_list();
         tracker.lists.into_iter().next().expect("item present")
     }

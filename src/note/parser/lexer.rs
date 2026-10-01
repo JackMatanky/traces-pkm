@@ -46,7 +46,7 @@ pub(super) fn tokenize_item_text(
     // The skip rule matches all bytes; logos yields only valid tokens.
     while let Some(Ok(token)) = lexer.next() {
         let span = lexer.span();
-        tokens.push(Spanned::new(token, span));
+        tokens.push(Spanned::from_usize_range(token, span));
     }
     tokens
 }
@@ -690,13 +690,13 @@ mod tests {
                 tokens.get(1).expect("token 1").value(),
                 &ItemToken::Tag(Tag::parse("#task").unwrap())
             );
-            assert_eq!(tokens.get(1).expect("token 1").span(), 10..15);
+            assert_eq!(tokens.get(1).expect("token 1").span_usize(), 10..15);
             let date_val = DateValue::parse_iso("2025-01-15").unwrap();
             assert_eq!(
                 tokens.get(2).expect("token 2").value(),
                 &ItemToken::Date(TaskDate::new(TaskDateType::Due, date_val))
             );
-            assert_eq!(tokens.get(2).expect("token 2").span(), 16..31);
+            assert_eq!(tokens.get(2).expect("token 2").span_usize(), 16..31);
             let key = FieldKey::try_new("priority").unwrap();
             assert_eq!(
                 tokens.get(3).expect("token 3").value(),
@@ -706,7 +706,7 @@ mod tests {
                     FieldForm::Wrapped
                 ))
             );
-            assert_eq!(tokens.get(3).expect("token 3").span(), 32..49);
+            assert_eq!(tokens.get(3).expect("token 3").span_usize(), 32..49);
         }
     }
 }

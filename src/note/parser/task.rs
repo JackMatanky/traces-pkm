@@ -127,8 +127,8 @@ impl<'a> TaskScan<'a> {
             };
 
             if should_remove {
-                let start = token.start();
-                let end = token.end();
+                let start = token.start_usize();
+                let end = token.end_usize();
                 if start > current_idx
                     && let Some(slice) = self.raw.get(current_idx..start)
                 {

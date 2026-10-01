@@ -54,7 +54,9 @@ use pulldown_cmark::{
 use super::{
     Frontmatter, Link, LinkType, Note, NoteFieldValue, RawFrontmatter,
 };
-use crate::{ByteOffset, ByteTracker, FieldKey, Tag, TaskStatusMap};
+use crate::{
+    BytePos, ByteSpan, FieldKey, LineIndex, SpanStart, Tag, TaskStatusMap,
+};
 
 mod inline;
 mod input;
@@ -110,7 +112,7 @@ pub fn parse_markdown(input: &MarkdownParserInput<'_>) -> Note {
     for (event, range) in
         Parser::new_ext(input.src(), MARKDOWN_OPTIONS).into_offset_iter()
     {
-        ctx.handle_event(event, ByteOffset::saturating_from(range.start));
+        ctx.handle_event(event, ByteSpan::from(range));
     }
     ctx.into_note(input.path())
 }
@@ -217,9 +219,9 @@ struct ParserContext<'a> {
     body_buffer: String,
     inline_fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
     tags: Vec<Tag>,
-    /// Precomputed line-start offsets for the source being parsed, used to
+    /// Precomputed line-start positions for the source being parsed, used to
     /// populate the position fields of [`ListItem`](super::ListItem).
-    line_tracker: ByteTracker,
+    line_index: LineIndex,
     /// Resolves scanned marker symbols to their [`TaskStatus`], used to
     /// classify status-marked list items in [`list::ListTracker::end_item`].
     ///
@@ -258,7 +260,7 @@ impl<'a> ParserContext<'a> {
             body_buffer: String::with_capacity(body_capacity),
             inline_fields: IndexMap::with_capacity(8),
             tags: Vec::with_capacity(8),
-            line_tracker: ByteTracker::new(source),
+            line_index: LineIndex::new(source),
             task_statuses,
             tag_filters,
             frontmatter_tags_key,
@@ -267,9 +269,9 @@ impl<'a> ParserContext<'a> {
 
     /// Dispatches one Markdown event to the matching handler.
     ///
-    /// `offset` is the event's starting byte offset, used only by
-    /// [`Self::start_item`] to resolve the item's source line.
-    fn handle_event(&mut self, event: Event<'_>, offset: ByteOffset) {
+    /// `span` is the event's byte span, used by [`Self::start_item`] and
+    /// [`Self::end_item`] to resolve item bounds and source lines.
+    fn handle_event(&mut self, event: Event<'_>, span: ByteSpan) {
         match event {
             Event::Start(CmarkTag::MetadataBlock(_)) => {
                 self.start_metadata_block();
@@ -307,8 +309,8 @@ impl<'a> ParserContext<'a> {
                 self.start_list(start_number.is_some());
             }
             Event::End(TagEnd::List(_)) => self.end_list(),
-            Event::Start(CmarkTag::Item) => self.start_item(offset),
-            Event::End(TagEnd::Item) => self.end_item(),
+            Event::Start(CmarkTag::Item) => self.start_item(span.start()),
+            Event::End(TagEnd::Item) => self.end_item(span.end()),
             Event::Text(text) => self.push_text(&text),
             Event::SoftBreak | Event::HardBreak => self.push_break(),
             // A blockquote inside an item is a block-level child: resolve the
@@ -491,16 +493,19 @@ impl<'a> ParserContext<'a> {
         self.list_nesting.end_list();
     }
 
-    /// Computes the item's source line from `offset` and starts tracking it.
-    fn start_item(&mut self, offset: ByteOffset) {
-        let line = self.line_tracker.line_at(offset);
-        self.list_nesting.start_item(line);
+    /// Computes the item's source line from `pos` and starts tracking it.
+    fn start_item(&mut self, pos: BytePos) {
+        let line = self.line_index.line_at(pos);
+        self.list_nesting.start_item(line, SpanStart::at(pos));
     }
 
     /// Flushes and records the innermost list item.
-    fn end_item(&mut self) {
-        let flushed =
-            self.list_nesting.end_item(self.tag_filters, self.task_statuses);
+    fn end_item(&mut self, end: BytePos) {
+        let flushed = self.list_nesting.end_item(
+            self.tag_filters,
+            self.task_statuses,
+            end,
+        );
         self.extend_from_flush(flushed);
     }
 

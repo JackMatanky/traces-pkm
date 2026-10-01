@@ -55,7 +55,7 @@ impl FilterExpr {
                             span,
                         )),
                         Ok(_) => Err(LexError::UnexpectedToken {
-                            span,
+                            span: span.to_range(),
                             found: "NaN or infinity".to_owned(),
                             expected: "a finite numeric literal",
                         }),

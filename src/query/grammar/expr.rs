@@ -153,7 +153,7 @@ impl<A> BooleanExpr<A> {
 impl<'input, G: AtomParser> BooleanExprParser<'input, G> {
     fn parse(&mut self) -> Result<BooleanExpr<G::Atom>, QueryBuilderError> {
         let expression = self.parse_or()?;
-        let unexpected = self.tokens.peek().map(Spanned::span);
+        let unexpected = self.tokens.peek().map(Spanned::span_usize);
         if let Some(span) = unexpected {
             return Err(self
                 .syntax_error(
@@ -318,7 +318,7 @@ mod tests {
         ) -> Result<Self::Atom, QueryBuilderError> {
             match tokens.next() {
                 Some(spanned) => {
-                    let (value, span) = spanned.into_parts();
+                    let (value, span) = spanned.into_parts_usize();
                     match value {
                         TestToken::Atom(atom) => Ok(atom),
                         TestToken::Control(_) => Err(self
@@ -348,7 +348,7 @@ mod tests {
     }
 
     fn token(value: TestToken, offset: usize) -> Spanned<TestToken> {
-        Spanned::new(value, offset..offset.saturating_add(1))
+        Spanned::from_usize_range(value, offset..offset.saturating_add(1))
     }
 
     mod parse {

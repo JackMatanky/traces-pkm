@@ -67,7 +67,7 @@ impl<T> LexTokenStream<Spanned<T>> {
                 found: format!("{e:?}"),
                 expected: "a valid token",
             })?;
-            tokens.push(post(Spanned::new(value, span))?);
+            tokens.push(post(Spanned::from_usize_range(value, span))?);
         }
         Ok(Self::new(tokens))
     }
@@ -88,7 +88,8 @@ impl<T> LexTokenStream<Spanned<T>> {
 
     /// Resolves the span of the next token, or end-of-input if empty.
     pub(crate) fn next_span(&mut self, input: &str) -> Range<usize> {
-        self.peek().map_or_else(|| input.len()..input.len(), Spanned::span)
+        self.peek()
+            .map_or_else(|| input.len()..input.len(), Spanned::span_usize)
     }
 
     /// Returns `true` if the next token's inner value equals `expected`.
@@ -120,10 +121,10 @@ impl<T> LexTokenStream<Spanned<T>> {
     {
         match self.next() {
             Some(token) if *token.value() == *expected.value => {
-                Ok(token.span())
+                Ok(token.span_usize())
             }
             Some(token) => Err(LexError::UnexpectedToken {
-                span: token.span(),
+                span: token.span_usize(),
                 found: format!("{:?}", token.value()),
                 expected: expected.desc,
             }),
@@ -157,7 +158,7 @@ impl<T> LexTokenStream<Spanned<T>> {
                 match f(token) {
                     Some(value) => Ok(Spanned::new(value, span)),
                     None => Err(LexError::UnexpectedToken {
-                        span,
+                        span: span.to_range(),
                         found,
                         expected: expected_desc,
                     }),
@@ -350,7 +351,10 @@ mod tests {
         #[test]
         fn peek_is_value_returns_true_when_next_token_matches() {
             let mut ts =
-                SpannedTokenStream::new(vec![Spanned::new("hello", 0..5)]);
+                SpannedTokenStream::new(vec![Spanned::from_usize_range(
+                    "hello",
+                    0..5,
+                )]);
             assert!(ts.peek_is_value(&"hello"));
             assert!(ts.peek().is_some());
         }
@@ -358,7 +362,10 @@ mod tests {
         #[test]
         fn peek_is_value_returns_false_on_mismatch() {
             let mut ts =
-                SpannedTokenStream::new(vec![Spanned::new("hello", 0..5)]);
+                SpannedTokenStream::new(vec![Spanned::from_usize_range(
+                    "hello",
+                    0..5,
+                )]);
             assert!(!ts.peek_is_value(&"world"));
         }
 
@@ -371,7 +378,11 @@ mod tests {
 
         #[test]
         fn next_span_returns_current_token_span() {
-            let mut ts = SpannedTokenStream::new(vec![Spanned::new(1, 0..3)]);
+            let mut ts =
+                SpannedTokenStream::new(vec![Spanned::from_usize_range(
+                    1,
+                    0..3,
+                )]);
             let span = ts.next_span("input");
             assert_eq!(span, 0..3);
         }
@@ -492,7 +503,7 @@ mod tests {
             let (value, span) = token.into_parts();
             match value {
                 T::Num(n) if n > 100 => Err(LexError::UnexpectedToken {
-                    span,
+                    span: span.to_range(),
                     found: n.to_string(),
                     expected: "a number <= 100",
                 }),
