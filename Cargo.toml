@@ -108,11 +108,26 @@ clap = { version = "4", features = ["derive"] }
 clap_complete = "4.6.9"
 convert_case = "0.11.0"
 indexmap = { version = "2.14.2", features = ["rayon", "serde"] }
-indextree = "4.9"
-inquire = "0.9"
+indextree = { version = "4.9", default-features = false, features = ["std"] }
+inquire = {
+  version = "0.9",
+  default-features = false,
+  features = ["crossterm", "fuzzy"],
+}
 logos = "0.16"
 miette = { version = "7.6.0", features = ["derive", "fancy"] }
-minijinja = "2.24.0"
+minijinja = {
+  version = "2.24.0",
+  default-features = false,
+  features = [
+    "adjacent_loop_items",
+    "builtins",
+    "debug",
+    "macros",
+    "multi_template",
+    "serde",
+  ]
+}
 noyalib = {
   version = "0.0.51",
   default-features = false,
@@ -131,7 +146,7 @@ postcard = {
     "use-std",
   ]
 }
-pulldown-cmark = "0.13"
+pulldown-cmark = { version = "0.13", default-features = false }
 rayon = "1.12.0"
 redb = "4.2"
 regex = "1.13.1"
@@ -142,7 +157,7 @@ strict-path = "0.2.3"
 strsim = "0.11"
 thiserror = "2"
 toml = "1.1"
-tracing = "0.1"
+tracing = { version = "0.1", default-features = false, features = ["std"] }
 unicode-width = "0.2"
 uuid = { version = "1.26.0", features = ["v4"] }
 walkdir = "2.5"
@@ -151,11 +166,15 @@ walkdir = "2.5"
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["html_reports"] }
 pretty_assertions = "1.4.1"
-rstest = "0.24"
+rstest = { version = "0.24", default-features = false }
 rustix = { version = "1.1.4", features = ["fs"] }
 stats_alloc = "0.1.10"
 tempfile = "3.27.0"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-subscriber = {
+  version = "0.3",
+  default-features = false,
+  features = ["registry"],
+}
 
 # ------------------------------------------------------------- #
 #                           Features                            #

@@ -238,7 +238,6 @@ pub(crate) struct CwdGuard {
 impl CwdGuard {
     #[expect(
         clippy::disallowed_methods,
-        clippy::expect_used,
         reason = "test helper mirroring crate-internal CwdGuard"
     )]
     pub(crate) fn enter(path: &Path) -> Self {
@@ -251,7 +250,6 @@ impl CwdGuard {
 }
 
 impl Drop for CwdGuard {
-    #[expect(clippy::expect_used, reason = "see CwdGuard")]
     fn drop(&mut self) {
         env::set_current_dir(&self.original).expect("restore current dir");
     }

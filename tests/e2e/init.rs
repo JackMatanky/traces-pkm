@@ -62,10 +62,6 @@ fn init_scaffolds_preset_defaults_and_refuses_existing_traces_dir() {
     assert!(matches!(error, CliError::InitAlreadyInitialized { .. }));
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "test assertions — failure should panic"
-)]
 fn assert_config(
     root: &Path,
     expected_directory: &str,
@@ -83,10 +79,6 @@ fn assert_config(
     assert_eq!(table_str(templates, "output_dir"), expected_output_dir);
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "test assertions — failure should panic"
-)]
 fn table_str<'a>(table: &'a toml::value::Table, key: &str) -> &'a str {
     table.get(key).and_then(toml::Value::as_str).expect("string value")
 }
