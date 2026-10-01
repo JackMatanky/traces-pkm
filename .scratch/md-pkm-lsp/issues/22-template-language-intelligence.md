@@ -21,7 +21,7 @@ Decide:
 
 ### Grounding supersession (required by ticket graph MUST#5)
 
-- **`env.parse()` → `machinery::parse`**: analysis uses minijinja's machinery API behind the `unstable_machinery` feature gate, exact-pinned `=2.24.0`; the free fn returns `ast::Stmt` (top node `Stmt::Template(Spanned<Template>)`, `parser.rs:1392-1399`), companion `parse_expr`. Every node is `Spanned<T>` (struct over a private boxed tuple, `.span()`/`Deref` — no pattern-match on `(node, span)`); offsets are UTF-8 bytes composing with ticket 11's `ByteOffset` ladder.
+- **`env.parse()` → `machinery::parse`**: analysis uses minijinja's machinery API behind the `unstable_machinery` feature gate, exact-pinned `=2.24.0`; the free fn returns `ast::Stmt` (top node `Stmt::Template(Spanned<Template>)`, `parser.rs:1392-1399`), companion `parse_expr`. Every node is `Spanned<T>` (struct over a private boxed tuple, `.span()`/`Deref` — no pattern-match on `(node, span)`); offsets are UTF-8 bytes composing with ticket 11's `BytePos` ladder.
 - **Names derived, docs hand-authored** (not reflected): minijinja `Object`s expose no reflectable schema; filter/test enumeration is Rank-1 derived via `env.state().iter_{filters,tests}()` probes, **filtered through `find`** (offered ⇒ find-resolvable, D5/S1), cross-checked in tests against hand-written docs — golden-span tests, exact version pin, `_`-match arms banned so a new minijinja variant breaks loudly.
 - **Corrected line refs** recorded in research §0.
 - **Supersession block**: ticket 08's "20's territory" attribution for schema-change rebuild is superseded (gap = un-owned open item, owner candidate 31 — see §3.5). **Q7's "eager = startup-only" is NOT superseded** — Q23(a′) reinstates it with a non-fatal qualifier; only the Q17-lazy knock-on claimed otherwise (withdrawn).
@@ -44,7 +44,7 @@ Decide:
 
 - **Q9(c) — phase-1 four classes**: syntax + name-resolution + typo (probe with close match) + undefined-variable, **iff** Q18's span mechanism. Conditions: `undeclared_variables(false)` (nested=true defeats subtraction), subtract `env.globals()` keys, empty-render-context soundness condition recorded (`engine.rs:195`), includer-context FP recorded as known limitation, severity proposed Information → 25.
 - **Q18 — span mechanism**: scope-correct span-collecting mini-tracker re-walk (`nested=false` only, ~100–150 lines on top of D1's existing adapter walk); the `undeclared_variables` name set demoted to gate + `#[test]` oracle only, dropped from production (one parse per recompute).
-- **Q10 — fallback range = span-precedence ladder** (owned by 22): (1) nearest AST-node span, (2) `Error::range()`, (3) `0..len` only as tripwire; all `ByteOffset`, boundary-mapped; cosmetic choice proposed to 25.
+- **Q10 — fallback range = span-precedence ladder** (owned by 22): (1) nearest AST-node span, (2) `Error::range()`, (3) `0..len` only as tripwire; all `BytePos`, boundary-mapped; cosmetic choice proposed to 25.
 - **Q13 — buffer-authoritative content reading** whenever content reading lands (transitive analysis/preview): served by 14's `ContentResolver::text_of`, overlay handle injected at engine construction; phase-1 reads no include content today, so overlay-vs-disk is moot for 22 now.
 - **Q14 — extends/import/from in discovery scope**: uniform across runtime/codegen/loader; dynamic targets (`{% extends layout %}`) honest false-negative, named so nobody "fixes" it with string-sniffing; `file.include(...)` named as excluded (different resolution path).
 

@@ -277,7 +277,7 @@ type = "ON_HOLD"
 **Decision:** Field called `task.parent`. Aim for line number, but may need byte offset due to pulldown-cmark parsing.
 
 - `SourceLine(u32)` newtype for line numbers
-- `ByteOffset(usize)` newtype for byte offsets
+- `BytePos(usize)` newtype for byte offsets
 - Research found: `into_offset_iter()` provides byte offsets, `line_starts` vec with `partition_point` gives O(1) line lookup
 
 #### Q25 — fully_complete Computation
@@ -316,7 +316,7 @@ type = "ON_HOLD"
 
 **Decision:** Separate redb table with composite key `(path, line)`.
 
-- `ByteOffset`/`SourceLine` newtypes
+- `BytePos`/`SourceLine` newtypes
 - `ListText { raw, clean }` type
 - `TaskItem` for task-specific fields
 - Tags as `Vec<Tag>` on `ListItem`
@@ -391,12 +391,12 @@ type = "ON_HOLD"
 - Need separate struct to add `path` field (note housing the list)
 - `line` and `depth` on `ListItem` depends on cost of adding them to struct
 
-#### Q40 — ByteOffset Tracking
+#### Q40 — BytePos Tracking
 
 **Decision:** Do NOT extend `SourceText` (only responsible for text).
 
-- Create `ByteOffset`/`Span` newtype
-- Create `ByteTracker` or cursor utility
+- Create `BytePos`/`Span` newtype
+- Create `LineIndex` or cursor utility
 
 #### Q41 — --table Columns
 
@@ -472,9 +472,9 @@ type = "ON_HOLD"
 - Duplicates query-relevant list fields at top level for easier LISTS table access
 - Does NOT duplicate data unnecessarily beyond the flattened query record shape
 
-#### Q45 — ByteTracker
+#### Q45 — LineIndex
 
-**Decision:** User prefers ByteTracker over standalone functions.
+**Decision:** User prefers LineIndex over standalone functions.
 
 - Zero-copy if possible
 - Creates `line_starts` vec during construction
@@ -520,7 +520,7 @@ pub struct NoteConfigSpec {
 - User asked about `FrontmatterTable` which doesn't exist
 - Config model has `FrontmatterConfig` with `title`, `aliases`, `date_created`, `date_modified`
 
-#### Q50 — ByteTracker Zero-Copy
+#### Q50 — LineIndex Zero-Copy
 
 **Decision:** User wants zero-copy if possible.
 
@@ -1455,7 +1455,7 @@ Maps to `NoteConfigSpec { task: TaskConfig, frontmatter: FrontmatterConfig }`.
 3. **Two-phase parsing** — Structural (`pulldown-cmark`) → semantic (task annotation)
 4. **Index-time computation** — `fully_complete` computed during indexing
 5. **NoteConfigSpec composition** — Combines task and frontmatter config
-6. **ByteTracker utility** — Zero-copy line number tracking via `line_starts` vec
+6. **LineIndex utility** — Zero-copy line number tracking via `line_starts` vec
 7. **Field inheritance** — Item fields inherit from note fields (frontmatter + inline)
 8. **State machine parsing** — Internal state machine for task markers (zero-allocation)
 9. **Tag as config type** — Move to `src/tag.rs`, make public with validated constructor
@@ -1490,7 +1490,7 @@ Maps to `NoteConfigSpec { task: TaskConfig, frontmatter: FrontmatterConfig }`.
 | Config | `src/config/model.rs` (TaskConfig addition) |
 | Domain Model | CONTEXT.md (Task term definition) |
 | LISTS table | New redb table definition |
-| ByteTracker | Byte-to-line conversion utility (new) |
+| LineIndex | Byte-to-line conversion utility (new) |
 | NoteConfigSpec | Replaces MarkdownParserInput |
 | ListItemType | New enum `Plain`/`Checkbox`/`Task` in `src/note/lists.rs` (replaces is_task, is_completed, task fields) |
 | Note.tasks() | Filtered iterator in `src/note/model.rs` (returns only `Task` items) |
@@ -1659,29 +1659,29 @@ pub struct TaskDates {
 pub struct SourceLine(u32);
 ```
 
-### ByteOffset (newtype)
+### BytePos (newtype)
 
 ```rust
-pub struct ByteOffset(usize);
+pub struct BytePos(usize);
 ```
 
 ### Span (newtype)
 
 ```rust
 pub struct Span {
-    pub start: ByteOffset,
-    pub end: ByteOffset,
+    pub start: BytePos,
+    pub end: BytePos,
 }
 ```
 
-### ByteTracker
+### LineIndex
 
 ```rust
-pub struct ByteTracker {
+pub struct LineIndex {
     line_starts: Vec<usize>,
 }
 
-impl ByteTracker {
+impl LineIndex {
     pub fn new(source: &str) -> Self { /* build line_starts from source */ }
     pub fn byte_to_line(&self, offset: usize) -> SourceLine { /* partition_point O(1) */ }
 }

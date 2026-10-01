@@ -31,7 +31,7 @@ This DSL is authored where? — first determine (if not already obvious from Tem
 - Select options + Boolean `true`/`false` on RHS (via lexer-based token classification: run logos on text prefix before cursor, classify last token type)
 
 **Diagnostics (Phase 1):**
-- Forward `QuerySyntaxError` spans directly as LSP diagnostics (mechanical conversion via `ByteTracker`)
+- Forward `QuerySyntaxError` spans directly as LSP diagnostics (mechanical conversion via `LineIndex`)
 - Unknown field: Information severity
 - Unknown class with close match (via `suggest_class`): Warning severity
 - Unknown class no match: Information severity

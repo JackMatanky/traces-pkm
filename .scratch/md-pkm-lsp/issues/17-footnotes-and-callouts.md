@@ -44,7 +44,7 @@ Decide scope (in/out) and depth for both independently — they don't need to sh
 **Implementation**:
 - Enable `Options::ENABLE_FOOTNOTES` in `parse_markdown()`
 - Add `FootnoteIndex` to `ParserContext` — two `HashMap`s (definitions: label → range, references: label → vec of ranges), built during the single parse pass
-- `FootnoteRef` and `FootnoteDef` AST nodes carry `Range<ByteOffset>` spans (from `into_offset_iter()`, currently discarded)
+- `FootnoteRef` and `FootnoteDef` AST nodes carry `Range<BytePos>` spans (from `into_offset_iter()`, currently discarded)
 - Diagnostics: undefined references (key in refs but not defs), unused definitions (key in defs but not refs), duplicate definitions (same label defined twice — first wins, warn on second)
 - Rename: file-local only (CommonMark footnotes are document-scoped); find label range in each `Reference::Footnote` and `Referenceable::Footnote`, replace label text
 - Spans stay transient, never persisted in redb

@@ -116,6 +116,6 @@ Evidence base:
 1. **`src/note/parser.rs`**:
    - Frontmatter tag extraction helper to populate `self.tags` from frontmatter entries during `parse_markdown`.
 2. **Frontmatter tag spans**:
-   - Map frontmatter tag values to `Range<ByteOffset>` from `noyalib`'s `Spanned<T>` output (ticket 19's frontmatter span mechanism; the hand-rolled re-scanner originally referenced here was dropped in the 2026-09-23 reconciliation).
+   - Map frontmatter tag values to `Range<BytePos>` from `noyalib`'s `Spanned<T>` output (ticket 19's frontmatter span mechanism; the hand-rolled re-scanner originally referenced here was dropped in the 2026-09-23 reconciliation).
 3. **LSP Tag Index Facade**:
-   - Inverted tag map (`tag -> Vec<(Url, Range<ByteOffset>)>`) stored in memory, updated incrementally via the buffer overlay model (Ticket 14).
+   - Inverted tag map (`tag -> Vec<(Url, Range<BytePos>)>`) stored in memory, updated incrementally via the buffer overlay model (Ticket 14).

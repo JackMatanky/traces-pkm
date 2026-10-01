@@ -248,7 +248,7 @@ Key changes:
 | `src/note/parser/list.rs` | 733 (new) | `ListTracker`, `ItemFrame`, `ItemClassificationState` incremental state machine, 18 tests |
 | `src/note/parser/lexer.rs` | 708 (new) | `InlineTokenLexer` extracting inline fields and tags via logos with `has_marker` gating, 32 tests |
 | `src/note/parser/inline.rs` | 511 (new) | Recursive-descent inline field value parser (`parse_inline_value`), zero-allocation duration parser, 24 tests |
-| `src/note/parser/line.rs` | 136 (new) | `ByteTracker` for binary-searched byte offset to `SourceLine` translation |
+| `src/note/parser/line.rs` | 136 (new) | `LineIndex` for binary-searched byte offset to `SourceLine` translation |
 | `src/note/parser.rs` | 1,307 | Facade coordinating submodule pipeline, Markdown event loop with `ENABLE_TASKLISTS` removed |
 | `src/delimiter.rs` | 444 (new) | Zero-allocation delimiter tracking (`DelimiterStack`, `DelimiterType::find_closing`, `QuoteType`), 14 tests |
 | `src/lexer.rs` | 733 | Shared lexer abstractions (`LexTokenStream`, `TokenSpec`, `LexedToken`, `LexError`, string unquoting) |
@@ -370,4 +370,4 @@ RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features  # clean
 - Query record enrichment — issue 08
 - Template `tasks.*` namespace changes — issue 09
 - CLI task command changes (`--sort`, `--table`, `--from`) — issue 10
-- `ByteTracker` utility — issue 04 (parallel with issue 01, not this issue)
+- `LineIndex` utility — issue 04 (parallel with issue 01, not this issue)

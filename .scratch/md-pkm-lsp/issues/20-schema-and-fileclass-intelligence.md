@@ -42,7 +42,7 @@ Grounding: `SchemaService` (`src/schema/service.rs`) is a load-once registry ove
 
 | Q | Decision | Rationale |
 |---|----------|-----------|
-| **Q7** | Frontmatter spans: parallel map `Frontmatter { fields, #[serde(skip)] spans }`. `ByteSpan = Range<ByteOffset>`. `from_with_spans(raw, source, base_offset)` constructor. **Phase 1:** stub (empty spans). **Phase 2:** populated from `noyalib` `Spanned<T>` byte ranges (ticket 19's mechanism; reconciled 2026-09-23 — replaces the originally-planned line-offset re-scan). | Zero callers break. `#[serde(skip)]` preserves postcard roundtrip. Manual `PartialEq` ignoring `spans`. Offset tracking provided by `noyalib` once ticket 19 lands; Phase 1 stub until then. |
+| **Q7** | Frontmatter spans: parallel map `Frontmatter { fields, #[serde(skip)] spans }`. `ByteSpan = Range<BytePos>`. `from_with_spans(raw, source, base_offset)` constructor. **Phase 1:** stub (empty spans). **Phase 2:** populated from `noyalib` `Spanned<T>` byte ranges (ticket 19's mechanism; reconciled 2026-09-23 — replaces the originally-planned line-offset re-scan). | Zero callers break. `#[serde(skip)]` preserves postcard roundtrip. Manual `PartialEq` ignoring `spans`. Offset tracking provided by `noyalib` once ticket 19 lands; Phase 1 stub until then. |
 | **Q8** | Origin: `origin: Option<SchemaName>` on `SchemaFieldDef`. Stamped in `resolve_own_fields` after `build()`. Manual `PartialEq` excluding `origin`. | Propagation: inherited fields keep ancestor's origin via `Clone`. `$ref` origin = "declared by" not "defined by" (acceptable — target derivable from raw schema). ~32 bytes/field. |
 | **Q10** | Description: `Option<String>` on `SchemaFieldDef` and `RawSchemaFieldDef`. Add to `ALLOWED_OPTION_KEYS` and visitor in `raw.rs`. Handle like `required`/`multi` (field-level attribute). | Must be on both resolved and raw types for TOML deserialization. |
 | **Q13** | Description inherits with field through schema hierarchy. | Same pattern as `required`/`multi` — child overrides if declared, else inherits via `field.clone()`. |
@@ -54,7 +54,7 @@ Grounding: `SchemaService` (`src/schema/service.rs`) is a load-once registry ove
 | Q | Decision | Rationale |
 |---|----------|-----------|
 | **Q14** | Config: `[schemas.diagnostics]` with `enabled` + `debounce_ms`. Per-source severity via editor LSP settings, not project config. | Follows existing config nesting pattern. Minimal project config; editor controls diagnostic display. |
-| **Q18** | Validator: standalone `SchemaValidator` struct. `validate(&Note, &Schema) -> Vec<SchemaDiagnostic>`. Pure function, reusable for future CLI. | No LSP backend exists yet — must be library function. `SchemaDiagnostic` carries `field: FieldName`, `range: Option<Range<ByteOffset>>`, `kind: SchemaDiagnosticKind`, `message: String`. |
+| **Q18** | Validator: standalone `SchemaValidator` struct. `validate(&Note, &Schema) -> Vec<SchemaDiagnostic>`. Pure function, reusable for future CLI. | No LSP backend exists yet — must be library function. `SchemaDiagnostic` carries `field: FieldName`, `range: Option<Range<BytePos>>`, `kind: SchemaDiagnosticKind`, `message: String`. |
 
 ## Model Change Summary
 
@@ -102,7 +102,7 @@ pub struct DiagnosticsConfig {
 ```rust
 pub struct SchemaDiagnostic {
     pub field: FieldName,
-    pub range: Option<Range<ByteOffset>>,
+    pub range: Option<Range<BytePos>>,
     pub kind: SchemaDiagnosticKind,
     pub message: String,
 }
@@ -135,7 +135,7 @@ pub enum SchemaDiagnosticKind {
 ## Prerequisites
 
 1. **Ticket 19** (noyalib YAML parsing) → per-field byte spans → diagnostic underlines
-2. **Ticket 11** (ByteOffset/Bridgebyte) → span infrastructure
+2. **Ticket 11** (BytePos/Bridgebyte) → span infrastructure
 3. **Schema system stable** → `SchemaService`, `Schema`, `SchemaFieldDef` all tested
 
 ## Remaining Weaknesses

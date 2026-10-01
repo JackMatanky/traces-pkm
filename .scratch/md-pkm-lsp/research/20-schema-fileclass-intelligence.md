@@ -696,7 +696,7 @@ default — `Information` severity is already more opinionated.
 | Query/diagnostics | `src/query/error.rs`, `src/query/service.rs` |
 | Config | `src/config/` (SchemasConfig, schema directory resolution) |
 | Index | `src/index/entry.rs` (WorkspaceIndex, FileEntry) |
-| Position | `src/position.rs` (ByteOffset, SourceLine, ByteTracker) |
+| Position | `src/position.rs` (BytePos, SourceLine, LineIndex) |
 
 ### Research sub-documents
 

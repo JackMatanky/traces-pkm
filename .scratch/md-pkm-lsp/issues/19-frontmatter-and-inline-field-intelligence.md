@@ -8,8 +8,8 @@ Status: resolved
 
 The following ticket 11 outcomes are assumed by this ticket's decisions but are NOT yet implemented in the codebase. They must be completed before ticket 19 can be implemented:
 
-1. **`ByteOffset` narrows to `u32`**: Currently `pub(crate) struct ByteOffset(usize)` at `src/position.rs:33`. Must become `u32` with `From<u32>` and `TryFrom<usize>` (lossy). See ticket 11.
-2. **`ByteTracker` moves to `src/position.rs`**: Currently `pub(super)` at `src/note/parser/line.rs:7`. Must move to `src/position.rs`, widen to `pub(crate)`, and gain `byte_to_utf16_cu` method. See ticket 11.
+1. **`BytePos` narrows to `u32`**: Currently `pub(crate) struct BytePos(usize)` at `src/position.rs:33`. Must become `u32` with `From<u32>` and `TryFrom<usize>` (lossy). See ticket 11.
+2. **`LineIndex` moves to `src/position.rs`**: Currently `pub(super)` at `src/note/parser/line.rs:7`. Must move to `src/position.rs`, widen to `pub(crate)`, and gain `byte_to_utf16_cu` method. See ticket 11.
 3. **`InlineTokenLexer` byte spans**: The lexer currently returns `Vec<(FieldKey, NoteFieldValue)>` without byte ranges. For inline-field diagnostics, spans are needed. Options: (a) add a span-preserving variant, (b) run a separate position-aware scan for diagnostics, or (c) scope inline-field diagnostics to line-level only until spans are added. See ticket 11 for the broader span model.
 
 ## Question
@@ -33,7 +33,7 @@ Replace `serde_yaml` with `noyalib` (v0.0.51; `serde_yml`'s 23M downloads now fo
 
 ### Frontmatter byte-range extraction
 
-Per ticket 11: `ByteOffset` narrows to `u32` with `From<u32>`/`TryFrom<usize>`. Introduce `ByteSpan(Range<ByteOffset>)` newtype for field spans. The scanner runs over `RawFrontmatter.as_str()` via noyalib's `Spanned<T>`, producing `FieldKey → ByteSpan` (byte ranges relative to frontmatter start). The LSP handler adds the pulldown-cmark metadata block base offset and converts via `ByteTracker` (ticket 11: moves to `src/position.rs`, gains `byte_to_utf16_cu`) to `Position { line, character }`. No new struct on `Frontmatter` — the scan output is a separate data structure consumed by LSP handlers only. Scanner handles full YAML structure (nesting, block scalars, anchors, aliases), not just flat key-value.
+Per ticket 11: `BytePos` narrows to `u32` with `From<u32>`/`TryFrom<usize>`. Introduce `ByteSpan(Range<BytePos>)` newtype for field spans. The scanner runs over `RawFrontmatter.as_str()` via noyalib's `Spanned<T>`, producing `FieldKey → ByteSpan` (byte ranges relative to frontmatter start). The LSP handler adds the pulldown-cmark metadata block base offset and converts via `LineIndex` (ticket 11: moves to `src/position.rs`, gains `byte_to_utf16_cu`) to `Position { line, character }`. No new struct on `Frontmatter` — the scan output is a separate data structure consumed by LSP handlers only. Scanner handles full YAML structure (nesting, block scalars, anchors, aliases), not just flat key-value.
 
 *Reconciled 2026-09-23: this is the effort's **single** frontmatter-span mechanism. It supersedes the hand-rolled Level-2 raw-text scanner originally decided in [Source span/position model for the Note AST](11-source-span-and-position-model.md) and the line-offset re-scan originally planned in ticket 20 — both now defer here.*
 

@@ -12,7 +12,7 @@
 |------|-------------|
 | **DSL contexts** | Two contexts: CLI `--from`/`--filter` args (outside LSP scope) and MiniJinja template strings (primary LSP target). Query parser is hand-rolled recursive-descent over `logos` lexer, already has `miette::SourceSpan` diagnostics. |
 | **Completion** | Need context-aware completion for: source expressions (tags, paths, file classes), filter expressions (field names, operators, values), and boolean combinators. Schema-aware narrowing from `SchemaService` already exists. |
-| **Diagnostics** | `QuerySyntaxError` already carries `miette::SourceSpan` with byte offset + length. Conversion to LSP `Range` is mechanical via `ropey` or widened `ByteTracker`. |
+| **Diagnostics** | `QuerySyntaxError` already carries `miette::SourceSpan` with byte offset + length. Conversion to LSP `Range` is mechanical via `ropey` or widened `LineIndex`. |
 | **Hover** | Feasible for: field type info, resolved row counts (post-execution), operator docs. Not feasible for: pre-execution result previews. |
 | **Strongest PKM precedent** | zk — the only PKM tool with a real LSP that handles tag/link completions with span-aware diagnostics. All others use Obsidian's `EditorSuggest` API, not LSP. |
 | **Performance** | <20ms completion achievable — no type inference, hash-map lookups only, small schema. Marksman achieves 1.5us goto-def in PKM context. |
@@ -460,7 +460,7 @@ Create `src/query/intelligence/` with:
 ### Existing Research Files
 
 - `research/20-schema-fileclass-intelligence.md` — Schema system, file-class binding, type mapping, completion architecture
-- `research/39-source-span-position-model.md` — Source span model, ByteTracker, ropey adoption
+- `research/39-source-span-position-model.md` — Source span model, LineIndex, ropey adoption
 
 ### Sub-Documents (Merged — Retain for Reference Only)
 

@@ -24,7 +24,7 @@ is unchanged — zero call-site breakage. Spans are opt-in via `span_of()`.
 ### Type Signatures
 
 ```rust
-pub(crate) type ByteSpan = std::ops::Range<ByteOffset>;
+pub(crate) type ByteSpan = std::ops::Range<BytePos>;
 
 impl Frontmatter {
     pub(crate) fn new_with_spans(
@@ -38,7 +38,7 @@ impl Frontmatter {
     pub(crate) fn from_with_spans(
         raw: &RawFrontmatter,
         source: &str,
-        base_offset: ByteOffset,
+        base_offset: BytePos,
     ) -> Self;
 
     pub(crate) fn get_values_with_spans(
@@ -181,7 +181,7 @@ Designs validated against codebase (codegraph), prior research, and LSP conventi
 
 - Zero callers of `fields()`, `get()`, `get_values()`, `Note::fields()` break.
 - `#[serde(skip)]` on `spans` preserves postcard roundtrip (positional format, field omitted).
-- `ByteOffset` wraps `usize` at `src/position.rs:33` — `Range<ByteOffset>` is 16 bytes.
+- `BytePos` wraps `usize` at `src/position.rs:33` — `Range<BytePos>` is 16 bytes.
 - **Blocking gap:** `serde_yaml` does not expose per-field byte positions. Phase 1 ships
   stub `from_with_spans` (empty spans). Phase 2 uses post-parse line-offset re-scan.
 - Manual `PartialEq` required — derived `PartialEq` compares all fields including `spans`.

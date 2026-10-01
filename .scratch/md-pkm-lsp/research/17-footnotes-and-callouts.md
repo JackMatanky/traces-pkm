@@ -80,12 +80,12 @@ None of rust-analyzer, ruff, or Biome use regex post-processing for extended syn
 
 ### Footnote linking: inverted index
 
-Build a `HashMap<String, Range<ByteOffset>>` for definitions and `HashMap<String, Vec<Range<ByteOffset>>>` for references during the single parse pass. O(n) build, O(1) per lookup. Linear scan is unnecessary.
+Build a `HashMap<String, Range<BytePos>>` for definitions and `HashMap<String, Vec<Range<BytePos>>>` for references during the single parse pass. O(n) build, O(1) per lookup. Linear scan is unnecessary.
 
 ```rust
 struct FootnoteIndex {
-    definitions: HashMap<String, Range<ByteOffset>>,
-    references: HashMap<String, Vec<Range<ByteOffset>>>,
+    definitions: HashMap<String, Range<BytePos>>,
+    references: HashMap<String, Vec<Range<BytePos>>>,
 }
 ```
 
