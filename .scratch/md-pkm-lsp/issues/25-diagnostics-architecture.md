@@ -1,7 +1,7 @@
 # Diagnostics architecture: sourcing, publishing, and rumdl non-overlap
 
 Type: grilling
-Blocked by: 03, 15, 20, 21
+Blocked by: 03, 15, 20, 21, 22
 
 ## Question
 

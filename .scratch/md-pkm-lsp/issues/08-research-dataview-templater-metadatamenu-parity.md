@@ -22,4 +22,4 @@ Write findings to `.scratch/md-pkm-lsp/research/08-dataview-templater-metadatame
 
 None of Dataview/Templater/Metadata Menu/obsidian-tasks provide real LSP-shaped intelligence (no diagnostics/hover/definition anywhere) — all rely on Obsidian's EditorSuggest API for completion popups only, execution-time errors otherwise. Templater's tp.* namespace completion (regex-triggered member completion) is a direct precedent for ticket 22. Metadata Menu's fileClass-scoped field-value completion is the strongest structural precedent for ticket 20 (schema-aware intelligence). obsidian-tasks' pluggable per-format TaskSerializer (emoji vs Dataview-bracket) confirms a serializer-per-format shape for ticket 23/18. Traces would be first to bring hover/diagnostics/definition to any of these four languages — not catch-up, genuine new ground.
 
-Full findings: [`research/08-dataview-templater-metadatamenu-parity.md`](../research/08-dataview-templater-metadatamenu-parity.md)
+Full findings: merged into [`research/21-query-language-intelligence.md`](../research/21-query-language-intelligence.md) Part VII "PKM Precedents" — original `research/08-…` file deleted (map.md:66)

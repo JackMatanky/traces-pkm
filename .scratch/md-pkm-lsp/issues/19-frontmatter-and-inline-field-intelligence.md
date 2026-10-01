@@ -1,7 +1,8 @@
 # Metadata/frontmatter & inline-field intelligence
 
-Type: grilling (resolved)
+Type: grilling
 Blocked by: 08, 11
+Status: resolved
 
 ## Prerequisites (ticket 11 changes that must land first)
 
