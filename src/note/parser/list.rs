@@ -110,7 +110,7 @@ impl ListTracker {
             item.fields.entry(key.clone()).or_default().push(value.clone());
         }
         item.tags.extend(tags.iter().cloned());
-        Some((raw_fields, tags))
+        Some(FlushedMetadata::new(raw_fields, tags))
     }
 
     /// Pushes a list frame and flushes any active parent item's scan buffer.
@@ -565,9 +565,11 @@ mod tests {
                 flushed.is_some(),
                 "start_list must flush active item scan buffer"
             );
-            let (fields, _) = flushed.unwrap();
-            let has_status =
-                fields.iter().any(|(k, _)| k.is_canonical_match("status"));
+            let metadata = flushed.unwrap();
+            let has_status = metadata
+                .fields()
+                .iter()
+                .any(|(k, _)| k.is_canonical_match("status"));
             assert!(has_status, "flushed fields must contain Status");
         }
 
@@ -580,9 +582,11 @@ mod tests {
 
             let flushed = tracker.end_item(&[], &TaskStatusMap::default());
             assert!(flushed.is_some(), "end_item must flush scan buffer");
-            let (fields, _) = flushed.unwrap();
-            let has_author =
-                fields.iter().any(|(k, _)| k.is_canonical_match("author"));
+            let metadata = flushed.unwrap();
+            let has_author = metadata
+                .fields()
+                .iter()
+                .any(|(k, _)| k.is_canonical_match("author"));
             assert!(has_author, "flushed fields must contain Author");
         }
 

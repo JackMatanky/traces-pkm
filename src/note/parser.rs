@@ -140,11 +140,60 @@ enum BlockContext {
 }
 
 /// Inline fields list flushed from a list item.
-type FlushedFieldsList = Vec<(FieldKey, NoteFieldValue)>;
+type FlushedFields = Vec<(FieldKey, NoteFieldValue)>;
 
-/// Metadata flushed from a closed list item's scan buffer: inline fields in
-/// document order plus the tags scanned from the same text.
-type FlushedMetadata = (FlushedFieldsList, Vec<Tag>);
+/// Metadata flushed from a closed list item's scan buffer.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(super) struct FlushedMetadata {
+    fields: FlushedFields,
+    tags: Vec<Tag>,
+}
+
+impl FlushedMetadata {
+    /// Creates a new flushed metadata record.
+    #[inline]
+    #[must_use]
+    pub(super) const fn new(
+        fields: Vec<(FieldKey, NoteFieldValue)>,
+        tags: Vec<Tag>,
+    ) -> Self {
+        Self {
+            fields,
+            tags,
+        }
+    }
+
+    /// Returns a slice of the flushed inline fields.
+    #[cfg(test)]
+    #[inline]
+    #[must_use]
+    pub(super) fn fields(&self) -> &[(FieldKey, NoteFieldValue)] {
+        &self.fields
+    }
+
+    /// Returns a slice of the flushed tags.
+    #[cfg(test)]
+    #[inline]
+    #[must_use]
+    pub(super) fn tags(&self) -> &[Tag] {
+        &self.tags
+    }
+
+    /// Decomposes the record into its inner field and tag collections.
+    #[inline]
+    #[must_use]
+    pub(super) fn into_parts(self) -> (FlushedFields, Vec<Tag>) {
+        (self.fields, self.tags)
+    }
+
+    /// Returns `true` if no fields and no tags were flushed.
+    #[cfg(test)]
+    #[inline]
+    #[must_use]
+    pub(super) fn is_empty(&self) -> bool {
+        self.fields.is_empty() && self.tags.is_empty()
+    }
+}
 
 /// State accumulated while walking Markdown events for one note.
 struct ParserContext<'a> {
@@ -404,7 +453,8 @@ impl<'a> ParserContext<'a> {
     /// Folds a flushed item's inline fields and tags into this context's
     /// document-order streams, if any were flushed.
     fn extend_from_flush(&mut self, flushed: Option<FlushedMetadata>) {
-        if let Some((fields, tags)) = flushed {
+        if let Some(metadata) = flushed {
+            let (fields, tags) = metadata.into_parts();
             for (key, value) in fields {
                 self.inline_fields.entry(key).or_default().push(value);
             }
@@ -1610,6 +1660,38 @@ mod tests {
                 items.get(1).expect("item 1").kind(),
                 ListItemType::Task(_)
             ));
+        }
+    }
+
+    mod flushed_metadata {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn carries_fields_and_tags_and_reports_emptiness() {
+            let empty = FlushedMetadata::default();
+            assert!(empty.is_empty());
+            assert_eq!(empty.fields(), &[]);
+            assert_eq!(empty.tags(), &[]);
+
+            let key = FieldKey::try_new("key").unwrap();
+            let tag = Tag::parse("#tag").unwrap();
+            let metadata = FlushedMetadata::new(
+                vec![(key.clone(), NoteFieldValue::String("value".to_owned()))],
+                vec![tag.clone()],
+            );
+
+            assert!(!metadata.is_empty());
+            assert_eq!(metadata.fields().len(), 1);
+            assert_eq!(metadata.tags(), std::slice::from_ref(&tag));
+
+            let (fields, tags) = metadata.into_parts();
+            assert_eq!(fields, [(
+                key,
+                NoteFieldValue::String("value".to_owned())
+            )]);
+            assert_eq!(tags, [tag]);
         }
     }
 }

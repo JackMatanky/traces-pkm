@@ -23,8 +23,9 @@ pub(super) fn scan_fields(
     shorthands: TaskShorthands,
 ) -> Vec<(FieldKey, NoteFieldValue)> {
     let mut fields = Vec::new();
-    for token in tokenize_item_text(text, shorthands) {
-        match token.into_value() {
+    let mut lexer = ItemToken::lexer_with_extras(text, shorthands);
+    while let Some(Ok(token)) = lexer.next() {
+        match token {
             ItemToken::Field((key, value, _)) => fields.push((key, value)),
             ItemToken::Date(date) => {
                 if let Ok(key) = FieldKey::try_new(date.kind().as_str()) {
@@ -64,9 +65,12 @@ fn char_before<'source, T>(lex: &Lexer<'source, T>) -> Option<char>
 where
     T: Logos<'source, Source = str>,
 {
-    lex.source()
-        .get(..lex.span().start)
-        .and_then(|prefix| prefix.chars().next_back())
+    let prefix = lex.source().get(..lex.span().start)?;
+    let last_byte = *prefix.as_bytes().last()?;
+    if last_byte.is_ascii() {
+        return Some(char::from(last_byte));
+    }
+    prefix.chars().next_back()
 }
 
 /// Byte length of an ISO `YYYY-MM-DD` date, such as `2026-01-01`.
