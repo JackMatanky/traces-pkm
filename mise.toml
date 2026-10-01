@@ -6,19 +6,20 @@
 
 [tools]
 # -- Toolchain --
-rust = { version = "nightly-2026-09-09", profile = "minimal", components = [
+rust = { version = "nightly-2026-10-01", profile = "minimal", components = [
   "clippy",
   "rustfmt",
   "llvm-tools-preview",
 ] }
-# Keep every `install_env.RUSTUP_TOOLCHAIN` below in sync with this version and rust-toolchain.toml.
+# Keep every `install_env.RUSTUP_TOOLCHAIN` below, rust-toolchain.toml, and
+# opencode.json (`RUST_DOCS_MCP_TOOLCHAIN`) in sync with this version.
 hk = "2.0.0"
 cargo-binstall = "latest"
 
 # -- Data Formats --
 taplo = "latest"
 tombi = "latest"
-"cargo:ryl" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly-2026-09-09" } }
+"cargo:ryl" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly-2026-10-01" } }
 
 # -- Security --
 gitleaks = "latest"
@@ -31,6 +32,7 @@ cargo-deny = "latest"
 "cargo:cargo-crap" = "latest"
 "cargo:https://github.com/quality-gates/messrust" = { version = "tag:v0.1.15" }
 "cargo:mutarust" = "0.1.10"
+"cargo:cargo-shear" = "latest"
 
 # -- Benchmarking --
 # Top-level `[tools]` keeps `critcmp` on `PATH` for `bench --compare` tab-completion.
@@ -39,11 +41,11 @@ cargo-deny = "latest"
 # -- Dev Experience --
 "cargo:cargo-watch" = "latest"
 "cargo:cargo-sweep" = "latest"
-"cargo:cargo-modules" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly-2026-09-09" } }
+"cargo:cargo-modules" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly-2026-10-01" } }
 
 # -- Docs & ADRs --
 "cargo:https://github.com/snowmead/rust-docs-mcp" = { version = "branch:main", crate = "rust-docs-mcp" }
-"cargo:adrs" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly-2026-09-09" } }
+"cargo:adrs" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly-2026-10-01" } }
 
 [settings]
 # `lockfile` pins resolved tool versions into `mise.lock` so installs are
@@ -312,10 +314,22 @@ eval "extra=(${usage_args:-})"
 cargo audit "${extra[@]+"${extra[@]}"}"
 '''
 
-[tasks.audit]
-description = "Run all security audit checks (cargo-deny and cargo-audit)"
+[tasks."audit:shear"]
+description = "Detect unused/misplaced dependencies (cargo-shear)"
 extends = "gate:never-skip"
-run = [{ tasks = ["audit:deny", "audit:sec"] }]
+usage = 'arg "[args]" var=#true help="Extra arguments forwarded to cargo shear"'
+run = '''
+#!/bin/bash
+set -euo pipefail
+declare -a extra
+eval "extra=(${usage_args:-})"
+cargo shear "${extra[@]+"${extra[@]}"}"
+'''
+
+[tasks.audit]
+description = "Run all audit checks (cargo-deny, cargo-audit, cargo-shear)"
+extends = "gate:never-skip"
+run = [{ tasks = ["audit:deny", "audit:sec", "audit:shear"] }]
 
 # ------------------------------------------------------------- #
 #                 Quality, Coverage & Mutation                  #

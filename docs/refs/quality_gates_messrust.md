@@ -248,7 +248,7 @@ from [mise.jdx.dev/dev-tools/backends/github.html](https://mise.jdx.dev/dev-tool
 
 - **Source build**: compiles `syn` + deps from scratch at install time
   (~1 min class; not timed here). Requires Rust — satisfied by the repo's
-  mise-managed nightly (`mise.toml` `rust = nightly-2026-09-09`); the crate is
+  mise-managed nightly (`mise.toml` `rust = nightly-2026-10-01`); the crate is
   `edition = "2021"`, CI builds it on stable, so a nightly install should work
   but was **not executed** in this research.
 - **`install_env`**: none expected (no build-script/native-dep requirements

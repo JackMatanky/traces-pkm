@@ -66,7 +66,7 @@ established in `quality_gates_messrust.md` §4, refreshed today:
 
 **mutarust — registry `cargo:` form, pinned version.**
 
-- The crate is on crates.io as `mutarust` (binary `mutarust`, `rust-version = 1.85`, edition 2024 — nightly-2026-09-09 satisfies it). **Latest today is 0.1.10** (crates.io API, 2026-09-26); the prior note's `0.1.9` pin is one release behind. Pin `"0.1.10"`.
+- The crate is on crates.io as `mutarust` (binary `mutarust`, `rust-version = 1.85`, edition 2024 — nightly-2026-10-01 satisfies it). **Latest today is 0.1.10** (crates.io API, 2026-09-26); the prior note's `0.1.9` pin is one release behind. Pin `"0.1.10"`.
 - Recent releases publish **no prebuilt assets** (only v0.1.4 did), so the cargo backend's binstall-first path (this repo installs `cargo-binstall`, [mise.toml:14](../../mise.toml)) finds nothing and falls back to `cargo install` (binstall's exit-94 fallback) — a source build either way. Same for messrust's git form, which **always** runs `cargo install --git` and never consults binstall.
 
 ### 2.3 Lockfile and CI implications

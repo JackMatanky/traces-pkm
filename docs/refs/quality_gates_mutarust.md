@@ -281,7 +281,7 @@ after first install.)
 Caveats:
 
 - **Rust ≥ 1.85 required** (`rust-version = "1.85"`, edition 2024) — the
-  repo's `nightly-2026-09-09` toolchain satisfies this; no
+  repo's `nightly-2026-10-01` toolchain satisfies this; no
   `install_env.RUSTUP_TOOLCHAIN` override is needed, unlike `cargo:ryl` /
   `cargo:adrs` in [mise.toml](../../mise.toml)
   ([docs/install.md](https://github.com/quality-gates/mutarust/blob/main/docs/install.md)).

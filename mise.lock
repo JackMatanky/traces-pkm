@@ -114,6 +114,11 @@ version = "0.27.0"
 backend = "cargo:cargo-modules"
 specifiers = ["latest"]
 
+[[tools."cargo:cargo-shear"]]
+version = "1.14.0"
+backend = "cargo:cargo-shear"
+specifiers = ["latest"]
+
 [[tools."cargo:cargo-sweep"]]
 version = "0.8.0"
 backend = "cargo:cargo-sweep"
@@ -275,9 +280,9 @@ url = "https://github.com/jdx/hk/releases/download/v2.0.0/hk-x86_64-pc-windows-m
 signer = "sigstore-oidc:https://github.com/jdx/hk/.github/workflows/release.yml"
 
 [[tools.rust]]
-version = "nightly-2026-09-09"
+version = "nightly-2026-10-01"
 backend = "core:rust"
-specifiers = ["nightly-2026-09-09"]
+specifiers = ["nightly-2026-10-01"]
 
 [tools.rust.options]
 components = "clippy,llvm-tools-preview,rustfmt"

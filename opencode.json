@@ -40,7 +40,8 @@
       ],
       "enabled": true,
       "environment": {
-        "RUST_DOCS_MCP_CACHE_DIR": ".rust-docs/cache/"
+        "RUST_DOCS_MCP_CACHE_DIR": ".rust-docs/cache/",
+        "RUST_DOCS_MCP_TOOLCHAIN": "nightly-2026-10-01"
       },
       "type": "local"
     }

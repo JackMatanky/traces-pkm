@@ -1,12 +1,6 @@
 //! End-to-end test harness: spawns the real `traces` binary (or, for `init`'s
 //! inherently-interactive flow, drives it in-process) against fully isolated
 //! sandboxes. See `support` for isolation guarantees.
-#![expect(
-    clippy::expect_used,
-    reason = "this whole binary is test fixture/harness code; a failed \
-              .expect() here means the sandbox itself is broken and should \
-              panic the test immediately"
-)]
 
 #[path = "e2e/support.rs"]
 mod support;
