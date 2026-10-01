@@ -255,14 +255,14 @@ pub(super) struct SortArgs {
     /// Field path to sort by. Repeatable; multiple `--sort` flags or
     /// comma-separated values compose as composite sort terms. Defaults to
     /// descending order unless overridden by prefix `+` or the `--asc` flag.
-    #[arg(long, value_delimiter = ',', num_args = 1..)]
-    sort: Vec<String>,
+    #[arg(long = "sort", value_delimiter = ',', num_args = 1..)]
+    keys: Vec<String>,
     /// Sort in ascending order. Conflicts with `--desc`. Requires `--sort`.
-    #[arg(long, conflicts_with = "desc", requires = "sort")]
+    #[arg(long, conflicts_with = "desc", requires = "keys")]
     asc: bool,
     /// Sort in descending order (the default). Conflicts with `--asc`.
     /// Requires `--sort`.
-    #[arg(long, conflicts_with = "asc", requires = "sort")]
+    #[arg(long, conflicts_with = "asc", requires = "keys")]
     desc: bool,
 }
 
@@ -277,7 +277,7 @@ impl SortArgs {
     ///
     /// Returns [`CliError::Query`] if any sort field path is malformed.
     fn resolve(&self, root: &Path) -> Result<Option<SortOrder>, CliError> {
-        if self.sort.is_empty() {
+        if self.keys.is_empty() {
             return Ok(None);
         }
         let default_direction = if self.asc {
@@ -285,7 +285,7 @@ impl SortArgs {
         } else {
             SortDirection::default()
         };
-        SortOrder::parse(&self.sort.join(","), default_direction)
+        SortOrder::parse(&self.keys.join(","), default_direction)
             .map_err(|error| query_error(root, error.into()))
     }
 }
@@ -785,9 +785,9 @@ mod tests {
 
         use super::*;
 
-        fn resolve(sort: &[&str], asc: bool, desc: bool) -> Option<SortOrder> {
+        fn resolve(keys: &[&str], asc: bool, desc: bool) -> Option<SortOrder> {
             let args = SortArgs {
-                sort: sort.iter().map(|s| (*s).to_owned()).collect(),
+                keys: keys.iter().map(|s| (*s).to_owned()).collect(),
                 asc,
                 desc,
             };
@@ -857,7 +857,7 @@ mod tests {
         #[test]
         fn rejects_malformed_field_path() {
             let args = SortArgs {
-                sort: vec!["file..bad".to_owned()],
+                keys: vec!["file..bad".to_owned()],
                 asc: false,
                 desc: false,
             };

@@ -490,7 +490,7 @@ impl TaskDateSet {
             TaskDateType::Cancelled => &mut self.cancelled,
         };
         if slot.is_none() {
-            *slot = Some(date.date);
+            *slot = Some(date.value);
         }
     }
 
@@ -664,7 +664,7 @@ impl Iterator for TaskDateSetIter {
 #[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TaskDate {
     kind: TaskDateType,
-    date: DateValue,
+    value: DateValue,
 }
 
 impl TaskDate {
@@ -687,7 +687,7 @@ impl TaskDate {
     pub const fn new(kind: TaskDateType, date: DateValue) -> Self {
         Self {
             kind,
-            date,
+            value: date,
         }
     }
 
@@ -702,7 +702,7 @@ impl TaskDate {
     #[inline]
     #[must_use]
     pub const fn date(&self) -> DateValue {
-        self.date
+        self.value
     }
 }
 

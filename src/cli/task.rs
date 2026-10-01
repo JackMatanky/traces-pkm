@@ -497,7 +497,7 @@ mod tests {
             .expect("write note");
             let task = Task {
                 sort: SortArgs {
-                    sort: vec!["list.text".to_owned()],
+                    keys: vec!["list.text".to_owned()],
                     asc: true,
                     desc: false,
                 },
@@ -754,7 +754,7 @@ mod tests {
             ])
             .expect("parse sort flag");
             let task = task_args(&cli);
-            assert_eq!(task.sort.sort, vec!["list.due".to_owned()]);
+            assert_eq!(task.sort.keys, vec!["list.due".to_owned()]);
             assert!(task.sort.asc);
         }
 

@@ -766,7 +766,7 @@ impl From<noyalib::Value> for FieldValueRef<'static> {
             noyalib::Value::Bool(b) => Self::Bool(b),
             noyalib::Value::Number(n) => Self::Float(n.as_f64()),
             noyalib::Value::String(s) => FieldStringValue::new(Cow::Owned(s))
-                .classify(FormatParsePolicy::Classify),
+                .classify(DateTimeCoercion::Classify),
             noyalib::Value::Sequence(seq) => {
                 Self::List(seq.into_iter().map(Self::from).collect())
             }
@@ -784,10 +784,10 @@ impl From<noyalib::Value> for FieldValueRef<'static> {
     }
 }
 
-/// Controls how [`FieldValueRef`] classifies string scalars during
-/// deserialization from JSON, YAML, or TOML.
+/// Controls how [`FieldValueRef`] coerces string scalars into date or
+/// datetime values during deserialization from JSON, YAML, or TOML.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum FormatParsePolicy {
+pub(crate) enum DateTimeCoercion {
     /// Classify ISO date and date-time strings as [`FieldValueRef::Date`] or
     /// [`FieldValueRef::DateTime`].
     #[default]
@@ -795,7 +795,6 @@ pub(crate) enum FormatParsePolicy {
     /// Treat all strings as plain text.
     Passthrough,
 }
-
 /// A string value that knows whether it is a plain string, ISO date, or ISO
 /// datetime. Construction-time classification centralizes the logic that
 /// determines which [`FieldValueRef`] variant a string becomes.
@@ -815,9 +814,9 @@ impl<'a> FieldStringValue<'a> {
     }
 
     /// Consumes the string and returns the appropriate [`FieldValueRef`]
-    /// variant based on the parse policy.
+    /// variant based on date-time coercion.
     ///
-    /// When `policy` is [`FormatParsePolicy::Classify`], ISO datetime strings
+    /// When `coercion` is [`DateTimeCoercion::Classify`], ISO datetime strings
     /// become [`FieldValueRef::DateTime`], ISO date strings become
     /// [`FieldValueRef::Date`], and all other strings become
     /// [`FieldValueRef::String`].
@@ -825,9 +824,9 @@ impl<'a> FieldStringValue<'a> {
     #[must_use]
     pub(crate) fn classify(
         self,
-        policy: FormatParsePolicy,
+        coercion: DateTimeCoercion,
     ) -> FieldValueRef<'a> {
-        if policy == FormatParsePolicy::Classify
+        if coercion == DateTimeCoercion::Classify
             && DateValue::has_four_digit_year(self.0.trim())
         {
             if let Ok(value) = DateTimeValue::parse_iso(&self.0) {
@@ -841,9 +840,9 @@ impl<'a> FieldStringValue<'a> {
     }
 }
 
-/// Seed that carries [`FormatParsePolicy`] through map value deserialization.
+/// Seed that carries [`DateTimeCoercion`] through map value deserialization.
 struct FieldValueRefSeed<'a> {
-    policy: FormatParsePolicy,
+    coercion: DateTimeCoercion,
     _marker: PhantomData<&'a ()>,
 }
 
@@ -854,14 +853,14 @@ impl<'de: 'a, 'a> de::DeserializeSeed<'de> for FieldValueRefSeed<'a> {
     where
         D: Deserializer<'de>,
     {
-        FieldValueRef::deserialize_with(deserializer, self.policy)
+        FieldValueRef::deserialize_with(deserializer, self.coercion)
     }
 }
 
-/// Serde [`Visitor`] for [`FieldValueRef`] with configurable date
-/// classification.
+/// Serde [`Visitor`] for [`FieldValueRef`] with configurable date-time
+/// coercion.
 struct FieldValueRefVisitor<'a> {
-    policy: FormatParsePolicy,
+    coercion: DateTimeCoercion,
     _marker: PhantomData<&'a ()>,
 }
 
@@ -894,15 +893,15 @@ impl<'de: 'a, 'a> Visitor<'de> for FieldValueRefVisitor<'a> {
 
     fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> {
         Ok(FieldStringValue::new(Cow::Owned(v.to_owned()))
-            .classify(self.policy))
+            .classify(self.coercion))
     }
 
     fn visit_borrowed_str<E>(self, v: &'a str) -> Result<Self::Value, E> {
-        Ok(FieldStringValue::new(Cow::Borrowed(v)).classify(self.policy))
+        Ok(FieldStringValue::new(Cow::Borrowed(v)).classify(self.coercion))
     }
 
     fn visit_string<E>(self, v: String) -> Result<Self::Value, E> {
-        Ok(FieldStringValue::new(Cow::Owned(v)).classify(self.policy))
+        Ok(FieldStringValue::new(Cow::Owned(v)).classify(self.coercion))
     }
 
     fn visit_none<E>(self) -> Result<Self::Value, E> {
@@ -935,11 +934,11 @@ impl<'de: 'a, 'a> Visitor<'de> for FieldValueRefVisitor<'a> {
     where
         A: MapAccess<'de>,
     {
-        let policy = self.policy;
+        let coercion = self.coercion;
         let mut index_map = IndexMap::new();
         while let Some(key) = map.next_key::<Cow<'a, str>>()? {
             let value = map.next_value_seed(FieldValueRefSeed {
-                policy,
+                coercion,
                 _marker: PhantomData,
             })?;
             index_map.insert(key, value);
@@ -953,7 +952,7 @@ impl<'de: 'a, 'a> Visitor<'de> for FieldValueRefVisitor<'a> {
 /// `visit_*` method matches the source data, borrowing text from `'de` wherever
 /// the format's deserializer supports it.
 ///
-/// The default impl uses [`FormatParsePolicy::Passthrough`], treating all
+/// The default impl uses [`DateTimeCoercion::Passthrough`], treating all
 /// strings as plain text. Use [`FieldValueRef::deserialize_with`] to classify
 /// ISO date strings as [`FieldValueRef::Date`].
 impl<'de: 'a, 'a> Deserialize<'de> for FieldValueRef<'a> {
@@ -961,26 +960,26 @@ impl<'de: 'a, 'a> Deserialize<'de> for FieldValueRef<'a> {
     where
         D: Deserializer<'de>,
     {
-        Self::deserialize_with(deserializer, FormatParsePolicy::Passthrough)
+        Self::deserialize_with(deserializer, DateTimeCoercion::Passthrough)
     }
 }
 
 impl<'a> FieldValueRef<'a> {
-    /// Deserializes with the given [`FormatParsePolicy`].
+    /// Deserializes with the given [`DateTimeCoercion`].
     ///
-    /// When `policy` is [`FormatParsePolicy::Classify`], ISO date strings are
+    /// When `coercion` is [`DateTimeCoercion::Classify`], ISO date strings are
     /// classified as [`FieldValueRef::Date`] rather than
     /// [`FieldValueRef::String`].
     pub(crate) fn deserialize_with<'de, D>(
         deserializer: D,
-        policy: FormatParsePolicy,
+        coercion: DateTimeCoercion,
     ) -> Result<Self, D::Error>
     where
         'de: 'a,
         D: Deserializer<'de>,
     {
         deserializer.deserialize_any(FieldValueRefVisitor {
-            policy,
+            coercion,
             _marker: PhantomData,
         })
     }
@@ -1471,7 +1470,7 @@ mod tests {
         }
     }
 
-    mod format_parse_policy {
+    mod date_time_coercion {
         use std::borrow::Cow;
 
         use pretty_assertions::assert_eq;
@@ -1483,7 +1482,7 @@ mod tests {
             let json = r#"{"d": "2026-07-29"}"#;
             let value: FieldValueRef<'_> = FieldValueRef::deserialize_with(
                 &mut serde_json::Deserializer::from_str(json),
-                FormatParsePolicy::Classify,
+                DateTimeCoercion::Classify,
             )
             .expect("valid json");
             let entry = match &value {
@@ -1505,7 +1504,7 @@ mod tests {
             let json = r#"{"dt": "2026-07-29T14:30:00Z"}"#;
             let value: FieldValueRef<'_> = FieldValueRef::deserialize_with(
                 &mut serde_json::Deserializer::from_str(json),
-                FormatParsePolicy::Classify,
+                DateTimeCoercion::Classify,
             )
             .expect("valid json");
             let entry = match &value {
@@ -1527,7 +1526,7 @@ mod tests {
             let json = r#"{"d": "2026-07-29"}"#;
             let value: FieldValueRef<'_> = FieldValueRef::deserialize_with(
                 &mut serde_json::Deserializer::from_str(json),
-                FormatParsePolicy::Passthrough,
+                DateTimeCoercion::Passthrough,
             )
             .expect("valid json");
             let entry = match &value {

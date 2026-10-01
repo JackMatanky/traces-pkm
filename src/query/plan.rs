@@ -44,8 +44,8 @@ impl ExecutionPlan {
         self.ops.is_empty()
     }
 
-    pub(super) fn push(&mut self, transform: QueryTransform) {
-        self.ops.push(transform);
+    pub(super) fn push(&mut self, op: QueryTransform) {
+        self.ops.push(op);
     }
 
     fn apply(&self, mut rows: Vec<QueryRow>) -> Vec<QueryRow> {
@@ -184,9 +184,9 @@ impl QueryTransform {
         })
     }
 
-    pub(super) fn order(order: SortOrder) -> Self {
+    pub(super) fn order(by: SortOrder) -> Self {
         Self::Sort {
-            order,
+            order: by,
         }
     }
 

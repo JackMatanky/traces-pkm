@@ -117,19 +117,20 @@ pub(super) struct QueryOps {
 impl QueryOps {
     /// Wires the shared pipeline every namespace dispatches through: one
     /// [`QueryService`] pre-configured with `class_field` and the File Class
-    /// `schema` expander, for registration as the `name` global at `mode`'s row
-    /// granularity.
+    /// `schemas` expander, for registration as the `name` global at `mode`'s
+    /// row granularity.
     fn new(
         name: &'static str,
         mode: QueryMode,
         indexer: Arc<IndexerService>,
         class_field: &str,
-        schema: Arc<SchemaService>,
+        schemas: Arc<SchemaService>,
     ) -> Self {
         Self {
             name,
             indexer,
-            service: QueryService::new(class_field).with_class_expander(schema),
+            service: QueryService::new(class_field)
+                .with_class_expander(schemas),
             mode,
         }
     }
@@ -140,9 +141,9 @@ impl QueryOps {
     pub(super) fn page(
         indexer: Arc<IndexerService>,
         class_field: &str,
-        schema: Arc<SchemaService>,
+        schemas: Arc<SchemaService>,
     ) -> Self {
-        Self::new("query", QueryMode::Pages, indexer, class_field, schema)
+        Self::new("query", QueryMode::Pages, indexer, class_field, schemas)
     }
 
     /// Builds list-level dispatch around the configured indexer under `lists`.
@@ -153,9 +154,9 @@ impl QueryOps {
     pub(super) fn list(
         indexer: Arc<IndexerService>,
         class_field: &str,
-        schema: Arc<SchemaService>,
+        schemas: Arc<SchemaService>,
     ) -> Self {
-        Self::new("lists", QueryMode::Lists, indexer, class_field, schema)
+        Self::new("lists", QueryMode::Lists, indexer, class_field, schemas)
     }
 
     /// Builds task-level dispatch around the configured indexer under `tasks`.
@@ -165,9 +166,9 @@ impl QueryOps {
     pub(super) fn task(
         indexer: Arc<IndexerService>,
         class_field: &str,
-        schema: Arc<SchemaService>,
+        schemas: Arc<SchemaService>,
     ) -> Self {
-        Self::new("tasks", QueryMode::Tasks, indexer, class_field, schema)
+        Self::new("tasks", QueryMode::Tasks, indexer, class_field, schemas)
     }
 
     /// Registers this object as its `name` global (`query`, `lists`, or

@@ -146,7 +146,7 @@ mod tests {
                 from: None,
                 filter: vec![],
                 sort: SortArgs {
-                    sort: vec!["rating".to_owned()],
+                    keys: vec!["rating".to_owned()],
                     asc: true,
                     desc: false,
                 },
@@ -170,7 +170,7 @@ mod tests {
                 from: None,
                 filter: vec![],
                 sort: SortArgs {
-                    sort: vec!["rating".to_owned()],
+                    keys: vec!["rating".to_owned()],
                     asc: false,
                     desc: false,
                 },
@@ -191,7 +191,7 @@ mod tests {
                 from: None,
                 filter: vec![],
                 sort: SortArgs {
-                    sort: vec!["file..bad".to_owned()],
+                    keys: vec!["file..bad".to_owned()],
                     asc: false,
                     desc: false,
                 },
@@ -445,7 +445,7 @@ mod tests {
 
             assert_eq!(list.from.as_deref(), Some("#tag"));
             assert_eq!(list.filter, vec!["rating > 5".to_owned()]);
-            assert_eq!(list.sort.sort, vec!["rating".to_owned()]);
+            assert_eq!(list.sort.keys, vec!["rating".to_owned()]);
             assert!(list.sort.desc);
             assert!(!list.sort.asc);
         }
@@ -479,7 +479,7 @@ mod tests {
 
             assert_eq!(list.from, None);
             assert_eq!(list.filter, Vec::<String>::new());
-            assert_eq!(list.sort.sort, Vec::<String>::new());
+            assert_eq!(list.sort.keys, Vec::<String>::new());
             assert!(!list.sort.asc);
             assert!(!list.sort.desc);
         }

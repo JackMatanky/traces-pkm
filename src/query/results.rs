@@ -504,10 +504,10 @@ impl QuerySet {
         self.rows().iter()
     }
 
-    /// Appends `transform` to the pending plan without evaluating rows.
-    fn push(self, transform: QueryTransform) -> Self {
+    /// Appends `op` to the pending plan without evaluating rows.
+    fn push(self, op: QueryTransform) -> Self {
         let mut plan = self.plan;
-        plan.push(transform);
+        plan.push(op);
         Self {
             base: self.base,
             plan,
@@ -580,8 +580,8 @@ impl QuerySet {
     /// pre-fetch [`QueryBuilder::order`](super::QueryBuilder::order) path.
     #[inline]
     #[cfg(test)]
-    pub(crate) fn order(self, order: SortOrder) -> Self {
-        self.push(QueryTransform::order(order))
+    pub(crate) fn order(self, by: SortOrder) -> Self {
+        self.push(QueryTransform::order(by))
     }
 
     /// Retains at most `n` leading rows from the result set.
@@ -664,9 +664,9 @@ impl QuerySet {
     /// [`TaskListRequiresTaskRows`]: super::QueryError::TaskListRequiresTaskRows
     pub(crate) fn task_list(
         &self,
-        path_style: TaskPathStyle,
+        style: TaskPathStyle,
     ) -> QueryResult<String> {
-        self.format(&QueryDisplayFormat::task_list(path_style))
+        self.format(&QueryDisplayFormat::task_list(style))
     }
 
     /// Renders rows using the given display format.

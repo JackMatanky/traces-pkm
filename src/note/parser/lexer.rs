@@ -216,7 +216,7 @@ fn wrapped_field_callback(
 /// [`TaskFieldEmojis::Exclude`].
 fn task_date_callback(
     lex: &mut Lexer<'_, ItemToken>,
-    date_type: TaskDateType,
+    kind: TaskDateType,
 ) -> Filter<TaskDate> {
     if !lex.extras.is_included() {
         return Filter::Skip;
@@ -244,7 +244,7 @@ fn task_date_callback(
         return Filter::Skip;
     }
     lex.bump(ws_end.saturating_add(ISO_DATE_LEN));
-    Filter::Emit(TaskDate::new(date_type, value))
+    Filter::Emit(TaskDate::new(kind, value))
 }
 
 /// Parses a Markdown tag following the leading `#` character.

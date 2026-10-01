@@ -150,8 +150,8 @@ impl QueryBuilder {
 
     /// Appends a composite sort order transform to the query transform plan.
     #[inline]
-    pub(crate) fn order(mut self, order: SortOrder) -> Self {
-        self.plan.push(QueryTransform::order(order));
+    pub(crate) fn order(mut self, by: SortOrder) -> Self {
+        self.plan.push(QueryTransform::order(by));
         self
     }
 

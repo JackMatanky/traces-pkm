@@ -299,11 +299,9 @@ impl SubTaskCompletion {
         &mut self,
         is_task: bool,
         is_complete: bool,
-        child_subtask_completion: Self,
+        child: Self,
     ) {
-        if (is_task && !is_complete)
-            || child_subtask_completion == Self::HasIncomplete
-        {
+        if (is_task && !is_complete) || child == Self::HasIncomplete {
             *self = Self::HasIncomplete;
         }
     }

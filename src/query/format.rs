@@ -65,9 +65,9 @@ impl QueryDisplayFormat {
     }
 
     #[must_use]
-    pub(super) const fn task_list(path_style: TaskPathStyle) -> Self {
+    pub(super) const fn task_list(style: TaskPathStyle) -> Self {
         Self::TaskList {
-            path_style,
+            path_style: style,
         }
     }
 

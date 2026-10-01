@@ -156,7 +156,7 @@ mod tests {
                 from: None,
                 filter: vec![],
                 sort: SortArgs {
-                    sort: vec!["rating".to_owned()],
+                    keys: vec!["rating".to_owned()],
                     asc: true,
                     desc: false,
                 },
@@ -184,7 +184,7 @@ mod tests {
                 from: None,
                 filter: vec![],
                 sort: SortArgs {
-                    sort: vec!["rating".to_owned()],
+                    keys: vec!["rating".to_owned()],
                     asc: false,
                     desc: false,
                 },
@@ -209,7 +209,7 @@ mod tests {
                 from: None,
                 filter: vec![],
                 sort: SortArgs {
-                    sort: vec!["file..bad".to_owned()],
+                    keys: vec!["file..bad".to_owned()],
                     asc: false,
                     desc: false,
                 },
@@ -443,7 +443,7 @@ mod tests {
 
             assert_eq!(table.from.as_deref(), Some("#tag"));
             assert_eq!(table.filter, vec!["rating > 5".to_owned()]);
-            assert_eq!(table.sort.sort, vec!["rating".to_owned()]);
+            assert_eq!(table.sort.keys, vec!["rating".to_owned()]);
             assert!(table.sort.desc);
             assert!(!table.sort.asc);
             assert_eq!(table.columns, ["file.path", "rating"]);
@@ -485,7 +485,7 @@ mod tests {
 
             assert_eq!(table.from, None);
             assert_eq!(table.filter, Vec::<String>::new());
-            assert_eq!(table.sort.sort, Vec::<String>::new());
+            assert_eq!(table.sort.keys, Vec::<String>::new());
             assert!(!table.sort.asc);
             assert!(!table.sort.desc);
         }
