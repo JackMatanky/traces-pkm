@@ -27,11 +27,11 @@ use crate::{
     path::{PathError, RelativePath, SafeRelativePath},
 };
 
-/// Default `[schemas] class_field` when unconfigured.
-const DEFAULT_CLASS_FIELD: &str = "class";
-
 /// Default `[schemas] directory` when unconfigured.
 const DEFAULT_SCHEMAS_DIR: &str = ".traces/schemas/";
+
+/// Default `[schemas] class_field` when unconfigured.
+const DEFAULT_CLASS_FIELD: &str = "class";
 
 /// Default `[frontmatter] title` key when unconfigured.
 const DEFAULT_TITLE_FIELD: &str = "title";
