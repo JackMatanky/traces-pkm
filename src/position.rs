@@ -40,8 +40,7 @@ impl LineIndex {
         let mut line_starts = Vec::with_capacity((source.len() / 32).max(16));
         line_starts.push(BytePos::new(0));
         for (pos, _) in source.match_indices('\n') {
-            line_starts
-                .push(BytePos::saturating_from(pos.saturating_add(1)));
+            line_starts.push(BytePos::saturating_from(pos.saturating_add(1)));
         }
         Self(line_starts.into_boxed_slice())
     }
@@ -581,10 +580,7 @@ mod tests {
         ) {
             let index = LineIndex::new(source);
 
-            assert_eq!(
-                index.line_at(BytePos::new(pos)),
-                line(expected_line)
-            );
+            assert_eq!(index.line_at(BytePos::new(pos)), line(expected_line));
         }
 
         #[test]

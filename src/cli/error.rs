@@ -776,10 +776,10 @@ fn render_error_location(error: &minijinja::Error) -> Option<String> {
 
 /// Returns the 1-based column of `byte_pos` within its line of `source`.
 ///
-/// `None` if `byte_pos` falls outside `source` or on a non-character
-/// boundary (defensive: minijinja's own span positions always land on a boundary
-/// of the same source it reports, but this stays panic-free either way instead
-/// of asserting that invariant).
+/// `None` if `byte_pos` falls outside `source` or on a non-character boundary
+/// (defensive: minijinja's own span positions always land on a boundary of the
+/// same source it reports, but this stays panic-free either way instead of
+/// asserting that invariant).
 fn line_column(source: &str, byte_pos: usize) -> Option<usize> {
     let up_to_pos = source.get(..byte_pos)?;
     let line_start =
