@@ -11,12 +11,10 @@ use crate::{
     TaskPriority, note::NoteFieldValue,
 };
 
-/// Extracts inline fields from `text` in encounter order.
+/// Extracts inline fields from `text` in document order.
 ///
-/// Date shorthand tokens contribute a field keyed by the date type's name when
-/// `shorthands` includes them. Tags are extracted separately by
-/// [`super::tag::scan_tags`], whose token set does not swallow field values.
-#[inline]
+/// Converts task emoji shorthands into date fields when `mode` is
+/// [`TaskFieldEmojis::Include`]. Tags are ignored during field scanning.
 #[must_use]
 pub(super) fn scan_fields(
     text: &str,
@@ -45,9 +43,7 @@ pub(super) fn tokenize_item_text(
 ) -> Vec<Spanned<ItemToken>> {
     let mut lexer = ItemToken::lexer_with_extras(text, mode);
     let mut tokens = Vec::new();
-    // The `skip(r"[\s\S]", priority = 0)` derive matches every byte, so the
-    // lexer never yields `Err`; a `Some(Err(_))` here would mean the skip rule
-    // was removed and would silently truncate the stream.
+    // The skip rule matches all bytes; logos yields only valid tokens.
     while let Some(Ok(token)) = lexer.next() {
         let span = lexer.span();
         tokens.push(Spanned::new(token, span));
@@ -110,7 +106,6 @@ pub(super) enum FieldForm {
 #[derive(Debug, PartialEq, Logos)]
 #[logos(extras = TaskFieldEmojis, skip(r"[\s\S]", priority = 0))]
 pub(super) enum ItemToken {
-    // 1. Priority emojis
     #[token("\u{1F53A}\u{FE0F}", |_| TaskPriority::Highest)]
     #[token("\u{1F53A}", |_| TaskPriority::Highest)]
     #[token("\u{23EB}\u{FE0F}", |_| TaskPriority::High)]
@@ -121,14 +116,13 @@ pub(super) enum ItemToken {
     #[token("\u{1F53D}", |_| TaskPriority::Low)]
     #[token("\u{23EC}\u{FE0F}", |_| TaskPriority::Lowest)]
     #[token("\u{23EC}", |_| TaskPriority::Lowest)]
+    /// Task priority indicator emoji.
     Priority(TaskPriority),
 
-    // 2. Tags
     #[token("#", tag_callback)]
+    /// Markdown hashtag (`#tag`).
     Tag(Tag),
 
-    // 3. Date emojis (when shorthands enabled); each emoji accepts an
-    // optional VS16 so the variation selector never leaks into the value scan
     #[token("\u{1F4C5}\u{FE0F}", |lex| task_date_callback(lex, TaskDateType::Due))]
     #[token("\u{1F4C5}", |lex| task_date_callback(lex, TaskDateType::Due))]
     #[token("\u{1F5D3}\u{FE0F}", |lex| task_date_callback(lex, TaskDateType::Due))]
@@ -143,24 +137,21 @@ pub(super) enum ItemToken {
     #[token("\u{2705}", |lex| task_date_callback(lex, TaskDateType::Done))]
     #[token("\u{274C}\u{FE0F}", |lex| task_date_callback(lex, TaskDateType::Cancelled))]
     #[token("\u{274C}", |lex| task_date_callback(lex, TaskDateType::Cancelled))]
+    /// Task lifecycle date shorthand emoji with associated ISO date.
     Date(TaskDate),
 
-    // 4. Wrapped & bare fields
     #[regex(r"[ \t]*[A-Za-z][A-Za-z0-9_-]*::", body_field_callback)]
     #[token("[", |lex| wrapped_field_callback(lex, DelimiterType::Bracket))]
     #[token("(", |lex| wrapped_field_callback(lex, DelimiterType::Parenthesis))]
+    /// Inline key-value field (`Key:: Value`, `[Key:: Value]`, `(Key::
+    /// Value)`).
     Field((FieldKey, NoteFieldValue, FieldForm)),
 }
-
-/// Parses a bare inline field (`Key:: Value`) from the `Key::` prefix already
-/// matched by [`ItemToken`]'s body-field pattern, consuming the rest of the
-/// line as the raw value, equivalent to the regex:
-/// `(?m)^[ \t]*key::[\t]*(.*)$`.
+/// Parses a bare inline field (`Key:: Value`) starting at line begin.
 ///
-/// Logos has no look-behind support, so a line-start check replaces that
-/// regex's `^` anchor. The match is rejected, skipping only the matched `Key::`
-/// span rather than the rest of the line, unless it starts right after a
-/// newline or at the start of the text.
+/// Rejects the match if it does not begin at the start of the source or
+/// immediately following a newline. Consumes the rest of the line as the raw
+/// value.
 fn body_field_callback(
     lex: &mut Lexer<'_, ItemToken>,
 ) -> Filter<(FieldKey, NoteFieldValue, FieldForm)> {
@@ -169,7 +160,7 @@ fn body_field_callback(
         return Filter::Skip;
     }
     let slice = lex.slice();
-    let key_end = slice.len().saturating_sub(2); // Strip the trailing "::".
+    let key_end = slice.len().saturating_sub(2);
     let key = slice.get(..key_end).unwrap_or_default().trim();
     let remainder = lex.remainder();
     let value_end = remainder.find('\n').unwrap_or(remainder.len());
@@ -182,14 +173,12 @@ fn body_field_callback(
     Filter::Emit(field)
 }
 
-/// Parses a wrapped inline field (`[Key:: Value]` or `(Key:: Value)`) starting
-/// just after its already-consumed opening delimiter.
+/// Parses a wrapped inline field (`[Key:: Value]` or `(Key:: Value)`).
 ///
-/// Rejects, skipping only the opening delimiter, when:
-/// - there is no `::` separator before the text ends,
-/// - the key is empty, contains a bracket character, or has an empty canonical
-///   form (punctuation-only text), or
-/// - no matching closing delimiter is found.
+/// Rejects the match and skips the opening delimiter when:
+/// - No `::` separator is found before the end of the text
+/// - The extracted key is empty or contains bracket characters
+/// - No matching closing delimiter is found
 fn wrapped_field_callback(
     lex: &mut Lexer<'_, ItemToken>,
     kind: DelimiterType,
@@ -222,11 +211,9 @@ fn wrapped_field_callback(
 
 /// Parses a task emoji shorthand into a [`TaskDate`].
 ///
-/// Starts after the already-consumed emoji token and emits a [`TaskDate`] of
-/// kind `date_type` when the following text is optional inline whitespace plus
-/// exactly [`ISO_DATE_LEN`] bytes forming a valid ISO date.
-///
-/// Always skips when `lex.extras` is [`TaskFieldEmojis::Exclude`].
+/// Emits a [`TaskDate`] when followed by optional inline whitespace and a
+/// 10-byte ISO date (`YYYY-MM-DD`). Skips when `lex.extras` is
+/// [`TaskFieldEmojis::Exclude`].
 fn task_date_callback(
     lex: &mut Lexer<'_, ItemToken>,
     date_type: TaskDateType,
@@ -260,11 +247,11 @@ fn task_date_callback(
     Filter::Emit(TaskDate::new(date_type, value))
 }
 
-/// Parses a Markdown tag after its already-consumed leading `#`.
+/// Parses a Markdown tag following the leading `#` character.
 ///
-/// Shared by [`ItemToken`]'s tag token and the dedicated tag scanner in
-/// [`super::tag`]. Rejects a mid-word `#`, such as `foo#bar`, and a `#` not
-/// followed by an alphabetic character, such as `#1`.
+/// Rejects the tag when:
+/// - Preceded by an alphanumeric character or underscore (`_`)
+/// - The tag does not begin with an alphabetic character
 pub(super) fn tag_callback<'source, T: Logos<'source, Source = str>>(
     lex: &mut Lexer<'source, T>,
 ) -> Filter<Tag> {

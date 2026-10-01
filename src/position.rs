@@ -1,21 +1,24 @@
 //! Source-position primitives and byte-to-line conversion shared across
 //! text-parsing domains.
 //!
-//! Main types:
-//! - [`ByteTracker`] - Converts byte offsets into [`SourceLine`]s over
-//!   precomputed line starts.
-//! - [`ByteOffset`] - UTF-8 byte offset into source text.
-//! - [`ByteOffsetError`] - Error for byte offsets that exceed the `u32` range.
-//! - [`SourceLine`] - 1-indexed source line number.
-//! - [`SourceLineError`] - Error for invalid line-number conversions.
-//! - [`Spanned`] - A value paired with its byte range in source text.
+//! # Key Types
 //!
-//! [`SourceLine`] and [`ByteOffset`] are distinct newtypes so a byte offset can
-//! never be mistaken for a line number at compile time. [`ByteTracker`] is the
-//! shared conversion infrastructure: a domain-specific parser (Markdown notes,
-//! config files, templates) precomputes line starts once per document and
-//! resolves any offset with an O(log n) lookup; only the choice of when to
-//! build a tracker stays local to each parser.
+//! - [`ByteTracker`]: converts byte offsets into [`SourceLine`]s over
+//!   precomputed line starts.
+//! - [`ByteOffset`]: UTF-8 byte offset into source text.
+//! - [`ByteOffsetError`]: error for byte offsets that exceed the `u32` range.
+//! - [`SourceLine`]: 1-indexed source line number.
+//! - [`SourceLineError`]: error for invalid line-number conversions.
+//! - [`Spanned`]: value paired with its byte range in source text.
+//!
+//! # Examples
+//!
+//! ```
+//! use traces_pkm::SourceLine;
+//!
+//! let line = SourceLine::new(42).expect("valid line number");
+//! assert_eq!(line.get(), 42);
+//! ```
 
 use std::{cmp::Ordering, fmt, num::NonZeroU32, ops::Range};
 
@@ -135,7 +138,7 @@ impl From<ByteOffset> for usize {
 ///
 /// # Errors
 ///
-/// Returns [`ByteOffsetError`] when `offset` exceeds `u32::MAX`.
+/// - [`ByteOffsetError`] if `offset` exceeds `u32::MAX`.
 impl TryFrom<usize> for ByteOffset {
     type Error = ByteOffsetError;
 
@@ -207,6 +210,11 @@ impl From<SourceLine> for u32 {
     }
 }
 
+/// Attempts to convert a `u32` into a 1-indexed [`SourceLine`].
+///
+/// # Errors
+///
+/// - [`SourceLineError`] if `line` is zero.
 impl TryFrom<u32> for SourceLine {
     type Error = SourceLineError;
 

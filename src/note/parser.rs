@@ -1,50 +1,48 @@
 //! Markdown event parser for [`Note`] records.
 //!
-//! [`parse_markdown`] walks a `pulldown-cmark` event stream once, building a
-//! [`Note`] from frontmatter, lists, outlinks, inline fields, and tags.
+//! [`parse_markdown`] walks a `pulldown-cmark` event stream in a single pass,
+//! assembling a [`Note`] from frontmatter, lists, outlinks, inline fields, and
+//! tags.
 //!
 //! # Architecture
 //!
 //! The parser is organized into seven specialized submodules:
 //!
-//! - [`inline`]: [`inline::parse_inline_value`] parses raw inline field value
-//!   text into strongly typed [`NoteFieldValue`] records (comma lists, quoted
-//!   strings, durations, wikilinks, booleans, dates, numbers, tags).
-//! - [`input`]: [`MarkdownParserInput`] encapsulates borrowed path, source
-//!   text, and configuration references for parsing.
-//! - [`lexer`]: [`lexer::scan_fields`] extracts `Key:: Value`, `[Key:: Value]`,
-//!   and `(Key:: Value)` inline fields and task emoji shorthands from
-//!   plain-text scan buffers using [`logos`]; all other text is skipped by a
-//!   derive-level `skip` directive.
-//! - [`list`]: [`ListTracker`] manages explicit list and list-item stacks so
-//!   nested Markdown never recurses through the call stack, driving the
-//!   item-leading marker state machine, tag filter classification, and flushing
-//!   item metadata.
-//! - [`marker`]: custom task marker scanner that recognizes `[<symbol>]`
-//!   markers at item-leading positions with pulldown-cmark-compatible
-//!   whitespace rules.
-//! - [`tag`]: [`tag::scan_tags`] extracts Markdown tags from text buffers,
-//!   including tags inside inline field values.
-//! - [`task`]: [`task::TaskScan`] pairs an item's raw text with the tokens
-//!   tokenized from it and extracts task shorthand dates, priorities, and
-//!   normalized display text from that single scan.
-//!
-//! Parser state lives in [`ParserContext`], which dispatches events to
-//! dedicated handlers and assembles the final [`Note`]. List-item line numbers
-//! come from the shared [`crate::ByteTracker`], which precomputes line-start
-//! byte offsets for $O(\log n)$ byte-to-line translation without scanning the
-//! source string multiple times.
+//! - [`inline`]: parses inline field value strings into typed
+//!   [`NoteFieldValue`] records.
+//! - [`input`]: provides borrowed input and configuration containers via
+//!   [`MarkdownParserInput`].
+//! - [`lexer`]: tokenizes inline fields, task emoji shorthands, priority
+//!   symbols, and tags.
+//! - [`list`]: tracks list hierarchy and manages item classification via
+//!   [`ListTracker`].
+//! - [`marker`]: scans and classifies item-leading task markers.
+//! - [`tag`]: extracts hashtags across Markdown text buffers.
+//! - [`task`]: extracts task dates, priorities, and normalized text from item
+//!   tokens.
 //!
 //! # Metadata Extraction
 //!
-//! Inline fields and tags are lexed from parser-built plain-text buffers: one
-//! per top-level paragraph or heading, and one per list item. The buffers
-//! exclude fenced code blocks, indented code blocks, and inline code.
+//! Inline fields and tags are lexed from text buffers for paragraphs, headings,
+//! and list items. Code blocks and inline code spans are excluded from metadata
+//! scanning. Standard Markdown links preserve bracketed text in scan buffers so
+//! visible-key inline fields can be detected within link text.
 //!
-//! Standard Markdown link text is copied into the surrounding scan buffer
-//! wrapped in literal `[` and `]` delimiters, so `[Key:: Value](url)` becomes a
-//! visible-key inline field while [`ListItem::text`](super::ListItem::text)
-//! retains the plain display text.
+//! # Examples
+//!
+//! ```rust
+//! # #[cfg(feature = "test-utils")]
+//! # {
+//! use std::path::Path;
+//!
+//! use traces_pkm::{MarkdownParserInput, parse_markdown};
+//!
+//! let path = Path::new("daily.md");
+//! let input = MarkdownParserInput::for_test(path, "# Notes\n- [ ] Task item");
+//! let note = parse_markdown(&input);
+//! assert_eq!(note.path(), path);
+//! # }
+//! ```
 use std::{mem, path::PathBuf};
 
 use indexmap::IndexMap;
@@ -76,16 +74,30 @@ const MARKDOWN_OPTIONS: Options =
 
 /// Parses Markdown source into a [`Note`].
 ///
-/// Recognizes custom task markers, YAML frontmatter blocks, and Obsidian
-/// wikilinks.
+/// Traverses the source text in a single pass, extracting:
+/// - YAML frontmatter metadata blocks
+/// - Ordered and unordered list items, including task statuses
+/// - Outlinks (wikilinks and standard Markdown links)
+/// - Dataview-style inline fields (`Key:: Value`, `[Key:: Value]`, `(Key::
+///   Value)`)
+/// - Hashtags (`#tag`, `#nested/tag`)
 ///
-/// The parser walks the `pulldown-cmark` event stream once, collecting
-/// frontmatter, lists, outlinks, inline fields, and tags in document order.
-/// Inline fields and tags are excluded from fenced code blocks, indented code
-/// blocks, and inline code spans.
+/// # Examples
 ///
-/// Inputs larger than 4 `GiB` saturate event byte offsets at `u32::MAX`,
-/// clamping reported line numbers past that point rather than failing.
+///
+/// ```rust
+/// # #[cfg(feature = "test-utils")]
+/// # {
+/// use std::path::Path;
+///
+/// use traces_pkm::{MarkdownParserInput, parse_markdown};
+///
+/// let path = Path::new("example.md");
+/// let input = MarkdownParserInput::for_test(path, "# Title\n- [x] Done");
+/// let note = parse_markdown(&input);
+/// assert_eq!(note.path(), path);
+/// # }
+/// ```
 #[inline]
 #[must_use]
 pub fn parse_markdown(input: &MarkdownParserInput<'_>) -> Note {
@@ -103,17 +115,11 @@ pub fn parse_markdown(input: &MarkdownParserInput<'_>) -> Note {
     ctx.into_note(input.path())
 }
 
-/// Extracts and validates tags from the frontmatter value at `key`.
+/// Extracts and validates tags from frontmatter values under `key`.
 ///
-/// Reuses [`Frontmatter::get_values`]'s scalar/list flattening: a list value
-/// yields one candidate per element, a scalar string yields one candidate.
-/// Every candidate, whether it came from a list element or the scalar itself,
-/// is then split on commas. Each whitespace-trimmed segment becomes its own
-/// candidate, so a single list element containing a literal comma (`tags:\n -
-/// "a, b"`) yields two candidates the same way a comma-separated scalar (`tags:
-/// a, b`) does. Each candidate is parsed leniently via
-/// [`Tag::parse_lenient_into`] (trims whitespace, treats a missing leading `#`
-/// as implicit); candidates that fail validation are silently dropped.
+/// Splits comma-separated strings and sequence entries into individual tag
+/// candidates, trimming whitespace and ignoring any candidate that fails tag
+/// syntax validation.
 fn frontmatter_tags<'a>(
     frontmatter: &'a Frontmatter,
     key: &'a str,
@@ -142,6 +148,11 @@ enum BlockContext {
 
 /// Flushed inline fields collected from an item buffer.
 type FlushedFields = Vec<(FieldKey, NoteFieldValue)>;
+
+/// Intermediate metadata collected from a list item's scan buffer.
+///
+/// Holds the inline fields and tags extracted from an item before they are
+/// folded into the document-level collections.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct FlushedMetadata {
     fields: FlushedFields,
@@ -149,7 +160,7 @@ pub(super) struct FlushedMetadata {
 }
 
 impl FlushedMetadata {
-    /// Creates a new flushed metadata record from extracted fields and tags.
+    /// Creates a flushed metadata record with the given fields and tags.
     #[inline]
     #[must_use]
     pub(super) const fn new(
@@ -233,13 +244,9 @@ impl<'a> ParserContext<'a> {
         tag_filters: &'a [Tag],
         frontmatter_tags_key: &'a str,
     ) -> Self {
-        // Sizing heuristic: body text occupies most of a typical note, while
-        // metadata, outlinks, inline fields, and tags are sparser but rarely
-        // empty (typical Obsidian notes carry 5 to 10 wikilinks, 3 to 10 tags,
-        // and 2 to 8 inline fields). Sizing to 8 keeps those vectors inside a
-        // single allocator size class (same cost as capacity 4) while
-        // eliminating the growth reallocation entirely for the majority of
-        // notes.
+        // Pre-allocate body buffer proportionally to source length, with small
+        // initial capacities for sparser metadata collections to reduce
+        // reallocations.
         let body_capacity = source.len().saturating_mul(3) / 4;
         Self {
             frontmatter: None,
@@ -376,7 +383,7 @@ impl<'a> ParserContext<'a> {
         }
     }
 
-    /// Starts tracking a Markdown or wikilink outlink.
+    /// Starts tracking an outgoing link.
     ///
     /// Standard Markdown links push `[` into the scan buffer (and `]` in
     /// [`Self::end_link`]) so visible-key inline fields can be detected in link

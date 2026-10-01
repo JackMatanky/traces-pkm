@@ -1,8 +1,7 @@
 //! Tag token scanning for Markdown text buffers.
 //!
-//! Tags are lexed separately from [`super::lexer::ItemToken`] because the field
-//! tokens consume the rest of a line, hiding tags inside field values; this
-//! scanner sees them. Both token sets share [`super::lexer::tag_callback`].
+//! Extracts hashtags from text buffers independently of inline field scanning,
+//! ensuring tags embedded within field values are captured.
 
 use logos::Logos;
 
@@ -10,20 +9,15 @@ use super::lexer::tag_callback;
 use crate::Tag;
 
 /// Token stream for Markdown tags in free-form text.
-///
-/// [`Self::Tag`] carries an emitted [`Tag`]; ordinary text is skipped by the
-/// tokenizer's `skip` directive.
-///
-/// [`tag_callback`] returns logos' `Filter::Skip` to reject non-tag `#`
-/// characters without swallowing the rest of the text.
 #[derive(Clone, Debug, PartialEq, Logos)]
 #[logos(skip(r"[\s\S]", priority = 0))]
 enum TagToken {
+    /// Valid hashtag token.
     #[token("#", tag_callback)]
     Tag(Tag),
 }
 
-/// Extracts Markdown tags from `text` in encounter order.
+/// Extracts Markdown tags from `text` in document order.
 #[inline]
 #[must_use]
 pub(super) fn scan_tags(text: &str) -> Vec<Tag> {

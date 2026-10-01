@@ -38,7 +38,8 @@
 //!
 //! - [`Note`], [`ListItem`], [`TaskListItem`]: Parsed note and task records.
 //! - [`Tag`], [`TagError`]: Validated Markdown tags.
-//! - [`SourceLine`]: Strongly-typed 1-indexed source line numbers.
+//! - [`SourceLine`], [`SourceLineError`]: Strongly-typed 1-indexed source line
+//!   numbers.
 //! - [`TaskStatus`], [`TaskStatusMap`], [`TaskStatusType`]: Task status symbols
 //!   and lookup tables.
 //! - [`FileMeta`]: Filesystem metadata for indexed files.
@@ -128,8 +129,8 @@ pub use note::{
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use path::codec as path_codec;
-pub use position::SourceLine;
 pub(crate) use position::{ByteOffset, ByteTracker, Spanned};
+pub use position::{SourceLine, SourceLineError};
 #[cfg(any(test, feature = "test-utils"))]
 pub use query::{
     QueryBuilder, QueryBuilderError, QueryResult, QueryRow, QueryService,

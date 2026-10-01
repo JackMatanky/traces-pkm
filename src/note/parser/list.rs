@@ -74,15 +74,13 @@ impl ListTracker {
         }
     }
 
-    /// Lexes and clears the active list item's scan buffer.
+    /// Scans and flushes the active list item's scan buffer.
     ///
-    /// Returns the inline fields and tags yielded by that buffer, or `None` if
-    /// no item is active or the buffer is empty. Called before nested lists
-    /// start and when an item closes, both to preserve document-order metadata.
+    /// Resolves any pending marker, scans accumulated text for inline fields
+    /// and tags, and populates the item's local metadata collections.
     ///
-    /// The scan buffer excludes code text and flushes incrementally; the full
-    /// text buffer is tokenized separately, once, in [`Self::end_item`], which
-    /// also extracts dates, priority, and clean text from those tokens.
+    /// Returns the flushed metadata for inclusion in document-level
+    /// collections, or `None` if no item is active or the scan buffer is empty.
     fn flush_active_item_scan_buffer(&mut self) -> Option<FlushedMetadata> {
         // The marker state must be decided before `has_marker` is read: a
         // pending `- [x]` item flushes when a nested list starts, with no
@@ -100,12 +98,8 @@ impl ListTracker {
         };
         let raw_fields = super::lexer::scan_fields(&text, mode);
         let tags = super::tag::scan_tags(&text);
-        // Two independently owned copies, not a borrow-checker workaround:
-        // `item.fields` lets a task/list item resolve its own metadata
-        // (`ListItem::fields`), while the returned copy feeds the caller's
-        // document-order stream every page-level query already relies on. Both
-        // outlive this function inside different serialized structs, so neither
-        // can borrow from the other.
+        // Populate item-scoped metadata while returning a copy for
+        // document-order collection.
         for (key, value) in &raw_fields {
             item.fields.entry(key.clone()).or_default().push(value.clone());
         }
@@ -138,9 +132,9 @@ impl ListTracker {
 
     /// Starts tracking a new list item at `line`.
     ///
-    /// `depth` is the number of currently open lists (0-indexed); `parent` is
-    /// the innermost active item's line, if this item is nested inside another
-    /// item's child list.
+    /// Sets initial item hierarchy:
+    /// - `depth`: 0-indexed nesting level derived from the list stack
+    /// - `parent`: source line of the enclosing active list item, if any
     pub(super) fn start_item(&mut self, line: SourceLine) {
         let depth = u8::try_from(self.list_stack.len().saturating_sub(1))
             .unwrap_or(u8::MAX);
@@ -295,8 +289,11 @@ impl SubTaskCompletion {
         Self::AllComplete
     }
 
-    /// Observes a closed child item, transitioning to [`Self::HasIncomplete`]
-    /// if the child is an unresolved task or contains incomplete subtasks.
+    /// Updates completion state after observing a child item.
+    ///
+    /// Transitions to [`Self::HasIncomplete`] when:
+    /// - The child item is an incomplete task
+    /// - The child item's subtask completion is [`Self::HasIncomplete`]
     #[inline]
     pub(super) fn observe_child(
         &mut self,
@@ -318,13 +315,11 @@ impl SubTaskCompletion {
     }
 }
 
-/// Dual write target for an active item's text.
+/// Dual buffer pair maintaining display text and metadata scan text for an
+/// item.
 ///
-/// `text` receives everything and becomes display text; `scan` mirrors it but
-/// excludes code-span and code-block text so inline field/tag scanning never
-/// sees code. Asymmetric writes (scan-only separators, text-only code) stay
-/// direct field access inside this module; [`super::marker`] mutates the pair
-/// only through these methods.
+/// The display buffer receives all item text, while the scan buffer excludes
+/// code spans and blocks to prevent false positive field and tag matches.
 pub(super) struct ItemBuffers {
     text: String,
     scan: String,
@@ -383,11 +378,8 @@ impl ItemBuffers {
 
     /// Separates a block-level child from prior content in both buffers.
     ///
-    /// Writes a newline unless the buffer is empty or already newline-
-    /// terminated, so nested block starts (a blockquote's inner paragraph, for
-    /// example) never double-separate. While [`MarkerAccumulator`] is
-    /// buffering, both buffers are empty, so a separator can never precede
-    /// withheld marker bytes.
+    /// Inserts a newline delimiter unless the buffer is empty or already
+    /// newline-terminated.
     fn separate_block(&mut self) {
         for buffer in [&mut self.text, &mut self.scan] {
             if !buffer.is_empty() && !buffer.ends_with('\n') {

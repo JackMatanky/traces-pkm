@@ -43,13 +43,10 @@ pub(super) fn parse_inline_value(raw: &str) -> NoteFieldValue {
     InlineValueParser::new(trimmed).parse()
 }
 
-/// Recursive-descent parser for inline-field value text.
+/// Recursive-descent parser for inline field value text.
 ///
-/// Constructed with already-trimmed, nonempty text. [`Self::parse`] is the
-/// entry point: it parses the first atom once, returning it when it spans the
-/// whole value. When the atom is followed by a comma, it continues via
-/// [`Self::parse_comma_list_from`]. It falls back to a raw
-/// [`NoteFieldValue::String`] when neither matches.
+/// Evaluates trimmed text against typed atom grammars, returning single scalar
+/// values, comma-separated lists, or falling back to raw string values.
 struct InlineValueParser<'a> {
     source: SourceText<'a>,
 }
@@ -63,13 +60,13 @@ impl<'a> InlineValueParser<'a> {
         }
     }
 
-    /// Parses the whole (already-trimmed, nonempty) value text into a
-    /// [`NoteFieldValue`].
+    /// Parses the enclosed value text into a [`NoteFieldValue`].
     ///
-    /// Parses the first atom once, returning it if it spans the whole text. If
-    /// followed by a comma, parses remaining atoms via
-    /// [`Self::parse_comma_list_from`]. Falls back to
-    /// [`NoteFieldValue::String`] holding the text when neither matches.
+    /// Returns:
+    /// - A single scalar atom when the atom spans the full value
+    /// - A [`NoteFieldValue::List`] of atoms when followed by a comma-separated
+    ///   atom sequence
+    /// - A [`NoteFieldValue::String`] containing the raw text as a fallback
     fn parse(&self) -> NoteFieldValue {
         let Some(first) = self.parse_atom_at(0) else {
             return NoteFieldValue::String(self.source.as_ref().to_owned());
@@ -87,10 +84,10 @@ impl<'a> InlineValueParser<'a> {
         NoteFieldValue::String(self.source.as_ref().to_owned())
     }
 
-    /// Parses `,`-separated atoms starting after the first atom at `pos`.
+    /// Parses comma-separated atoms starting at the comma delimiter at `pos`.
     ///
-    /// `pos` must point to the `,` following the first atom. Returns `Some` if
-    /// all subsequent items parse as valid atoms.
+    /// Returns `Some` with all parsed values if every subsequent item parses as
+    /// a valid atom, or `None` if any item fails to parse or is malformed.
     fn parse_comma_list_from(
         &self,
         first: NoteFieldValue,
@@ -116,12 +113,20 @@ impl<'a> InlineValueParser<'a> {
         }
     }
 
-    /// Parses a single atom at `pos` (after skipping leading whitespace),
-    /// trying each value kind in priority order: quoted string, wikilink,
-    /// duration, bool, null, ISO date, number, then tag.
+    /// Parses a single typed atom at `pos`, skipping leading whitespace.
     ///
-    /// Returns the parsed value paired with the exclusive byte offset following
-    /// it, or `None` if no kind matches at `pos`.
+    /// Evaluates candidate atom grammars in priority order:
+    /// 1. Quoted string (`"text"`)
+    /// 2. Wikilink or embed (`[[target]]`, `![[target]]`)
+    /// 3. Duration (`1h 30m`)
+    /// 4. Boolean (`true` or `false`)
+    /// 5. Null keyword (`null`)
+    /// 6. ISO date (`YYYY-MM-DD`)
+    /// 7. Number (finite float)
+    /// 8. Tag (`#tag`)
+    ///
+    /// Returns the parsed atom and its ending byte offset, or `None` if no
+    /// grammar matches.
     fn parse_atom_at(&self, pos: usize) -> Option<ParsedAtom> {
         let pos = self.skip_whitespace(pos);
         self.parse_quoted_string_at(pos)
@@ -256,11 +261,12 @@ impl<'a> InlineValueParser<'a> {
         Some(ParsedAtom::new(NoteFieldValue::String(raw.to_owned()), end))
     }
 
-    /// Returns `true` if `pos` is at an atom boundary: end of text, whitespace,
-    /// or comma.
+    /// Returns `true` if `pos` is at an atom boundary.
     ///
-    /// An atom must end at such a position to avoid greedily consuming into the
-    /// next atom or trailing text.
+    /// An atom boundary occurs at:
+    /// - The end of the source text
+    /// - A whitespace character
+    /// - A comma delimiter (`,`)
     fn is_atom_boundary(&self, pos: usize) -> bool {
         self.source.from(pos).is_some_and(|source| {
             source

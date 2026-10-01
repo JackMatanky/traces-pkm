@@ -1,13 +1,7 @@
-//! Custom item-leading task marker scanner.
+//! Task list marker scanner and accumulator.
 //!
-//! This module is the sole source of truth for task marker identity, from
-//! prefix classification ([`scan_marker_prefix`]) to the zero-drain
-//! [`MarkerAccumulator`]. It mirrors `pulldown-cmark`'s `scan_task_list_marker`
-//! first-pass gating: the marker is only valid at a list item's content start,
-//! followed by one ASCII whitespace character. Because that whitespace is
-//! frequently the item's line terminator (which never reaches the parser as a
-//! [`pulldown_cmark::Event::Text`] chunk), [`scan_marker_at_line_end`] treats
-//! end-of-input as the trailing whitespace.
+//! Identifies and parses `[<symbol>]` task markers at the start of list items,
+//! following `CommonMark` and Obsidian whitespace rules.
 use super::list::ItemBuffers;
 use crate::DelimiterType;
 
@@ -63,12 +57,10 @@ pub(super) enum MarkerPrefix<'a> {
     Complete(MarkerScan<'a>),
 }
 
-/// Classifies `text` as an item-leading marker prefix, tolerating truncation at
-/// every position.
+/// Classifies `text` as an item-leading marker prefix.
 ///
-/// Markdown may split a leading `[<char>] ` marker across several text chunks
-/// (observed: `"["`, `"x"`, `"]"`, `" Task text"`), so the parser feeds every
-/// leading chunk through this function until it decides.
+/// Evaluates whether `text` forms a complete marker (`[<symbol>] `), a partial
+/// prefix awaiting additional characters, or an invalid marker sequence.
 #[inline]
 #[must_use]
 pub(super) fn scan_marker_prefix(text: &str) -> MarkerPrefix<'_> {
@@ -99,12 +91,10 @@ pub(super) fn scan_marker_prefix(text: &str) -> MarkerPrefix<'_> {
     }
 }
 
-/// Parses `text` as exactly one complete `[<symbol>]` marker.
+/// Parses `text` as an exact `[<symbol>]` marker shape.
 ///
-/// The shared shape grammar for the line-end path: accepts only text that is
-/// precisely an opening bracket, one symbol character, and a closing bracket.
-/// Multibyte symbols are supported; the closing bracket itself is not a valid
-/// symbol.
+/// Accepts single-character and multibyte symbols. The closing bracket (`]`) is
+/// not a valid symbol character.
 fn split_marker_exact(text: &str) -> Option<char> {
     let inner = text.strip_prefix(OPEN_BRACKET)?.strip_suffix(CLOSE_BRACKET)?;
     let mut chars = inner.chars();
@@ -114,17 +104,14 @@ fn split_marker_exact(text: &str) -> Option<char> {
     }
 }
 
-/// Scans `text` for an item-leading marker, treating end-of-input as the
-/// trailing whitespace.
+/// Scans `text` for an item-leading marker, treating end-of-input as trailing
+/// whitespace.
 ///
-/// A list item's line ends without a whitespace [`Event::Text`] chunk when the
-/// newline is consumed structurally by a nested list, a soft break, or the
-/// item's end. Because of this, `- [x]` as an entire item still carries a
-/// marker, matching `pulldown-cmark`'s treatment of the line terminator as
-/// whitespace. Returns `None` when `text` is not a complete `[<char>]` marker
-/// shape.
+/// A list item line ending structurally (such as by a nested list or line
+/// break) satisfies the trailing whitespace requirement without an explicit
+/// whitespace event.
 ///
-/// [`Event::Text`]: pulldown_cmark::Event::Text
+/// Returns `Some` if `text` is a complete marker, or `None` otherwise.
 #[inline]
 #[must_use]
 pub(super) fn scan_marker_at_line_end(text: &str) -> Option<MarkerScan<'_>> {
@@ -142,9 +129,8 @@ pub(super) fn scan_marker_at_line_end(text: &str) -> Option<MarkerScan<'_>> {
 
 /// Returns `true` if `ch` counts as a task marker's trailing whitespace.
 ///
-/// Matches ASCII whitespace only, mirroring `pulldown-cmark`'s
-/// `is_ascii_whitespace`: Unicode spaces such as NBSP are ordinary text and do
-/// not complete a marker.
+/// Matches ASCII whitespace characters only (` `, `\t`, `\n`, `\r`, vertical
+/// tab, form feed).
 #[inline]
 #[must_use]
 const fn is_marker_whitespace(ch: char) -> bool {
@@ -172,9 +158,8 @@ pub(super) enum ItemMarker {
 
 /// Fixed-size stack accumulator for leading task marker recognition.
 ///
-/// Holds at most 8 bytes on the stack (`[` + 4-byte UTF-8 character + `]` +
-/// 1-byte whitespace). Marker characters are never written to the item text
-/// buffer.
+/// Buffers up to 8 leading bytes of an item until marker classification is
+/// resolved. Marker syntax is withheld from item display buffers.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum MarkerAccumulator {
     Buffering {
@@ -212,11 +197,12 @@ impl MarkerAccumulator {
         }
     }
 
-    /// Feeds incoming text into the accumulator.
+    /// Appends incoming text to the accumulator and forwards resolved text to
+    /// `buffers`.
     ///
-    /// Marker characters are withheld in `buf` and never written to the
-    /// buffers. Once decided as `Marked`, only subsequent text is appended. If
-    /// rejected, buffered bytes are flushed and `text` is appended.
+    /// Resolution behavior:
+    /// - When marked, subsequent text is appended to `buffers`.
+    /// - When rejected, withheld bytes and new text are flushed to `buffers`.
     pub(super) fn push_text(
         &mut self,
         text: &str,
@@ -334,11 +320,7 @@ impl MarkerAccumulator {
         *self = Self::Decided(ItemMarker::Plain);
     }
 
-    /// Rejects any pending marker, flushing buffered bytes to both buffers.
-    ///
-    /// While buffering, no code-block text can have been appended: any text not
-    /// starting with `[` decides the accumulator as plain immediately, and a
-    /// code fence never starts with `[`.
+    /// Rejects any pending marker, flushing buffered bytes to `buffers`.
     pub(super) fn reject(&mut self, buffers: &mut ItemBuffers) {
         self.flush_and_decide_plain("", buffers, false);
     }

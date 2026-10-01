@@ -26,9 +26,8 @@ pub struct MarkdownParserInput<'a> {
     path: &'a Path,
     /// Raw Markdown source text.
     src: &'a str,
-    /// Resolved task status and tag filter configuration settings.
+    /// Resolved task status and tag filter configuration.
     tasks: &'a TaskConfig,
-    /// Resolved frontmatter field mapping and schema settings.
     frontmatter: &'a FrontmatterConfig,
 }
 
