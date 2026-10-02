@@ -6,7 +6,7 @@
 //!
 //! # Architecture
 //!
-//! The parser is organized into seven specialized submodules:
+//! The parser is organized into six specialized submodules:
 //!
 //! - [`inline`]: parses inline field value strings into typed
 //!   [`NoteFieldValue`] records.
@@ -17,10 +17,8 @@
 //! - [`list`]: tracks list hierarchy and manages item classification via
 //!   [`ListTracker`].
 //! - [`marker`]: scans and classifies item-leading task markers.
-//! - [`tag`]: extracts hashtags across Markdown text buffers.
 //! - [`task`]: extracts task dates, priorities, and normalized text from item
 //!   tokens.
-//!
 //! # Metadata Extraction
 //!
 //! Inline fields and tags are lexed from text buffers for paragraphs, headings,
@@ -43,7 +41,7 @@
 //! assert_eq!(note.path(), path);
 //! # }
 //! ```
-use std::{mem, path::PathBuf};
+use std::mem;
 
 use indexmap::IndexMap;
 use pulldown_cmark::{
@@ -54,16 +52,13 @@ use pulldown_cmark::{
 use super::{
     Frontmatter, Link, LinkType, Note, NoteFieldValue, RawFrontmatter,
 };
-use crate::{
-    BytePos, ByteSpan, FieldKey, LineIndex, SpanStart, Tag, TaskStatusMap,
-};
+use crate::{BytePos, ByteSpan, FieldKey, LineIndex, SpanStart, Tag};
 
 mod inline;
 mod input;
 mod lexer;
 mod list;
 mod marker;
-mod tag;
 mod task;
 
 pub use input::MarkdownParserInput;
@@ -103,37 +98,13 @@ const MARKDOWN_OPTIONS: Options =
 #[inline]
 #[must_use]
 pub fn parse_markdown(input: &MarkdownParserInput<'_>) -> Note {
-    let mut ctx = ParserContext::new(
-        input.src(),
-        input.tasks().statuses(),
-        input.tasks().tag_filters(),
-        input.frontmatter().tags_name(),
-    );
+    let mut ctx = ParserContext::new(input);
     for (event, range) in
         Parser::new_ext(input.src(), MARKDOWN_OPTIONS).into_offset_iter()
     {
-        ctx.handle_event(event, ByteSpan::from(range));
+        handle_event(&mut ctx, event, ByteSpan::from(range));
     }
-    ctx.into_note(input.path())
-}
-
-/// Extracts and validates tags from frontmatter values under `key`.
-///
-/// Splits comma-separated strings and sequence entries into individual tag
-/// candidates, trimming whitespace and ignoring any candidate that fails tag
-/// syntax validation.
-fn frontmatter_tags<'a>(
-    frontmatter: &'a Frontmatter,
-    key: &'a str,
-) -> impl Iterator<Item = Tag> + 'a {
-    let mut buf = String::new();
-    frontmatter
-        .get_values(key)
-        .filter_map(NoteFieldValue::as_str)
-        .flat_map(|value| value.split(','))
-        .filter_map(move |candidate| {
-            Tag::parse_lenient_into(candidate, &mut buf).ok()
-        })
+    ctx.into_note()
 }
 
 /// Top-level syntactic block currently being traversed.
@@ -176,7 +147,6 @@ impl FlushedMetadata {
     }
 
     /// Returns a slice of the flushed inline fields.
-    #[cfg(test)]
     #[inline]
     #[must_use]
     pub(super) fn fields(&self) -> &[(FieldKey, NoteFieldValue)] {
@@ -184,7 +154,6 @@ impl FlushedMetadata {
     }
 
     /// Returns a slice of the flushed tags.
-    #[cfg(test)]
     #[inline]
     #[must_use]
     pub(super) fn tags(&self) -> &[Tag] {
@@ -207,8 +176,96 @@ impl FlushedMetadata {
     }
 }
 
+/// Returns `true` if `event` is an inline markup element that occupies the
+/// item's leading slot, preventing a task marker from being recognized.
+fn is_inline_marker_barrier(event: &Event<'_>) -> bool {
+    matches!(
+        event,
+        Event::Start(
+            CmarkTag::Emphasis
+                | CmarkTag::Strong
+                | CmarkTag::Strikethrough
+                | CmarkTag::Image { .. }
+        ) | Event::InlineHtml(_)
+            | Event::InlineMath(_)
+            | Event::DisplayMath(_)
+            | Event::Html(_)
+            | Event::FootnoteReference(_)
+    )
+}
+
+/// Dispatches one Markdown event to the matching handler.
+fn handle_event(ctx: &mut ParserContext<'_>, event: Event<'_>, span: ByteSpan) {
+    if is_inline_marker_barrier(&event) {
+        ctx.list_nesting.reject_marker();
+        return;
+    }
+    match event {
+        Event::Start(tag) => handle_start_tag(ctx, tag, span.start()),
+        Event::End(tag) => handle_end_tag(ctx, tag, span.end()),
+        Event::Code(text) => ctx.handle_code(&text),
+        Event::Text(text) => ctx.push_text(&text),
+        Event::SoftBreak | Event::HardBreak => ctx.push_break(),
+        _ => ctx.list_nesting.resolve_pending_marker(),
+    }
+}
+
+/// Dispatches a `Start` tag event to its block handler.
+///
+/// Any tag without a dedicated arm still ends the item's first line
+/// structurally, counting as the marker's trailing whitespace.
+fn handle_start_tag(
+    ctx: &mut ParserContext<'_>,
+    tag: CmarkTag<'_>,
+    start: BytePos,
+) {
+    match tag {
+        CmarkTag::MetadataBlock(_) => ctx.start_metadata_block(),
+        CmarkTag::Link {
+            link_type,
+            dest_url,
+            ..
+        } => {
+            ctx.list_nesting.reject_marker();
+            ctx.start_link(link_type, dest_url);
+        }
+        CmarkTag::CodeBlock(_) => ctx.start_code_block(),
+        CmarkTag::Paragraph
+        | CmarkTag::Heading {
+            ..
+        } => ctx.start_text_block(),
+        CmarkTag::List(start_number) => {
+            ctx.start_list(start_number.is_some());
+        }
+        CmarkTag::Item => ctx.start_item(start),
+        CmarkTag::BlockQuote(_) => {
+            ctx.list_nesting.resolve_pending_marker();
+            ctx.list_nesting.start_nested_block();
+        }
+        _ => ctx.list_nesting.resolve_pending_marker(),
+    }
+}
+
+/// Dispatches an `End` tag event to its block handler.
+///
+/// Any tag without a dedicated arm still ends the item's first line
+/// structurally, counting as the marker's trailing whitespace.
+fn handle_end_tag(ctx: &mut ParserContext<'_>, tag: TagEnd, end: BytePos) {
+    match tag {
+        TagEnd::MetadataBlock(_) => ctx.end_metadata_block(),
+        TagEnd::Link => ctx.end_link(),
+        TagEnd::CodeBlock => ctx.end_code_block(),
+        TagEnd::Paragraph | TagEnd::Heading(_) => ctx.end_text_block(),
+        TagEnd::List(_) => ctx.end_list(),
+        TagEnd::Item => ctx.end_item(end),
+        _ => ctx.list_nesting.resolve_pending_marker(),
+    }
+}
 /// State accumulated while traversing Markdown events for a single note.
 struct ParserContext<'a> {
+    /// Borrowed parse input providing the source text, path, and task and
+    /// frontmatter configuration.
+    input: &'a MarkdownParserInput<'a>,
     frontmatter: Option<Frontmatter>,
     block: BlockContext,
     metadata_buffer: String,
@@ -222,35 +279,19 @@ struct ParserContext<'a> {
     /// Precomputed line-start positions for the source being parsed, used to
     /// populate the position fields of [`ListItem`](super::ListItem).
     line_index: LineIndex,
-    /// Resolves scanned marker symbols to their [`TaskStatus`], used to
-    /// classify status-marked list items in [`list::ListTracker::end_item`].
-    ///
-    /// [`TaskStatus`]: crate::TaskStatus
-    /// [`list::ListTracker::end_item`]: self::list::ListTracker::end_item
-    task_statuses: &'a TaskStatusMap,
-    /// Tag filters that classify status-marked items as Tasks vs Checkboxes.
-    tag_filters: &'a [Tag],
-    /// Frontmatter key holding a note's tags, read via
-    /// [`Frontmatter::get_values`] and merged into [`Self::tags`] in
-    /// [`Self::into_note`].
-    frontmatter_tags_key: &'a str,
 }
 
 impl<'a> ParserContext<'a> {
-    /// Starts a new context for `source`, precomputing its line-start offsets.
+    /// Starts a new context for `input`, precomputing its line-start offsets.
     #[inline]
     #[must_use]
-    fn new(
-        source: &str,
-        task_statuses: &'a TaskStatusMap,
-        tag_filters: &'a [Tag],
-        frontmatter_tags_key: &'a str,
-    ) -> Self {
+    fn new(input: &'a MarkdownParserInput<'a>) -> Self {
         // Pre-allocate body buffer proportionally to source length, with small
         // initial capacities for sparser metadata collections to reduce
         // reallocations.
-        let body_capacity = source.len().saturating_mul(3) / 4;
+        let body_capacity = input.src().len().saturating_mul(3) / 4;
         Self {
+            input,
             frontmatter: None,
             block: BlockContext::default(),
             metadata_buffer: String::with_capacity(256),
@@ -260,106 +301,31 @@ impl<'a> ParserContext<'a> {
             body_buffer: String::with_capacity(body_capacity),
             inline_fields: IndexMap::with_capacity(8),
             tags: Vec::with_capacity(8),
-            line_index: LineIndex::new(source),
-            task_statuses,
-            tag_filters,
-            frontmatter_tags_key,
+            line_index: LineIndex::new(input.src()),
         }
     }
 
-    /// Dispatches one Markdown event to the matching handler.
-    ///
-    /// `span` is the event's byte span, used by [`Self::start_item`] and
-    /// [`Self::end_item`] to resolve item bounds and source lines.
-    fn handle_event(&mut self, event: Event<'_>, span: ByteSpan) {
-        match event {
-            Event::Start(CmarkTag::MetadataBlock(_)) => {
-                self.start_metadata_block();
-            }
-            Event::End(TagEnd::MetadataBlock(_)) => self.end_metadata_block(),
-            Event::Start(CmarkTag::Link {
-                link_type,
-                dest_url,
-                ..
-            }) => {
-                self.list_nesting.reject_marker();
-                self.start_link(link_type, dest_url);
-            }
-            Event::End(TagEnd::Link) => self.end_link(),
-            Event::Start(CmarkTag::CodeBlock(_)) => {
-                self.start_code_block();
-            }
-            Event::End(TagEnd::CodeBlock) => self.end_code_block(),
-            Event::Start(
-                CmarkTag::Paragraph
-                | CmarkTag::Heading {
-                    ..
-                },
-            ) => {
-                self.start_text_block();
-            }
-            Event::End(TagEnd::Paragraph | TagEnd::Heading(_)) => {
-                self.end_text_block();
-            }
-            Event::Code(text) => {
-                self.list_nesting.reject_marker();
-                self.inline_code(&text);
-            }
-            Event::Start(CmarkTag::List(start_number)) => {
-                self.start_list(start_number.is_some());
-            }
-            Event::End(TagEnd::List(_)) => self.end_list(),
-            Event::Start(CmarkTag::Item) => self.start_item(span.start()),
-            Event::End(TagEnd::Item) => self.end_item(span.end()),
-            Event::Text(text) => self.push_text(&text),
-            Event::SoftBreak | Event::HardBreak => self.push_break(),
-            // A blockquote inside an item is a block-level child: resolve the
-            // pending marker before separating the quote from prior buffer
-            // content.
-            Event::Start(CmarkTag::BlockQuote(_)) => {
-                self.list_nesting.resolve_pending_marker();
-                self.list_nesting.start_nested_block();
-            }
-            // Inline markup occupying an item's leading slot means the task
-            // marker is not at the content start, mirroring pulldown-cmark,
-            // which scans for the marker before parsing any inline content.
-            // `- **[x] Task**` and `` - `[x]` Task `` remain plain list items.
-            Event::Start(
-                CmarkTag::Emphasis
-                | CmarkTag::Strong
-                | CmarkTag::Strikethrough
-                | CmarkTag::Image {
-                    ..
-                },
-            )
-            | Event::InlineHtml(_)
-            | Event::InlineMath(_)
-            | Event::DisplayMath(_)
-            | Event::Html(_)
-            | Event::FootnoteReference(_) => {
-                self.list_nesting.reject_marker();
-            }
-            // Any other event ends the item's first line structurally (a nested
-            // list, a loose-item paragraph, the item's end), which counts as
-            // the marker's trailing whitespace.
-            _ => self.list_nesting.resolve_pending_marker(),
+    /// Rejects any pending marker, then records code in the active link's
+    /// display text and the active item's buffers.
+    fn handle_code(&mut self, text: &str) {
+        self.list_nesting.reject_marker();
+        if let Some(link) = self.active_link.as_mut() {
+            link.text.push_str(text);
         }
+        self.inline_code(text);
     }
 
-    /// Consumes the accumulated context into a [`Note`] at `path`.
+    /// Consumes the accumulated context into a [`Note`].
     ///
     /// Merges frontmatter-sourced tags (read from
-    /// [`Self::frontmatter_tags_key`]) after body-sourced tags.
-    fn into_note(self, path: impl Into<PathBuf>) -> Note {
+    /// [`MarkdownParserInput::frontmatter`]) after body-sourced tags.
+    fn into_note(self) -> Note {
         let mut tags = self.tags;
         if let Some(frontmatter) = self.frontmatter.as_ref() {
-            tags.extend(frontmatter_tags(
-                frontmatter,
-                self.frontmatter_tags_key,
-            ));
+            tags.extend(frontmatter.tags(self.input.frontmatter().tags_name()));
         }
         Note::new(
-            path,
+            self.input.path(),
             self.frontmatter,
             self.list_nesting.lists,
             self.outlinks,
@@ -444,14 +410,13 @@ impl<'a> ParserContext<'a> {
     /// Nested text blocks are handled through the active list item.
     fn end_text_block(&mut self) {
         self.block = BlockContext::None;
+        self.list_nesting.resolve_pending_marker();
         if !self.list_nesting.is_item_active() {
-            for (key, value) in lexer::scan_fields(
+            let flushed = lexer::scan_metadata(
                 &self.body_buffer,
                 lexer::TaskFieldEmojis::Exclude,
-            ) {
-                self.inline_fields.entry(key).or_default().push(value);
-            }
-            self.tags.extend(tag::scan_tags(&self.body_buffer));
+            );
+            self.extend_from_flush(Some(flushed));
             self.body_buffer.clear();
         }
     }
@@ -502,8 +467,8 @@ impl<'a> ParserContext<'a> {
     /// Flushes and records the innermost list item.
     fn end_item(&mut self, end: BytePos) {
         let flushed = self.list_nesting.end_item(
-            self.tag_filters,
-            self.task_statuses,
+            self.input.tasks().tag_filters(),
+            self.input.tasks().statuses(),
             end,
         );
         self.extend_from_flush(flushed);
@@ -534,6 +499,9 @@ impl<'a> ParserContext<'a> {
 
     /// Appends a Markdown line break to the active text buffer.
     fn push_break(&mut self) {
+        if let Some(link) = self.active_link.as_mut() {
+            link.text.push('\n');
+        }
         if self.block == BlockContext::MetadataBlock {
             self.metadata_buffer.push('\n');
             return;
@@ -789,6 +757,30 @@ mod tests {
 
             let link = note.outlinks().first().expect("outlink present");
             assert_eq!(link.text(), "link text");
+        }
+
+        #[test]
+        fn extracts_multiline_link_display_text() {
+            let note = parse("[multi\nline](https://example.com)");
+            let link = note.outlinks().first().expect("outlink present");
+            assert_eq!(link.target(), "https://example.com");
+            assert_eq!(link.text(), "multi\nline");
+        }
+
+        #[test]
+        fn extracts_code_span_within_link_display_text() {
+            let note = parse("[`my_func()`](https://example.com)");
+            let link = note.outlinks().first().expect("outlink present");
+            assert_eq!(link.target(), "https://example.com");
+            assert_eq!(link.text(), "my_func()");
+        }
+
+        #[test]
+        fn extracts_code_span_within_wikilink_display_text() {
+            let note = parse("[[target|`alias`]]");
+            let link = note.outlinks().first().expect("outlink present");
+            assert_eq!(link.target(), "target");
+            assert_eq!(link.text(), "alias");
         }
 
         #[test]
@@ -1525,7 +1517,7 @@ mod tests {
         }
     }
 
-    mod frontmatter_tags {
+    mod frontmatter_tag_merge {
         use pretty_assertions::assert_eq;
         use rstest::rstest;
 

@@ -9,7 +9,7 @@ use thiserror::Error;
 use tracing::warn;
 
 use super::field::NoteFieldValue;
-use crate::{FieldKey, FieldKeyRef, field::FieldValueRef, yaml};
+use crate::{FieldKey, FieldKeyRef, Tag, field::FieldValueRef, yaml};
 
 /// Raw YAML frontmatter text from a Markdown note.
 ///
@@ -146,6 +146,25 @@ impl Frontmatter {
             Some(other) => Some(other),
         };
         scalar.into_iter().chain(list.iter())
+    }
+
+    /// Returns an iterator over tags extracted from the frontmatter field
+    /// matching `key`.
+    ///
+    /// Splits comma-separated strings and sequence entries into individual tag
+    /// candidates, trimming whitespace and ignoring any candidate that fails
+    /// tag syntax validation.
+    pub(crate) fn tags<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> impl Iterator<Item = Tag> + 'a {
+        let mut buf = String::new();
+        self.get_values(key)
+            .filter_map(NoteFieldValue::as_str)
+            .flat_map(|value| value.split(','))
+            .filter_map(move |candidate| {
+                Tag::parse_lenient_into(candidate, &mut buf).ok()
+            })
     }
 
     /// Returns `true` if no structured fields were parsed.
