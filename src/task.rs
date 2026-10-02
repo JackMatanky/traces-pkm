@@ -1862,10 +1862,12 @@ mod tests {
         fn is_field_key_recognizes_aliases_and_priority() {
             assert!(TaskDateType::is_field_key("due"));
             assert!(TaskDateType::is_field_key("DUE"));
+            assert!(TaskDateType::is_field_key("Due"));
             assert!(TaskDateType::is_field_key("done"));
             assert!(TaskDateType::is_field_key("completion"));
             assert!(TaskDateType::is_field_key("priority"));
             assert!(TaskDateType::is_field_key("PRIORITY"));
+            assert!(!TaskDateType::is_field_key("store"));
             assert!(!TaskDateType::is_field_key("unknown"));
             assert!(!TaskDateType::is_field_key(""));
         }

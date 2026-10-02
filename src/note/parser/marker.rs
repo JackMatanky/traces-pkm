@@ -2,8 +2,28 @@
 //!
 //! Identifies and parses `[<symbol>]` task markers at the start of list items,
 //! following `CommonMark` and Obsidian whitespace rules.
-use super::list::ItemBuffers;
 use crate::DelimiterType;
+
+/// Maximum buffered bytes for marker recognition.
+///
+/// Fits the widest complete marker prefix: `[`, a 4-byte symbol, `]`, and
+/// one trailing whitespace byte.
+const MAX_MARKER_BYTES: usize = 8;
+
+/// Action required by caller after advancing marker accumulation.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(super) enum MarkerAction<'a> {
+    /// No text to append or flush (marker accumulation is incomplete).
+    None,
+    /// Append text to item display and scan buffers.
+    Append(&'a str),
+    /// Flushes plain text: any buffered bytes from an incomplete marker
+    /// attempt, followed by trailing plain text.
+    FlushPlain {
+        buffered: &'a str,
+        trailing: &'a str,
+    },
+}
 
 /// Opening bracket character for task markers (`[`).
 const OPEN_BRACKET: char = match DelimiterType::Bracket.open_char() {
@@ -23,7 +43,7 @@ const CLOSE_BRACKET: char = match DelimiterType::Bracket.close_char() {
 /// text with the marker and its single trailing ASCII whitespace character
 /// trimmed.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(super) struct MarkerScan<'a> {
+struct MarkerScan<'a> {
     symbol: char,
     remainder: &'a str,
 }
@@ -32,14 +52,14 @@ impl MarkerScan<'_> {
     /// Returns the character inside the marker's brackets.
     #[inline]
     #[must_use]
-    pub(super) const fn symbol(&self) -> char {
+    const fn symbol(&self) -> char {
         self.symbol
     }
 
     /// Returns the text after the marker and its trailing whitespace.
     #[inline]
     #[must_use]
-    pub(super) const fn remainder(&self) -> &str {
+    const fn remainder(&self) -> &str {
         self.remainder
     }
 }
@@ -47,7 +67,7 @@ impl MarkerScan<'_> {
 /// Classification of assembled item-leading text against the marker shape:
 /// `[`, one non-`]` character, `]`, then one ASCII whitespace character.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(super) enum MarkerPrefix<'a> {
+enum MarkerPrefix<'a> {
     /// `text` is a strict prefix of a potential marker (or exactly `[<char>]`
     /// awaiting its trailing whitespace); keep accumulating text.
     Incomplete,
@@ -63,30 +83,33 @@ pub(super) enum MarkerPrefix<'a> {
 /// prefix awaiting additional characters, or an invalid marker sequence.
 #[inline]
 #[must_use]
-pub(super) fn scan_marker_prefix(text: &str) -> MarkerPrefix<'_> {
-    let mut chars = text.char_indices();
-    if !matches!(chars.next(), Some((_, OPEN_BRACKET))) {
+fn scan_marker_prefix(text: &str) -> MarkerPrefix<'_> {
+    let Some(after_open) = text.strip_prefix(OPEN_BRACKET) else {
         return MarkerPrefix::Rejected;
-    }
-    let symbol = match chars.next() {
-        None => return MarkerPrefix::Incomplete,
-        Some((_, ch)) if ch != CLOSE_BRACKET => ch,
-        Some(_) => return MarkerPrefix::Rejected,
     };
-    match chars.next() {
-        None => return MarkerPrefix::Incomplete,
-        Some((_, ch)) if ch != CLOSE_BRACKET => return MarkerPrefix::Rejected,
-        _ => {}
+    let mut chars = after_open.chars();
+    let Some(symbol) = chars.next() else {
+        return MarkerPrefix::Incomplete;
+    };
+    if symbol == CLOSE_BRACKET {
+        return MarkerPrefix::Rejected;
     }
     match chars.next() {
         None => MarkerPrefix::Incomplete,
-        Some((ws_offset, ws)) if is_marker_whitespace(ws) => {
-            let remainder_start = ws_offset.saturating_add(ws.len_utf8());
-            MarkerPrefix::Complete(MarkerScan {
-                symbol,
-                remainder: text.get(remainder_start..).unwrap_or_default(),
-            })
-        }
+        Some(CLOSE_BRACKET) => match chars.next() {
+            None => MarkerPrefix::Incomplete,
+            Some(ws) if is_marker_whitespace(ws) => {
+                let remainder_start = 1usize
+                    .saturating_add(symbol.len_utf8())
+                    .saturating_add(1)
+                    .saturating_add(ws.len_utf8());
+                MarkerPrefix::Complete(MarkerScan {
+                    symbol,
+                    remainder: text.get(remainder_start..).unwrap_or_default(),
+                })
+            }
+            Some(_) => MarkerPrefix::Rejected,
+        },
         Some(_) => MarkerPrefix::Rejected,
     }
 }
@@ -114,7 +137,7 @@ fn split_marker_exact(text: &str) -> Option<char> {
 /// Returns `Some` if `text` is a complete marker, or `None` otherwise.
 #[inline]
 #[must_use]
-pub(super) fn scan_marker_at_line_end(text: &str) -> Option<MarkerScan<'_>> {
+fn scan_marker_at_line_end(text: &str) -> Option<MarkerScan<'_>> {
     match scan_marker_prefix(text) {
         MarkerPrefix::Complete(scan) => Some(scan),
         MarkerPrefix::Incomplete => {
@@ -149,7 +172,8 @@ fn char_boundary_le(text: &str, max: usize) -> usize {
     }
     boundary
 }
-/// Classification of a decided item leading marker.
+
+/// Classification of a decided item-leading marker.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum ItemMarker {
     Plain,
@@ -162,11 +186,19 @@ pub(super) enum ItemMarker {
 /// resolved. Marker syntax is withheld from item display buffers.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum MarkerAccumulator {
+    /// Leading bytes are still being assembled; classification is pending.
     Buffering {
-        buf: [u8; 8],
+        buf: [u8; MAX_MARKER_BYTES],
         len: u8,
     },
-    Decided(ItemMarker),
+    /// Classification is final; the buffered bytes are retained so late
+    /// [`Self::reject`] or [`Self::resolve_at_line_end`] flushes can still
+    /// return them.
+    Decided {
+        marker: ItemMarker,
+        buf: [u8; MAX_MARKER_BYTES],
+        len: u8,
+    },
 }
 
 impl MarkerAccumulator {
@@ -175,7 +207,7 @@ impl MarkerAccumulator {
     #[must_use]
     pub(super) const fn new() -> Self {
         Self::Buffering {
-            buf: [0; 8],
+            buf: [0; MAX_MARKER_BYTES],
             len: 0,
         }
     }
@@ -184,7 +216,10 @@ impl MarkerAccumulator {
     #[inline]
     #[must_use]
     pub(super) const fn is_marked(&self) -> bool {
-        matches!(self, Self::Decided(ItemMarker::Marked(_)))
+        matches!(self, Self::Decided {
+            marker: ItemMarker::Marked(_),
+            ..
+        })
     }
 
     /// Returns the recognized marker symbol, or `None`.
@@ -192,58 +227,57 @@ impl MarkerAccumulator {
     #[must_use]
     pub(super) const fn marker_symbol(&self) -> Option<char> {
         match self {
-            Self::Decided(ItemMarker::Marked(ch)) => Some(*ch),
+            Self::Decided {
+                marker: ItemMarker::Marked(ch),
+                ..
+            } => Some(*ch),
             _ => None,
         }
     }
 
-    /// Appends incoming text to the accumulator and forwards resolved text to
-    /// `buffers`.
+    /// Appends incoming text to the accumulator and returns the required
+    /// marker action.
     ///
     /// Resolution behavior:
-    /// - When marked, subsequent text is appended to `buffers`.
-    /// - When rejected, withheld bytes and new text are flushed to `buffers`.
-    pub(super) fn push_text(
-        &mut self,
-        text: &str,
-        buffers: &mut ItemBuffers,
-        in_code_block: bool,
-    ) {
+    /// - When decided, subsequent text is appended.
+    /// - When buffering, if text does not start with `[`, decides plain.
+    /// - If text completes the marker, decides marked and returns the
+    ///   remainder.
+    /// - When rejected or oversized, flushes plain text.
+    pub(super) fn push_text<'a>(
+        &'a mut self,
+        text: &'a str,
+    ) -> MarkerAction<'a> {
         match self {
-            Self::Decided(_) => {
-                buffers.append(text, in_code_block);
-            }
+            Self::Decided {
+                ..
+            } => MarkerAction::Append(text),
             Self::Buffering {
                 ..
-            } => {
-                self.push_buffering(text, buffers, in_code_block);
-            }
+            } => self.push_buffering(text),
         }
     }
 
     /// Buffers incoming text while the leading marker is still undecided.
-    fn push_buffering(
-        &mut self,
-        text: &str,
-        buffers: &mut ItemBuffers,
-        in_code_block: bool,
-    ) {
+    fn push_buffering<'a>(&'a mut self, text: &'a str) -> MarkerAction<'a> {
+        if text.is_empty() {
+            return MarkerAction::None;
+        }
         let Self::Buffering {
-            buf,
-            len,
-        } = self
+            mut buf,
+            mut len,
+        } = *self
         else {
-            return;
+            return MarkerAction::None;
         };
 
-        if *len == 0 && !text.starts_with('[') {
-            *self = Self::Decided(ItemMarker::Plain);
-            buffers.append(text, in_code_block);
-            return;
+        if len == 0 && !text.starts_with(OPEN_BRACKET) {
+            // With nothing buffered, an empty buffer flushes as "".
+            return self.flush_decided_plain(buf, len, text);
         }
 
-        let current_len = usize::from(*len);
-        let remaining = 8usize.saturating_sub(current_len);
+        let current_len = usize::from(len);
+        let remaining = MAX_MARKER_BYTES.saturating_sub(current_len);
         let take_bytes = if text.len() <= remaining {
             text.len()
         } else {
@@ -251,8 +285,7 @@ impl MarkerAccumulator {
         };
 
         if take_bytes == 0 {
-            self.flush_and_decide_plain(text, buffers, in_code_block);
-            return;
+            return self.flush_decided_plain(buf, len, text);
         }
 
         for (slot, byte) in buf
@@ -262,84 +295,153 @@ impl MarkerAccumulator {
         {
             *slot = *byte;
         }
-        *len = len.saturating_add(u8::try_from(take_bytes).unwrap_or(0));
+        len = len.saturating_add(u8::try_from(take_bytes).unwrap_or(0));
 
-        let candidate = Self::buffered_str(buf, *len);
+        // Persist the extended buffer before resolution so the candidate is
+        // readable from `self` and the decision writes back atomically.
+        *self = Self::Buffering {
+            buf,
+            len,
+        };
+        self.resolve_candidate(text, take_bytes, current_len)
+    }
+
+    /// Decides the accumulator from the buffered candidate assembled so far.
+    ///
+    /// Called with the accumulator in the `Buffering` state after its buffer
+    /// was extended with the candidate bytes.
+    fn resolve_candidate<'a>(
+        &'a mut self,
+        text: &'a str,
+        take_bytes: usize,
+        current_len: usize,
+    ) -> MarkerAction<'a> {
+        let Self::Buffering {
+            buf,
+            len,
+        } = *self
+        else {
+            return MarkerAction::None;
+        };
+        let candidate = Self::buffered_str(&buf, len);
         match scan_marker_prefix(candidate) {
             MarkerPrefix::Complete(scan) => {
                 let symbol = scan.symbol();
-                buffers.append(scan.remainder(), in_code_block);
-                if let Some(rest) = text.get(take_bytes..) {
-                    buffers.append(rest, in_code_block);
-                }
-                *self = Self::Decided(ItemMarker::Marked(symbol));
+                *self = Self::Decided {
+                    marker: ItemMarker::Marked(symbol),
+                    buf,
+                    len,
+                };
+                // The prefix was `Incomplete` in prior chunks, so the marker's
+                // trailing whitespace always lands inside this chunk and the
+                // remainder starts within `text` (extending past `take_bytes`
+                // to the chunk end).
+                let marker_in_text = candidate
+                    .len()
+                    .saturating_sub(scan.remainder().len())
+                    .saturating_sub(current_len);
+                let remainder = text.get(marker_in_text..).unwrap_or_default();
+                MarkerAction::Append(remainder)
             }
-            MarkerPrefix::Rejected => {
-                self.flush_and_decide_plain(
+            MarkerPrefix::Rejected => self.flush_decided_plain(
+                buf,
+                len,
+                text.get(take_bytes..).unwrap_or_default(),
+            ),
+            MarkerPrefix::Incomplete if take_bytes < text.len() => self
+                .flush_decided_plain(
+                    buf,
+                    len,
                     text.get(take_bytes..).unwrap_or_default(),
-                    buffers,
-                    in_code_block,
-                );
-            }
+                ),
             MarkerPrefix::Incomplete => {
-                if take_bytes < text.len() {
-                    self.flush_and_decide_plain(
-                        text.get(take_bytes..).unwrap_or_default(),
-                        buffers,
-                        in_code_block,
-                    );
-                }
+                *self = Self::Buffering {
+                    buf,
+                    len,
+                };
+                MarkerAction::None
             }
+        }
+    }
+
+    /// Records the item as plain text and flushes buffered bytes plus trailing
+    /// text.
+    fn flush_decided_plain<'s>(
+        &'s mut self,
+        buf: [u8; MAX_MARKER_BYTES],
+        len: u8,
+        trailing: &'s str,
+    ) -> MarkerAction<'s> {
+        *self = Self::Decided {
+            marker: ItemMarker::Plain,
+            buf,
+            len,
+        };
+        let buffered = self.buffered();
+        MarkerAction::FlushPlain {
+            buffered,
+            trailing,
+        }
+    }
+
+    /// Returns the bytes buffered in the current state as a string slice.
+    fn buffered(&self) -> &str {
+        match self {
+            Self::Buffering {
+                buf,
+                len,
+            }
+            | Self::Decided {
+                buf,
+                len,
+                ..
+            } => Self::buffered_str(buf, *len),
         }
     }
 
     /// Returns the buffered marker bytes as a string slice.
-    fn buffered_str(buf: &[u8; 8], len: u8) -> &str {
-        let clamped = usize::from(len.min(8));
+    fn buffered_str(buf: &[u8; MAX_MARKER_BYTES], len: u8) -> &str {
+        let clamped = usize::from(len).min(MAX_MARKER_BYTES);
         let slice = buf.get(..clamped).unwrap_or(buf.as_slice());
         std::str::from_utf8(slice).unwrap_or_default()
     }
 
-    /// Flushes buffered bytes plus `trailing` to both buffers and records the
-    /// item as plain text.
-    fn flush_and_decide_plain(
-        &mut self,
-        trailing: &str,
-        buffers: &mut ItemBuffers,
-        in_code_block: bool,
-    ) {
-        if let Self::Buffering {
-            buf,
-            len,
-        } = self
-        {
-            let buffered = Self::buffered_str(buf, *len);
-            buffers.append_verbatim(buffered);
-        }
-        buffers.append(trailing, in_code_block);
-        *self = Self::Decided(ItemMarker::Plain);
-    }
-
-    /// Rejects any pending marker, flushing buffered bytes to `buffers`.
-    pub(super) fn reject(&mut self, buffers: &mut ItemBuffers) {
-        self.flush_and_decide_plain("", buffers, false);
-    }
-
-    /// Resolves any pending marker using line-end semantics.
-    pub(super) fn resolve_at_line_end(&mut self, buffers: &mut ItemBuffers) {
+    /// Rejects any pending marker, flushing buffered bytes as plain text.
+    ///
+    /// If already decided, does nothing and returns `MarkerAction::None`.
+    pub(super) fn reject(&mut self) -> MarkerAction<'_> {
         let Self::Buffering {
             buf,
             len,
-        } = self
+        } = *self
         else {
-            return;
+            return MarkerAction::None;
         };
-        let buffered = Self::buffered_str(buf, *len);
-        if let Some(scan) = scan_marker_at_line_end(buffered) {
-            *self = Self::Decided(ItemMarker::Marked(scan.symbol()));
-            return;
+        self.flush_decided_plain(buf, len, "")
+    }
+
+    /// Resolves any pending marker using line-end semantics.
+    ///
+    /// If already decided, does nothing and returns `MarkerAction::None`.
+    pub(super) fn resolve_at_line_end(&mut self) -> MarkerAction<'_> {
+        let Self::Buffering {
+            buf,
+            len,
+        } = *self
+        else {
+            return MarkerAction::None;
+        };
+        let candidate = Self::buffered_str(&buf, len);
+        if let Some(scan) = scan_marker_at_line_end(candidate) {
+            *self = Self::Decided {
+                marker: ItemMarker::Marked(scan.symbol()),
+                buf,
+                len,
+            };
+            MarkerAction::None
+        } else {
+            self.flush_decided_plain(buf, len, "")
         }
-        self.flush_and_decide_plain("", buffers, false);
     }
 }
 
@@ -486,103 +588,132 @@ mod tests {
         #[test]
         fn starts_plain_on_non_bracket() {
             let mut acc = MarkerAccumulator::new();
-            let mut buffers = ItemBuffers::new();
-            acc.push_text("hello world", &mut buffers, false);
+            assert_eq!(
+                acc.push_text("hello world"),
+                MarkerAction::FlushPlain {
+                    buffered: "",
+                    trailing: "hello world"
+                }
+            );
             assert!(!acc.is_marked());
             assert_eq!(acc.marker_symbol(), None);
-            assert_eq!(buffers.text(), "hello world");
-            assert_eq!(buffers.scan(), "hello world");
         }
 
         #[test]
         fn recognizes_marker_in_single_chunk() {
             let mut acc = MarkerAccumulator::new();
-            let mut buffers = ItemBuffers::new();
-            acc.push_text("[x] hello", &mut buffers, false);
+            assert_eq!(
+                acc.push_text("[x] hello"),
+                MarkerAction::Append("hello")
+            );
             assert!(acc.is_marked());
             assert_eq!(acc.marker_symbol(), Some('x'));
-            assert_eq!(buffers.text(), "hello");
-            assert_eq!(buffers.scan(), "hello");
         }
 
         #[test]
         fn recognizes_marker_split_across_chunks() {
             let mut acc = MarkerAccumulator::new();
-            let mut buffers = ItemBuffers::new();
-            acc.push_text("[", &mut buffers, false);
-            assert_eq!(buffers.text(), "");
-            acc.push_text("x", &mut buffers, false);
-            assert_eq!(buffers.text(), "");
-            acc.push_text("]", &mut buffers, false);
-            assert_eq!(buffers.text(), "");
-            acc.push_text(" task", &mut buffers, false);
+            assert_eq!(acc.push_text("["), MarkerAction::None);
+            assert_eq!(acc.push_text("x"), MarkerAction::None);
+            assert_eq!(acc.push_text("]"), MarkerAction::None);
+            assert_eq!(acc.push_text(" task"), MarkerAction::Append("task"));
             assert!(acc.is_marked());
             assert_eq!(acc.marker_symbol(), Some('x'));
-            assert_eq!(buffers.text(), "task");
-            assert_eq!(buffers.scan(), "task");
         }
 
         #[test]
         fn preserves_a_multibyte_symbol_split_across_chunks() {
             let mut acc = MarkerAccumulator::new();
-            let mut buffers = ItemBuffers::new();
-            acc.push_text("[✓", &mut buffers, false);
-            assert_eq!(buffers.text(), "");
-            acc.push_text("] done", &mut buffers, false);
+            assert_eq!(acc.push_text("[✓"), MarkerAction::None);
+            assert_eq!(acc.push_text("] done"), MarkerAction::Append("done"));
             assert!(acc.is_marked());
             assert_eq!(acc.marker_symbol(), Some('✓'));
-            assert_eq!(buffers.text(), "done");
-            assert_eq!(buffers.scan(), "done");
         }
 
         #[test]
         fn recognizes_bare_marker_at_line_end() {
             let mut acc = MarkerAccumulator::new();
-            let mut buffers = ItemBuffers::new();
-            acc.push_text("[x]", &mut buffers, false);
-            assert_eq!(buffers.text(), "");
-            acc.resolve_at_line_end(&mut buffers);
+            assert_eq!(acc.push_text("[x]"), MarkerAction::None);
+            assert_eq!(acc.resolve_at_line_end(), MarkerAction::None);
             assert!(acc.is_marked());
             assert_eq!(acc.marker_symbol(), Some('x'));
-            assert_eq!(buffers.text(), "");
-            assert_eq!(buffers.scan(), "");
         }
 
         #[test]
         fn rejects_unclosed_marker_at_line_end() {
             let mut acc = MarkerAccumulator::new();
-            let mut buffers = ItemBuffers::new();
-            acc.push_text("[x", &mut buffers, false);
-            assert_eq!(buffers.text(), "");
-            acc.resolve_at_line_end(&mut buffers);
+            assert_eq!(acc.push_text("[x"), MarkerAction::None);
+            assert_eq!(acc.resolve_at_line_end(), MarkerAction::FlushPlain {
+                buffered: "[x",
+                trailing: ""
+            });
             assert!(!acc.is_marked());
             assert_eq!(acc.marker_symbol(), None);
-            assert_eq!(buffers.text(), "[x");
-            assert_eq!(buffers.scan(), "[x");
         }
 
         #[test]
         fn rejects_pending_marker_on_reject() {
             let mut acc = MarkerAccumulator::new();
-            let mut buffers = ItemBuffers::new();
-            acc.push_text("[", &mut buffers, false);
-            assert_eq!(buffers.text(), "");
-            acc.reject(&mut buffers);
+            assert_eq!(acc.push_text("["), MarkerAction::None);
+            assert_eq!(acc.reject(), MarkerAction::FlushPlain {
+                buffered: "[",
+                trailing: ""
+            });
             assert!(!acc.is_marked());
             assert_eq!(acc.marker_symbol(), None);
-            assert_eq!(buffers.text(), "[");
-            assert_eq!(buffers.scan(), "[");
         }
 
         #[test]
         fn rejects_invalid_marker_immediately() {
             let mut acc = MarkerAccumulator::new();
-            let mut buffers = ItemBuffers::new();
-            acc.push_text("[xx] foo", &mut buffers, false);
+            assert_eq!(acc.push_text("[xx] foo"), MarkerAction::FlushPlain {
+                buffered: "[xx] foo",
+                trailing: ""
+            });
             assert!(!acc.is_marked());
             assert_eq!(acc.marker_symbol(), None);
-            assert_eq!(buffers.text(), "[xx] foo");
-            assert_eq!(buffers.scan(), "[xx] foo");
+        }
+
+        #[test]
+        fn preserves_decided_marker_on_reject() {
+            let mut acc = MarkerAccumulator::new();
+            assert_eq!(acc.push_text("[x] task"), MarkerAction::Append("task"));
+            assert!(acc.is_marked());
+            assert_eq!(acc.reject(), MarkerAction::None);
+            assert!(acc.is_marked());
+            assert_eq!(acc.marker_symbol(), Some('x'));
+        }
+
+        #[test]
+        fn flushes_plain_when_an_incomplete_marker_exceeds_the_buffer() {
+            // The marker shape fits the buffer, but a follow-up chunk cannot:
+            // the accumulator must flush the assembled prefix rather than
+            // buffer past its capacity.
+            let mut acc = MarkerAccumulator::new();
+            assert_eq!(acc.push_text("[✓"), MarkerAction::None);
+            assert_eq!(
+                acc.push_text("]🎉🎉🎉🎉🎉"),
+                MarkerAction::FlushPlain {
+                    buffered: "[✓]",
+                    trailing: "🎉🎉🎉🎉🎉"
+                }
+            );
+            assert!(!acc.is_marked());
+            assert_eq!(acc.marker_symbol(), None);
+        }
+
+        #[test]
+        fn decides_plain_when_a_wide_character_cannot_fit_the_buffer() {
+            // A character wider than the remaining buffer can never be the
+            // marker's trailing whitespace, so the item decides plain.
+            let mut acc = MarkerAccumulator::new();
+            assert_eq!(acc.push_text("[✓]"), MarkerAction::None);
+            assert_eq!(acc.push_text("🎉 task"), MarkerAction::FlushPlain {
+                buffered: "[✓]",
+                trailing: "🎉 task"
+            });
+            assert!(!acc.is_marked());
+            assert_eq!(acc.marker_symbol(), None);
         }
     }
 }

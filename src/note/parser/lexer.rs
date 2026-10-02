@@ -5,7 +5,7 @@
 
 use logos::{Filter, Lexer, Logos};
 
-use super::inline::parse_inline_value;
+use super::{FlushedMetadata, inline::parse_inline_value};
 use crate::{
     DateValue, DelimiterType, FieldKey, Spanned, Tag, TaskDate, TaskDateType,
     TaskPriority, note::NoteFieldValue,
@@ -16,7 +16,7 @@ use crate::{
 /// Converts task emoji shorthands into date fields when `mode` is
 /// [`TaskFieldEmojis::Include`]. Tags are ignored during field scanning.
 #[must_use]
-pub(super) fn scan_fields(
+fn scan_fields(
     text: &str,
     mode: TaskFieldEmojis,
 ) -> Vec<(FieldKey, NoteFieldValue)> {
@@ -24,7 +24,7 @@ pub(super) fn scan_fields(
     let mut lexer = ItemToken::lexer_with_extras(text, mode);
     while let Some(Ok(token)) = lexer.next() {
         match token {
-            ItemToken::Field((key, value, _)) => fields.push((key, value)),
+            ItemToken::Field(field) => fields.push((field.key, field.value)),
             ItemToken::Date(date) => {
                 if let Ok(key) = FieldKey::try_new(date.kind().as_str()) {
                     fields.push((key, NoteFieldValue::Date(date.date())));
@@ -102,6 +102,17 @@ pub(super) enum FieldForm {
     Wrapped,
 }
 
+/// Scanned inline field token payload.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct FieldToken {
+    /// Canonical field key.
+    pub(super) key: FieldKey,
+    /// Parsed field value.
+    pub(super) value: NoteFieldValue,
+    /// Syntactic form the field was scanned in.
+    pub(super) form: FieldForm,
+}
+
 /// Token stream for item components in free-form Markdown text.
 #[derive(Debug, PartialEq, Logos)]
 #[logos(extras = TaskFieldEmojis, skip(r"[\s\S]", priority = 0))]
@@ -145,16 +156,14 @@ pub(super) enum ItemToken {
     #[token("(", |lex| wrapped_field_callback(lex, DelimiterType::Parenthesis))]
     /// Inline key-value field (`Key:: Value`, `[Key:: Value]`, `(Key::
     /// Value)`).
-    Field((FieldKey, NoteFieldValue, FieldForm)),
+    Field(FieldToken),
 }
 /// Parses a bare inline field (`Key:: Value`) starting at line begin.
 ///
 /// Rejects the match if it does not begin at the start of the source or
 /// immediately following a newline. Consumes the rest of the line as the raw
 /// value.
-fn body_field_callback(
-    lex: &mut Lexer<'_, ItemToken>,
-) -> Filter<(FieldKey, NoteFieldValue, FieldForm)> {
+fn body_field_callback(lex: &mut Lexer<'_, ItemToken>) -> Filter<FieldToken> {
     let at_line_start = char_before(lex).is_none_or(|ch| ch == '\n');
     if !at_line_start {
         return Filter::Skip;
@@ -168,7 +177,11 @@ fn body_field_callback(
     let Ok(key) = FieldKey::try_from(key) else {
         return Filter::Skip;
     };
-    let field = (key, parse_inline_value(value), FieldForm::Bare);
+    let field = FieldToken {
+        key,
+        value: parse_inline_value(value),
+        form: FieldForm::Bare,
+    };
     lex.bump(value_end);
     Filter::Emit(field)
 }
@@ -182,7 +195,7 @@ fn body_field_callback(
 fn wrapped_field_callback(
     lex: &mut Lexer<'_, ItemToken>,
     kind: DelimiterType,
-) -> Filter<(FieldKey, NoteFieldValue, FieldForm)> {
+) -> Filter<FieldToken> {
     let remainder = lex.remainder();
     let Some(sep) = remainder.find("::") else {
         return Filter::Skip;
@@ -206,7 +219,11 @@ fn wrapped_field_callback(
         .saturating_add(close)
         .saturating_add(kind.close_len());
     lex.bump(consumed);
-    Filter::Emit((key, parse_inline_value(value), FieldForm::Wrapped))
+    Filter::Emit(FieldToken {
+        key,
+        value: parse_inline_value(value),
+        form: FieldForm::Wrapped,
+    })
 }
 
 /// Parses a task emoji shorthand into a [`TaskDate`].
@@ -252,7 +269,7 @@ fn task_date_callback(
 /// Rejects the tag when:
 /// - Preceded by an alphanumeric character or underscore (`_`)
 /// - The tag does not begin with an alphabetic character
-pub(super) fn tag_callback<'source, T: Logos<'source, Source = str>>(
+fn tag_callback<'source, T: Logos<'source, Source = str>>(
     lex: &mut Lexer<'source, T>,
 ) -> Filter<Tag> {
     let preceded_by_word_char =
@@ -272,6 +289,40 @@ pub(super) fn tag_callback<'source, T: Logos<'source, Source = str>>(
         Ok(tag) => Filter::Emit(tag),
         Err(_) => Filter::Skip,
     }
+}
+/// Token stream for Markdown tags in free-form text.
+#[derive(Clone, Debug, PartialEq, Logos)]
+#[logos(skip(r"[\s\S]", priority = 0))]
+enum TagToken {
+    /// Valid hashtag token.
+    #[token("#", tag_callback)]
+    Tag(Tag),
+}
+
+/// Extracts Markdown tags from `text` in document order.
+fn scan_tags(text: &str) -> Vec<Tag> {
+    let lexer = TagToken::lexer(text);
+    let mut tags = Vec::new();
+    for result in lexer {
+        if let Ok(TagToken::Tag(tag)) = result {
+            tags.push(tag);
+        }
+    }
+    tags
+}
+
+/// Scans both inline fields and tags in a single operation.
+///
+/// Tags use a second lexing pass because the field lexer consumes whole
+/// bare-field lines, which would swallow tags inside field values.
+#[must_use]
+pub(super) fn scan_metadata(
+    text: &str,
+    mode: TaskFieldEmojis,
+) -> FlushedMetadata {
+    let fields = scan_fields(text, mode);
+    let tags = scan_tags(text);
+    FlushedMetadata::new(fields, tags)
 }
 
 #[cfg(test)]
@@ -700,13 +751,60 @@ mod tests {
             let key = FieldKey::try_new("priority").unwrap();
             assert_eq!(
                 tokens.get(3).expect("token 3").value(),
-                &ItemToken::Field((
+                &ItemToken::Field(FieldToken {
                     key,
-                    NoteFieldValue::String("high".to_owned()),
-                    FieldForm::Wrapped
-                ))
+                    value: NoteFieldValue::String("high".to_owned()),
+                    form: FieldForm::Wrapped,
+                })
             );
             assert_eq!(tokens.get(3).expect("token 3").span_usize(), 32..49);
+        }
+    }
+    mod tags {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::*;
+
+        #[rstest]
+        #[case::standalone("Filed under #book for later.", &["#book"])]
+        #[case::nested_path(
+            "#projects/active needs review.",
+            &["#projects/active"]
+        )]
+        #[case::multiple_space_separated(
+            "#book #fiction favorites.",
+            &["#book", "#fiction"]
+        )]
+        #[case::hash_embedded_in_a_word(
+            "The issue is foo#bar, not a tag.",
+            &[]
+        )]
+        #[case::adjacent_separated_by_punctuation("(#a)(#b)", &["#a", "#b"])]
+        #[case::glued_directly_onto_another_tag("#a#b", &["#a"])]
+        #[case::preceded_by_multibyte_punctuation("café—#book", &["#book"])]
+        #[case::glued_onto_a_multibyte_letter("café#book", &[])]
+        fn extracts_tags_matching_the_expected_set(
+            #[case] input: &str,
+            #[case] expected: &[&str],
+        ) {
+            let expected: Vec<Tag> =
+                expected.iter().map(|tag| Tag::parse(tag).unwrap()).collect();
+
+            assert_eq!(scan_tags(input), expected);
+        }
+
+        #[test]
+        fn skips_mid_word_hashes_and_non_alpha_initials() {
+            let tags = scan_tags("foo#bar #123 #_not_alpha #valid");
+            assert_eq!(tags, vec![Tag::parse("#valid").unwrap()]);
+        }
+
+        #[test]
+        fn finds_tags_inside_field_values_the_item_lexer_swallows() {
+            let tags = scan_tags("Status:: Draft #urgent");
+
+            assert_eq!(tags, vec![Tag::parse("#urgent").unwrap()]);
         }
     }
 }

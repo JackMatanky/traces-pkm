@@ -9,7 +9,7 @@ use thiserror::Error;
 use tracing::warn;
 
 use super::field::NoteFieldValue;
-use crate::{FieldKey, FieldKeyRef, field::FieldValueRef, yaml};
+use crate::{FieldKey, FieldKeyRef, Tag, field::FieldValueRef, yaml};
 
 /// Raw YAML frontmatter text from a Markdown note.
 ///
@@ -114,8 +114,8 @@ impl Frontmatter {
         not(test),
         expect(
             dead_code,
-            reason = "called by Note::fields in test builds; retained for \
-                      accessor symmetry"
+            reason = "sole caller is Note::fields (index-query#03 reserved \
+                      accessor), itself dead in lib builds"
         )
     )]
     pub(crate) fn fields(&self) -> &IndexMap<FieldKey, NoteFieldValue> {
@@ -148,19 +148,23 @@ impl Frontmatter {
         scalar.into_iter().chain(list.iter())
     }
 
-    /// Returns `true` if no structured fields were parsed.
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; kept for Frontmatter \
-                      accessor symmetry with its fields"
-        )
-    )]
-    pub(crate) fn is_empty(&self) -> bool {
-        self.fields.is_empty()
+    /// Returns an iterator over tags extracted from the frontmatter field
+    /// matching `key`.
+    ///
+    /// Splits comma-separated strings and sequence entries into individual tag
+    /// candidates, trimming whitespace and ignoring any candidate that fails
+    /// tag syntax validation.
+    pub(crate) fn tags<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> impl Iterator<Item = Tag> + 'a {
+        let mut buf = String::new();
+        self.get_values(key)
+            .filter_map(NoteFieldValue::as_str)
+            .flat_map(|value| value.split(','))
+            .filter_map(move |candidate| {
+                Tag::parse_lenient_into(candidate, &mut buf).ok()
+            })
     }
 }
 
@@ -219,7 +223,7 @@ mod tests {
             let raw = RawFrontmatter::new("  \n");
             let fm = Frontmatter::from(&raw);
 
-            assert_eq!(fm.is_empty(), true);
+            assert_eq!(fm.fields().is_empty(), true);
         }
 
         #[test]
@@ -227,7 +231,7 @@ mod tests {
             let raw = RawFrontmatter::new("invalid: [yaml: :");
             let fm = Frontmatter::from(&raw);
 
-            assert_eq!(fm.is_empty(), true);
+            assert_eq!(fm.fields().is_empty(), true);
         }
 
         #[test]
@@ -289,7 +293,7 @@ mod tests {
                     raw.parse(),
                     Err(FrontmatterParseError::Parse(_))
                 ));
-                assert!(Frontmatter::from(&raw).is_empty());
+                assert!(Frontmatter::from(&raw).fields().is_empty());
             }
 
             #[test]
@@ -298,7 +302,7 @@ mod tests {
 
                 let fm = raw.parse().expect("valid mapping");
 
-                assert!(fm.is_empty());
+                assert!(fm.fields().is_empty());
             }
         }
 
