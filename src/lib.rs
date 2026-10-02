@@ -129,7 +129,7 @@ pub use note::{
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use path::codec as path_codec;
-pub(crate) use position::{BytePos, ByteSpan, LineIndex, SpanStart, Spanned};
+pub(crate) use position::{BytePos, ByteSpan, LineIndex, Spanned};
 pub use position::{PositionError, SourceLine};
 #[cfg(any(test, feature = "test-utils"))]
 pub use query::{

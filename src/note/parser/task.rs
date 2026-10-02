@@ -160,6 +160,44 @@ impl<'a> TaskScan<'a> {
         Self::normalize_whitespace(&cleaned)
     }
 
+    /// Classifies the scanned item by its marker symbol and associated
+    /// metadata.
+    ///
+    /// Status-marked items resolve against configured tag filters to
+    /// determine whether they form a [`ListItemType::Task`] or
+    /// [`ListItemType::Checkbox`]. Returns the resolved item type alongside
+    /// cleaned display text.
+    pub(super) fn classify(
+        &self,
+        params: TaskClassificationParams<'_>,
+    ) -> (ListItemType, String) {
+        let clean = self.clean_text(params.tag_filters);
+        let item_type = match params.marker {
+            Some(symbol) => {
+                let status = params.statuses.resolve(symbol);
+                if params.tag_filters.is_empty()
+                    || params
+                        .tags
+                        .iter()
+                        .any(|tag| params.tag_filters.contains(tag))
+                {
+                    let priority = self.priority(params.fields);
+                    let dates = self.dates(params.fields);
+                    ListItemType::Task(TaskListItem::new(
+                        dates,
+                        priority,
+                        status,
+                        params.fully_complete,
+                    ))
+                } else {
+                    ListItemType::Checkbox
+                }
+            }
+            None => ListItemType::Plain,
+        };
+        (item_type, clean)
+    }
+
     /// Returns the first date value matching `key_name` across `fields`.
     ///
     /// [`FieldKeyRef`] resolves the canonical entry in O(1); keys in `fields`
@@ -197,6 +235,7 @@ impl<'a> TaskScan<'a> {
         result
     }
 }
+
 /// Tracks whether any descendant task within a list item's subtree is
 /// incomplete.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -209,9 +248,6 @@ pub(super) enum SubTaskCompletion {
 }
 
 impl SubTaskCompletion {
-    /// Returns the initial completion state for a newly opened item before any
-    /// child tasks exist.
-    ///
     /// A newly opened item contains zero child tasks, so its descendant tree
     /// contains no incomplete tasks until a child task is observed.
     #[inline]
@@ -261,42 +297,6 @@ pub(super) struct TaskClassificationParams<'a> {
     pub(super) fully_complete: bool,
 }
 
-/// Classifies a list item by its marker symbol and associated metadata.
-///
-/// Status-marked items resolve against configured tag filters to determine
-/// whether they form a [`ListItemType::Task`] or [`ListItemType::Checkbox`].
-/// Returns the resolved item type alongside cleaned display text.
-pub(super) fn classify_item(
-    scan: &TaskScan<'_>,
-    params: TaskClassificationParams<'_>,
-) -> (ListItemType, String) {
-    let clean = scan.clean_text(params.tag_filters);
-    let item_type = match params.marker {
-        Some(symbol) => {
-            let status = params.statuses.resolve(symbol);
-            if params.tag_filters.is_empty()
-                || params
-                    .tags
-                    .iter()
-                    .any(|tag| params.tag_filters.contains(tag))
-            {
-                let priority = scan.priority(params.fields);
-                let dates = scan.dates(params.fields);
-                ListItemType::Task(TaskListItem::new(
-                    dates,
-                    priority,
-                    status,
-                    params.fully_complete,
-                ))
-            } else {
-                ListItemType::Checkbox
-            }
-        }
-        None => ListItemType::Plain,
-    };
-    (item_type, clean)
-}
-
 #[cfg(test)]
 mod tests {
     use chrono::NaiveDate;
@@ -304,7 +304,7 @@ mod tests {
 
     use super::{super::list::ListTracker, *};
     use crate::{
-        BytePos, DateValue, Note, SourceLine, SpanStart, TaskStatusType,
+        DateValue, Note, SourceLine, TaskStatusType,
         note::{ListItem, MarkdownParserInput, parse_markdown},
         parse_note_str as parse,
     };
@@ -477,7 +477,19 @@ mod tests {
             let fields = IndexMap::new();
 
             assert_eq!(scan.dates(&fields).get(TaskDateType::Due), None);
-            assert_eq!(scan.clean_text(&[]), "task with 🗓2022-07-14");
+        }
+
+        #[test]
+        fn keeps_a_token_abutting_a_code_span_boundary() {
+            // A token ending exactly where the code span begins does not
+            // overlap it: the retain filter is strict on both bounds.
+            let raw = "🔺task";
+            let scan = TaskScan::scan(raw, &[4..raw.len()]);
+
+            assert_eq!(
+                scan.priority(&IndexMap::new()),
+                Some(TaskPriority::Highest)
+            );
         }
     }
 
@@ -497,10 +509,9 @@ mod tests {
             assert!(!TaskDateType::is_field_key(""));
         }
     }
-    mod classification {
-        use pretty_assertions::assert_eq;
-
+    mod subtask_completion {
         use super::*;
+
         #[test]
         fn starts_fully_complete_until_an_incomplete_child_is_observed() {
             let mut completion = SubTaskCompletion::initial();
@@ -512,7 +523,11 @@ mod tests {
             );
             assert!(!completion.is_fully_complete());
         }
+    }
+    mod classification {
+        use pretty_assertions::assert_eq;
 
+        use super::*;
         #[rstest]
         #[case::space_todo(' ', TaskStatusType::Todo)]
         #[case::checked_lowercase('x', TaskStatusType::Done)]
@@ -544,19 +559,12 @@ mod tests {
         }
 
         #[test]
-        #[expect(clippy::panic, reason = "test assertion on enum variant")]
         fn preserves_and_classifies_an_unknown_marker_as_an_incomplete_task() {
             let note = parse("- [?] Mystery task");
 
             let item = note.lists().first().expect("item present");
             assert_eq!(item.text(), "Mystery task");
-            let ListItemType::Task(task) = item.kind() else {
-                panic!(
-                    "unknown marker must never be downgraded to a plain \
-                     bullet, got {:?}",
-                    item.kind()
-                );
-            };
+            let task = item.kind().as_task().expect("unknown marker is a task");
             assert_eq!(
                 task.status().kind().completed(),
                 Some(false),
@@ -716,14 +724,12 @@ mod tests {
         fn classifies_marked_item_as_task_when_tag_filters_are_empty() {
             let mut tracker = ListTracker::default();
             tracker.start_list(false);
-            tracker.start_item(
-                SourceLine::new(1).expect("non-zero"),
-                SpanStart::default(),
-            );
+            tracker.start_item(SourceLine::new(1).expect("non-zero"));
             tracker.push_text("[x] Task without tag", false);
-            tracker.end_item(&[], &TaskStatusMap::default(), BytePos::new(0));
+            tracker.end_item(&[], &TaskStatusMap::default());
 
-            let item = tracker.lists.first().expect("item present");
+            let lists = tracker.into_lists();
+            let item = lists.first().expect("item present");
             assert!(matches!(item.kind(), ListItemType::Task(_)));
         }
 
@@ -731,20 +737,14 @@ mod tests {
         fn classifies_marked_item_as_task_when_tag_matches_filter() {
             let mut tracker = ListTracker::default();
             tracker.start_list(false);
-            tracker.start_item(
-                SourceLine::new(1).expect("non-zero"),
-                SpanStart::default(),
-            );
+            tracker.start_item(SourceLine::new(1).expect("non-zero"));
             tracker.push_text("[x] Task with tag #task", false);
             let tag_filters = [Tag::parse("#task").unwrap()];
-            tracker.end_item(
-                &tag_filters,
-                &TaskStatusMap::default(),
-                BytePos::new(0),
-            );
+            tracker.end_item(&tag_filters, &TaskStatusMap::default());
             tracker.end_list();
 
-            let item = tracker.lists.first().expect("item present");
+            let lists = tracker.into_lists();
+            let item = lists.first().expect("item present");
             assert!(matches!(item.kind(), ListItemType::Task(_)));
         }
 
@@ -752,20 +752,14 @@ mod tests {
         fn item_tags_survive_classification_as_queryable_data() {
             let mut tracker = ListTracker::default();
             tracker.start_list(false);
-            tracker.start_item(
-                SourceLine::new(1).expect("non-zero"),
-                SpanStart::default(),
-            );
+            tracker.start_item(SourceLine::new(1).expect("non-zero"));
             tracker.push_text("[x] Task #task #project", false);
             let tag_filters = [Tag::parse("#task").unwrap()];
-            tracker.end_item(
-                &tag_filters,
-                &TaskStatusMap::default(),
-                BytePos::new(0),
-            );
+            tracker.end_item(&tag_filters, &TaskStatusMap::default());
             tracker.end_list();
 
-            let item = tracker.lists.first().expect("item present");
+            let lists = tracker.into_lists();
+            let item = lists.first().expect("item present");
             // Classification used only #task to decide Task vs Checkbox, but
             // both tags the item actually carries remain queryable.
             assert_eq!(item.tags(), [
@@ -778,20 +772,14 @@ mod tests {
         fn classifies_marked_item_as_checkbox_when_tag_does_not_match_filter() {
             let mut tracker = ListTracker::default();
             tracker.start_list(false);
-            tracker.start_item(
-                SourceLine::new(1).expect("non-zero"),
-                SpanStart::default(),
-            );
+            tracker.start_item(SourceLine::new(1).expect("non-zero"));
             tracker.push_text("[x] Checkbox with different tag #other", false);
             let tag_filters = [Tag::parse("#task").unwrap()];
-            tracker.end_item(
-                &tag_filters,
-                &TaskStatusMap::default(),
-                BytePos::new(0),
-            );
+            tracker.end_item(&tag_filters, &TaskStatusMap::default());
             tracker.end_list();
 
-            let item = tracker.lists.first().expect("item present");
+            let lists = tracker.into_lists();
+            let item = lists.first().expect("item present");
             assert_eq!(item.kind(), &ListItemType::Checkbox);
         }
 
@@ -800,20 +788,14 @@ mod tests {
          {
             let mut tracker = ListTracker::default();
             tracker.start_list(false);
-            tracker.start_item(
-                SourceLine::new(1).expect("non-zero"),
-                SpanStart::default(),
-            );
+            tracker.start_item(SourceLine::new(1).expect("non-zero"));
             tracker.push_text("[x] Checkbox without tags", false);
             let tag_filters = [Tag::parse("#task").unwrap()];
-            tracker.end_item(
-                &tag_filters,
-                &TaskStatusMap::default(),
-                BytePos::new(0),
-            );
+            tracker.end_item(&tag_filters, &TaskStatusMap::default());
             tracker.end_list();
 
-            let item = tracker.lists.first().expect("item present");
+            let lists = tracker.into_lists();
+            let item = lists.first().expect("item present");
             assert_eq!(item.kind(), &ListItemType::Checkbox);
         }
 
@@ -822,23 +804,17 @@ mod tests {
          {
             let mut tracker = ListTracker::default();
             tracker.start_list(false);
-            tracker.start_item(
-                SourceLine::new(1).expect("non-zero"),
-                SpanStart::default(),
-            );
+            tracker.start_item(SourceLine::new(1).expect("non-zero"));
             tracker.push_text(
                 "[x] Task with multiple tags #other #task #work",
                 false,
             );
             let tag_filters = [Tag::parse("#task").unwrap()];
-            tracker.end_item(
-                &tag_filters,
-                &TaskStatusMap::default(),
-                BytePos::new(0),
-            );
+            tracker.end_item(&tag_filters, &TaskStatusMap::default());
             tracker.end_list();
 
-            let item = tracker.lists.first().expect("item present");
+            let lists = tracker.into_lists();
+            let item = lists.first().expect("item present");
             assert!(matches!(item.kind(), ListItemType::Task(_)));
         }
 
@@ -847,21 +823,15 @@ mod tests {
          {
             let mut tracker = ListTracker::default();
             tracker.start_list(false);
-            tracker.start_item(
-                SourceLine::new(1).expect("non-zero"),
-                SpanStart::default(),
-            );
+            tracker.start_item(SourceLine::new(1).expect("non-zero"));
             tracker.push_text("[x] Task matching second filter #todo", false);
             let tag_filters =
                 [Tag::parse("#task").unwrap(), Tag::parse("#todo").unwrap()];
-            tracker.end_item(
-                &tag_filters,
-                &TaskStatusMap::default(),
-                BytePos::new(0),
-            );
+            tracker.end_item(&tag_filters, &TaskStatusMap::default());
             tracker.end_list();
 
-            let item = tracker.lists.first().expect("item present");
+            let lists = tracker.into_lists();
+            let item = lists.first().expect("item present");
             assert!(matches!(item.kind(), ListItemType::Task(_)));
         }
 
@@ -869,21 +839,15 @@ mod tests {
         fn rejects_prefix_match_for_exact_nested_tag() {
             let mut tracker = ListTracker::default();
             tracker.start_list(false);
-            tracker.start_item(
-                SourceLine::new(1).expect("non-zero"),
-                SpanStart::default(),
-            );
+            tracker.start_item(SourceLine::new(1).expect("non-zero"));
             tracker
                 .push_text("[x] Checkbox with nested tag #task/project", false);
             let tag_filters = [Tag::parse("#task").unwrap()];
-            tracker.end_item(
-                &tag_filters,
-                &TaskStatusMap::default(),
-                BytePos::new(0),
-            );
+            tracker.end_item(&tag_filters, &TaskStatusMap::default());
             tracker.end_list();
 
-            let item = tracker.lists.first().expect("item present");
+            let lists = tracker.into_lists();
+            let item = lists.first().expect("item present");
             assert_eq!(item.kind(), &ListItemType::Checkbox);
         }
 
@@ -891,20 +855,14 @@ mod tests {
         fn accepts_exact_nested_tag_match() {
             let mut tracker = ListTracker::default();
             tracker.start_list(false);
-            tracker.start_item(
-                SourceLine::new(1).expect("non-zero"),
-                SpanStart::default(),
-            );
+            tracker.start_item(SourceLine::new(1).expect("non-zero"));
             tracker.push_text("[x] Task with nested tag #task/project", false);
             let tag_filters = [Tag::parse("#task/project").unwrap()];
-            tracker.end_item(
-                &tag_filters,
-                &TaskStatusMap::default(),
-                BytePos::new(0),
-            );
+            tracker.end_item(&tag_filters, &TaskStatusMap::default());
             tracker.end_list();
 
-            let item = tracker.lists.first().expect("item present");
+            let lists = tracker.into_lists();
+            let item = lists.first().expect("item present");
             assert!(matches!(item.kind(), ListItemType::Task(_)));
         }
 
@@ -912,25 +870,18 @@ mod tests {
         fn keeps_unmarked_item_plain_even_with_matching_tag() {
             let mut tracker = ListTracker::default();
             tracker.start_list(false);
-            tracker.start_item(
-                SourceLine::new(1).expect("non-zero"),
-                SpanStart::default(),
-            );
+            tracker.start_item(SourceLine::new(1).expect("non-zero"));
             tracker.push_text("Plain item with tag #task", false);
             let tag_filters = [Tag::parse("#task").unwrap()];
-            tracker.end_item(
-                &tag_filters,
-                &TaskStatusMap::default(),
-                BytePos::new(0),
-            );
+            tracker.end_item(&tag_filters, &TaskStatusMap::default());
             tracker.end_list();
 
-            let item = tracker.lists.first().expect("item present");
+            let lists = tracker.into_lists();
+            let item = lists.first().expect("item present");
             assert_eq!(item.kind(), &ListItemType::Plain);
         }
     }
 
-    #[expect(clippy::panic, reason = "test assertions on enum variants")]
     mod fully_complete {
         use pretty_assertions::assert_eq;
 
@@ -942,9 +893,7 @@ mod tests {
             let note = parse("- [ ] Lone task");
 
             let item = note.lists().first().expect("item present");
-            let ListItemType::Task(task) = item.kind() else {
-                panic!("must be task");
-            };
+            let task = item.kind().as_task().expect("task kind");
             assert_eq!(task.is_fully_complete(), true);
         }
 
@@ -953,9 +902,7 @@ mod tests {
             let note = parse("- [ ] Parent\n  - [x] Child 1\n  - [x] Child 2");
 
             let parent = note.lists().first().expect("parent present");
-            let ListItemType::Task(parent_task) = parent.kind() else {
-                panic!("must be task");
-            };
+            let parent_task = parent.kind().as_task().expect("task kind");
             assert_eq!(parent_task.is_fully_complete(), true);
         }
 
@@ -964,9 +911,7 @@ mod tests {
             let note = parse("- [ ] Parent\n  - [-] Cancelled child");
 
             let parent = note.lists().first().expect("parent present");
-            let ListItemType::Task(parent_task) = parent.kind() else {
-                panic!("must be task");
-            };
+            let parent_task = parent.kind().as_task().expect("task kind");
             assert_eq!(parent_task.is_fully_complete(), true);
         }
 
@@ -977,9 +922,7 @@ mod tests {
             );
 
             let parent = note.lists().first().expect("parent present");
-            let ListItemType::Task(parent_task) = parent.kind() else {
-                panic!("must be task");
-            };
+            let parent_task = parent.kind().as_task().expect("task kind");
             assert_eq!(parent_task.is_fully_complete(), true);
         }
 
@@ -990,9 +933,7 @@ mod tests {
             );
 
             let parent = note.lists().first().expect("parent present");
-            let ListItemType::Task(parent_task) = parent.kind() else {
-                panic!("must be task");
-            };
+            let parent_task = parent.kind().as_task().expect("task kind");
             assert_eq!(parent_task.is_fully_complete(), false);
         }
 
@@ -1001,9 +942,7 @@ mod tests {
             let note = parse("- [x] Parent\n  - [/] In progress child");
 
             let parent = note.lists().first().expect("parent present");
-            let ListItemType::Task(parent_task) = parent.kind() else {
-                panic!("must be task");
-            };
+            let parent_task = parent.kind().as_task().expect("task kind");
             assert_eq!(parent_task.is_fully_complete(), false);
         }
 
@@ -1013,9 +952,7 @@ mod tests {
                 parse("- [ ] Parent\n  - Plain child 1\n  - Plain child 2");
 
             let parent = note.lists().first().expect("parent present");
-            let ListItemType::Task(parent_task) = parent.kind() else {
-                panic!("must be task");
-            };
+            let parent_task = parent.kind().as_task().expect("task kind");
             assert_eq!(parent_task.is_fully_complete(), true);
         }
 
@@ -1032,9 +969,7 @@ mod tests {
             let note = parse_markdown(&input);
 
             let parent = note.lists().first().expect("parent present");
-            let ListItemType::Task(parent_task) = parent.kind() else {
-                panic!("must be task");
-            };
+            let parent_task = parent.kind().as_task().expect("task kind");
             assert_eq!(parent_task.is_fully_complete(), true);
         }
 
@@ -1045,21 +980,15 @@ mod tests {
 
             let items = note.lists();
             let l1 = items.first().expect("l1 present");
-            let ListItemType::Task(t1) = l1.kind() else {
-                panic!("must be task");
-            };
+            let t1 = l1.kind().as_task().expect("task kind");
             assert_eq!(t1.is_fully_complete(), true);
 
             let l2 = items.get(1).expect("l2 item present");
-            let ListItemType::Task(t2) = l2.kind() else {
-                panic!("must be task");
-            };
+            let t2 = l2.kind().as_task().expect("task kind");
             assert_eq!(t2.is_fully_complete(), true);
 
             let l3 = items.get(2).expect("l3 item present");
-            let ListItemType::Task(t3) = l3.kind() else {
-                panic!("must be task");
-            };
+            let t3 = l3.kind().as_task().expect("task kind");
             assert_eq!(t3.is_fully_complete(), true);
         }
 
@@ -1070,21 +999,15 @@ mod tests {
 
             let items = note.lists();
             let l1 = items.first().expect("l1 present");
-            let ListItemType::Task(t1) = l1.kind() else {
-                panic!("must be task");
-            };
+            let t1 = l1.kind().as_task().expect("task kind");
             assert_eq!(t1.is_fully_complete(), false);
 
             let l2 = items.get(1).expect("l2 item present");
-            let ListItemType::Task(t2) = l2.kind() else {
-                panic!("must be task");
-            };
+            let t2 = l2.kind().as_task().expect("task kind");
             assert_eq!(t2.is_fully_complete(), false);
 
             let l3 = items.get(2).expect("l3 item present");
-            let ListItemType::Task(t3) = l3.kind() else {
-                panic!("must be task");
-            };
+            let t3 = l3.kind().as_task().expect("task kind");
             assert_eq!(t3.is_fully_complete(), true);
         }
 
@@ -1095,9 +1018,7 @@ mod tests {
             );
 
             let parent = note.lists().first().expect("parent present");
-            let ListItemType::Task(parent_task) = parent.kind() else {
-                panic!("must be task");
-            };
+            let parent_task = parent.kind().as_task().expect("task kind");
             assert_eq!(parent_task.is_fully_complete(), false);
         }
 
@@ -1107,9 +1028,7 @@ mod tests {
                 parse("- [ ] Parent\n  - Plain bullet\n    - [x] Done subtask");
 
             let parent = note.lists().first().expect("parent present");
-            let ListItemType::Task(parent_task) = parent.kind() else {
-                panic!("must be task");
-            };
+            let parent_task = parent.kind().as_task().expect("task kind");
             assert_eq!(parent_task.is_fully_complete(), true);
         }
 
@@ -1118,9 +1037,7 @@ mod tests {
             let note = parse("- [x] Parent\n  - [?] Unknown marker child");
 
             let parent = note.lists().first().expect("parent present");
-            let ListItemType::Task(parent_task) = parent.kind() else {
-                panic!("must be task");
-            };
+            let parent_task = parent.kind().as_task().expect("task kind");
             assert_eq!(parent_task.is_fully_complete(), false);
         }
     }
@@ -1344,6 +1261,26 @@ mod tests {
             let item = note.lists().first().expect("item present");
             let task = item.kind().as_task().expect("task kind");
             assert_eq!(task.dates().get(TaskDateType::Due), None);
+        }
+
+        #[test]
+        fn skips_invalid_date_after_emoji_and_finds_subsequent_valid_date() {
+            let note = parse("- [ ] Task 📅 2026-13-45 📅 2025-01-15");
+            let item = note.lists().first().expect("item present");
+            let task = item.kind().as_task().expect("task item");
+            assert_eq!(
+                task.dates().get(TaskDateType::Due),
+                Some(DateValue::parse_iso("2025-01-15").unwrap())
+            );
+            assert!(item.clean_text().contains("📅 2026-13-45"));
+            assert!(!item.clean_text().contains("2025-01-15"));
+        }
+
+        #[test]
+        fn strips_multiple_distinct_due_emojis_from_clean_text() {
+            let note = parse("- [ ] Task 📅 2025-01-15 and 🗓 2025-02-02");
+            let item = note.lists().first().expect("item present");
+            assert_eq!(item.clean_text(), "Task and");
         }
     }
 }

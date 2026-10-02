@@ -166,21 +166,6 @@ impl Frontmatter {
                 Tag::parse_lenient_into(candidate, &mut buf).ok()
             })
     }
-
-    /// Returns `true` if no structured fields were parsed.
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; kept for Frontmatter \
-                      accessor symmetry with its fields"
-        )
-    )]
-    pub(crate) fn is_empty(&self) -> bool {
-        self.fields.is_empty()
-    }
 }
 
 /// Converts raw YAML frontmatter into structured fields.
@@ -238,7 +223,7 @@ mod tests {
             let raw = RawFrontmatter::new("  \n");
             let fm = Frontmatter::from(&raw);
 
-            assert_eq!(fm.is_empty(), true);
+            assert_eq!(fm.fields().is_empty(), true);
         }
 
         #[test]
@@ -246,7 +231,7 @@ mod tests {
             let raw = RawFrontmatter::new("invalid: [yaml: :");
             let fm = Frontmatter::from(&raw);
 
-            assert_eq!(fm.is_empty(), true);
+            assert_eq!(fm.fields().is_empty(), true);
         }
 
         #[test]
@@ -308,7 +293,7 @@ mod tests {
                     raw.parse(),
                     Err(FrontmatterParseError::Parse(_))
                 ));
-                assert!(Frontmatter::from(&raw).is_empty());
+                assert!(Frontmatter::from(&raw).fields().is_empty());
             }
 
             #[test]
@@ -317,7 +302,7 @@ mod tests {
 
                 let fm = raw.parse().expect("valid mapping");
 
-                assert!(fm.is_empty());
+                assert!(fm.fields().is_empty());
             }
         }
 

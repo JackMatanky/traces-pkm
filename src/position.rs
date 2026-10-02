@@ -7,7 +7,6 @@
 //!   conversions.
 //! - [`BytePos`]: 0-indexed UTF-8 byte position into source text.
 //! - [`ByteSpan`]: half-open `[start..end)` byte range in source text.
-//! - [`SpanStart`]: open span anchor awaiting its closing boundary.
 //! - [`SourceLine`]: 1-indexed source line number.
 //! - [`PositionError`]: errors from invalid position or line conversions.
 //! - [`Spanned`]: value paired with its [`ByteSpan`] in source text.
@@ -59,14 +58,6 @@ impl LineIndex {
         SourceLine::new(u32::try_from(line).unwrap_or(u32::MAX))
             .expect("line number is always non-zero")
     }
-
-    /// Converts a byte span into its starting and ending source lines.
-    #[cfg(test)]
-    #[inline]
-    #[must_use]
-    pub(crate) fn lines_of(&self, span: ByteSpan) -> (SourceLine, SourceLine) {
-        (self.line_at(span.start()), self.line_at(span.end()))
-    }
 }
 
 /// An immutable, half-open `[start..end)` UTF-8 byte span in source text.
@@ -104,13 +95,6 @@ impl ByteSpan {
     #[must_use]
     pub(crate) const fn start(self) -> BytePos {
         self.start
-    }
-
-    /// Returns the exclusive ending byte position.
-    #[inline]
-    #[must_use]
-    pub(crate) const fn end(self) -> BytePos {
-        self.end
     }
 
     /// Returns the starting byte position as `usize`.
@@ -225,14 +209,6 @@ impl BytePos {
     pub(crate) fn saturating_from(pos: usize) -> Self {
         Self::try_from(pos).unwrap_or(Self::MAX)
     }
-
-    /// Converts this position into an open span anchor.
-    #[cfg(test)]
-    #[inline]
-    #[must_use]
-    pub(crate) const fn to_start(self) -> SpanStart {
-        SpanStart(self)
-    }
 }
 
 impl From<u32> for BytePos {
@@ -269,42 +245,6 @@ impl TryFrom<usize> for BytePos {
     #[inline]
     fn try_from(pos: usize) -> Result<Self, Self::Error> {
         u32::try_from(pos).map(Self).map_err(|_| PositionError::BytePosOverflow)
-    }
-}
-
-/// An open span anchor whose start position is known, awaiting its closing
-/// boundary.
-#[derive(Copy, Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) struct SpanStart(BytePos);
-
-impl SpanStart {
-    /// Creates a new open span anchor starting at `pos`.
-    #[inline]
-    #[must_use]
-    pub(crate) const fn at(pos: BytePos) -> Self {
-        Self(pos)
-    }
-
-    /// Closes the span at `end`, producing an immutable [`ByteSpan`].
-    #[inline]
-    #[must_use]
-    pub(crate) fn close(self, end: BytePos) -> ByteSpan {
-        ByteSpan::new(self.0, end)
-    }
-
-    /// Returns the start position.
-    #[cfg(test)]
-    #[inline]
-    #[must_use]
-    pub(crate) const fn pos(self) -> BytePos {
-        self.0
-    }
-}
-
-impl From<BytePos> for SpanStart {
-    #[inline]
-    fn from(pos: BytePos) -> Self {
-        Self::at(pos)
     }
 }
 
@@ -462,14 +402,6 @@ impl<T> Spanned<T> {
         self.span.start()
     }
 
-    /// Returns the exclusive ending byte position.
-    #[cfg(test)]
-    #[inline]
-    #[must_use]
-    pub(crate) const fn end(&self) -> BytePos {
-        self.span.end()
-    }
-
     /// Returns the starting byte position as `usize`.
     #[inline]
     #[must_use]
@@ -582,13 +514,6 @@ mod tests {
 
             assert_eq!(index.line_at(BytePos::new(pos)), line(expected_line));
         }
-
-        #[test]
-        fn resolves_lines_of_span() {
-            let index = LineIndex::new("one\ntwo\nthree");
-            let span = ByteSpan::new(BytePos::new(2), BytePos::new(6));
-            assert_eq!(index.lines_of(span), (line(1), line(2)));
-        }
     }
 
     mod byte_pos {
@@ -673,28 +598,6 @@ mod tests {
         }
     }
 
-    mod span_start {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn creates_and_closes_into_byte_span() {
-            let start = SpanStart::at(BytePos::new(10));
-            assert_eq!(start.pos(), BytePos::new(10));
-
-            let span = start.close(BytePos::new(25));
-            assert_eq!(span.start(), BytePos::new(10));
-            assert_eq!(span.end(), BytePos::new(25));
-        }
-
-        #[test]
-        fn converts_from_byte_pos() {
-            let start = BytePos::new(5).to_start();
-            assert_eq!(start, SpanStart::from(BytePos::new(5)));
-        }
-    }
-
     mod byte_span {
         use pretty_assertions::assert_eq;
 
@@ -704,13 +607,13 @@ mod tests {
         fn enforces_start_less_than_or_equal_end() {
             let normal = ByteSpan::new(BytePos::new(5), BytePos::new(10));
             assert_eq!(normal.start(), BytePos::new(5));
-            assert_eq!(normal.end(), BytePos::new(10));
+            assert_eq!(normal.end_usize(), 10);
             assert_eq!(normal.len(), 5);
             assert!(!normal.is_empty());
 
             let inverted = ByteSpan::new(BytePos::new(15), BytePos::new(5));
             assert_eq!(inverted.start(), BytePos::new(15));
-            assert_eq!(inverted.end(), BytePos::new(15));
+            assert_eq!(inverted.end_usize(), 15);
             assert_eq!(inverted.len(), 0);
             assert!(inverted.is_empty());
         }
@@ -873,7 +776,6 @@ mod tests {
             let spanned = Spanned::from_usize_range("item", 3..10);
 
             assert_eq!(spanned.start(), BytePos::new(3));
-            assert_eq!(spanned.end(), BytePos::new(10));
             assert_eq!(spanned.start_usize(), 3);
             assert_eq!(spanned.end_usize(), 10);
         }

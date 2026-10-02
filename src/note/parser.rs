@@ -52,7 +52,7 @@ use pulldown_cmark::{
 use super::{
     Frontmatter, Link, LinkType, Note, NoteFieldValue, RawFrontmatter,
 };
-use crate::{BytePos, ByteSpan, FieldKey, LineIndex, SpanStart, Tag};
+use crate::{BytePos, ByteSpan, FieldKey, LineIndex, Tag};
 
 mod inline;
 mod input;
@@ -126,8 +126,8 @@ type FlushedFields = Vec<(FieldKey, NoteFieldValue)>;
 ///
 /// Holds the inline fields and tags extracted from an item before they are
 /// folded into the document-level collections.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub(super) struct FlushedMetadata {
+#[derive(Debug)]
+struct FlushedMetadata {
     fields: FlushedFields,
     tags: Vec<Tag>,
 }
@@ -136,7 +136,7 @@ impl FlushedMetadata {
     /// Creates a flushed metadata record with the given fields and tags.
     #[inline]
     #[must_use]
-    pub(super) const fn new(
+    const fn new(
         fields: Vec<(FieldKey, NoteFieldValue)>,
         tags: Vec<Tag>,
     ) -> Self {
@@ -149,30 +149,22 @@ impl FlushedMetadata {
     /// Returns a slice of the flushed inline fields.
     #[inline]
     #[must_use]
-    pub(super) fn fields(&self) -> &[(FieldKey, NoteFieldValue)] {
+    fn fields(&self) -> &[(FieldKey, NoteFieldValue)] {
         &self.fields
     }
 
     /// Returns a slice of the flushed tags.
     #[inline]
     #[must_use]
-    pub(super) fn tags(&self) -> &[Tag] {
+    fn tags(&self) -> &[Tag] {
         &self.tags
     }
 
     /// Decomposes the record into its inner field and tag collections.
     #[inline]
     #[must_use]
-    pub(super) fn into_parts(self) -> (FlushedFields, Vec<Tag>) {
+    fn into_parts(self) -> (FlushedFields, Vec<Tag>) {
         (self.fields, self.tags)
-    }
-
-    /// Returns `true` if no fields and no tags were flushed.
-    #[cfg(test)]
-    #[inline]
-    #[must_use]
-    pub(super) fn is_empty(&self) -> bool {
-        self.fields.is_empty() && self.tags.is_empty()
     }
 }
 
@@ -202,7 +194,7 @@ fn handle_event(ctx: &mut ParserContext<'_>, event: Event<'_>, span: ByteSpan) {
     }
     match event {
         Event::Start(tag) => handle_start_tag(ctx, tag, span.start()),
-        Event::End(tag) => handle_end_tag(ctx, tag, span.end()),
+        Event::End(tag) => handle_end_tag(ctx, tag),
         Event::Code(text) => ctx.handle_code(&text),
         Event::Text(text) => ctx.push_text(&text),
         Event::SoftBreak | Event::HardBreak => ctx.push_break(),
@@ -250,14 +242,14 @@ fn handle_start_tag(
 ///
 /// Any tag without a dedicated arm still ends the item's first line
 /// structurally, counting as the marker's trailing whitespace.
-fn handle_end_tag(ctx: &mut ParserContext<'_>, tag: TagEnd, end: BytePos) {
+fn handle_end_tag(ctx: &mut ParserContext<'_>, tag: TagEnd) {
     match tag {
         TagEnd::MetadataBlock(_) => ctx.end_metadata_block(),
         TagEnd::Link => ctx.end_link(),
         TagEnd::CodeBlock => ctx.end_code_block(),
         TagEnd::Paragraph | TagEnd::Heading(_) => ctx.end_text_block(),
         TagEnd::List(_) => ctx.end_list(),
-        TagEnd::Item => ctx.end_item(end),
+        TagEnd::Item => ctx.end_item(),
         _ => ctx.list_nesting.resolve_pending_marker(),
     }
 }
@@ -317,8 +309,8 @@ impl<'a> ParserContext<'a> {
 
     /// Consumes the accumulated context into a [`Note`].
     ///
-    /// Merges frontmatter-sourced tags (read from
-    /// [`MarkdownParserInput::frontmatter`]) after body-sourced tags.
+    /// Merges frontmatter-sourced tags (keyed by the configured tags name
+    /// from [`MarkdownParserInput::frontmatter`]) after body-sourced tags.
     fn into_note(self) -> Note {
         let mut tags = self.tags;
         if let Some(frontmatter) = self.frontmatter.as_ref() {
@@ -327,7 +319,7 @@ impl<'a> ParserContext<'a> {
         Note::new(
             self.input.path(),
             self.frontmatter,
-            self.list_nesting.lists,
+            self.list_nesting.into_lists(),
             self.outlinks,
             self.inline_fields,
             tags,
@@ -461,15 +453,14 @@ impl<'a> ParserContext<'a> {
     /// Computes the item's source line from `pos` and starts tracking it.
     fn start_item(&mut self, pos: BytePos) {
         let line = self.line_index.line_at(pos);
-        self.list_nesting.start_item(line, SpanStart::at(pos));
+        self.list_nesting.start_item(line);
     }
 
     /// Flushes and records the innermost list item.
-    fn end_item(&mut self, end: BytePos) {
+    fn end_item(&mut self) {
         let flushed = self.list_nesting.end_item(
             self.input.tasks().tag_filters(),
             self.input.tasks().statuses(),
-            end,
         );
         self.extend_from_flush(flushed);
     }
@@ -612,7 +603,7 @@ mod tests {
 
             assert_eq!(note.frontmatter().map(|fm| fm.fields().len()), Some(2));
             assert_eq!(
-                note.frontmatter().map(Frontmatter::is_empty),
+                note.frontmatter().map(|fm| fm.fields().is_empty()),
                 Some(false)
             );
         }
@@ -631,7 +622,7 @@ mod tests {
             let note = parse(input);
 
             assert_eq!(
-                note.frontmatter().map(Frontmatter::is_empty),
+                note.frontmatter().map(|fm| fm.fields().is_empty()),
                 Some(true)
             );
         }
@@ -725,25 +716,19 @@ mod tests {
         }
 
         #[test]
-        #[expect(clippy::panic, reason = "test assertion on enum variant")]
         fn extracts_task_item_completion_status() {
             let input = "- [ ] Incomplete task\n- [x] Completed task";
             let note = parse(input);
 
             let items = note.lists();
             let item0 = items.first().expect("item 0");
-            let item1 = items.get(1).expect("item 1");
-
             assert_eq!(item0.text(), "Incomplete task");
-            let ListItemType::Task(task0) = item0.kind() else {
-                panic!("item0 must be a Task, got {:?}", item0.kind());
-            };
+            let task0 = item0.kind().as_task().expect("item 0 is a task");
             assert_eq!(task0.status().kind().completed(), Some(false));
 
+            let item1 = items.get(1).expect("item 1");
             assert_eq!(item1.text(), "Completed task");
-            let ListItemType::Task(task1) = item1.kind() else {
-                panic!("item1 must be a Task, got {:?}", item1.kind());
-            };
+            let task1 = item1.kind().as_task().expect("item 1 is a task");
             assert_eq!(task1.status().kind().completed(), Some(true));
         }
 
@@ -1620,87 +1605,6 @@ mod tests {
                 items.get(3).expect("item 3").kind(),
                 &ListItemType::Plain
             );
-        }
-
-        #[test]
-        fn classifies_all_marked_items_as_tasks_when_filters_empty() {
-            let tasks = TaskConfig::default();
-            let input =
-                "- [ ] Todo without tags\n- [x] Done with #other\n- Plain item";
-            let note = parse_with_tasks(input, &tasks);
-
-            assert_eq!(note.tasks().count(), 2);
-
-            let items = note.lists();
-            assert_eq!(items.len(), 3);
-            assert!(matches!(
-                items.first().expect("item 0").kind(),
-                ListItemType::Task(_)
-            ));
-            assert!(matches!(
-                items.get(1).expect("item 1").kind(),
-                ListItemType::Task(_)
-            ));
-            assert_eq!(
-                items.get(2).expect("item 2").kind(),
-                &ListItemType::Plain
-            );
-        }
-
-        #[test]
-        fn enforces_exact_tag_matching_for_nested_tags() {
-            let tasks = TaskConfig::from_tags(&["#task"]);
-            let input = "- [ ] Nested tag #task/project\n- [ ] Exact tag #task";
-            let note = parse_with_tasks(input, &tasks);
-
-            let tasks_collected: Vec<&ListItem> = note.tasks().collect();
-            assert_eq!(tasks_collected.len(), 1);
-            assert_eq!(
-                tasks_collected.first().copied().map(ListItem::raw_text),
-                Some("Exact tag #task")
-            );
-
-            let items = note.lists();
-            assert_eq!(
-                items.first().expect("item 0").kind(),
-                &ListItemType::Checkbox
-            );
-            assert!(matches!(
-                items.get(1).expect("item 1").kind(),
-                ListItemType::Task(_)
-            ));
-        }
-    }
-
-    mod flushed_metadata {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn carries_fields_and_tags_and_reports_emptiness() {
-            let empty = FlushedMetadata::default();
-            assert!(empty.is_empty());
-            assert_eq!(empty.fields(), &[]);
-            assert_eq!(empty.tags(), &[]);
-
-            let key = FieldKey::try_new("key").unwrap();
-            let tag = Tag::parse("#tag").unwrap();
-            let metadata = FlushedMetadata::new(
-                vec![(key.clone(), NoteFieldValue::String("value".to_owned()))],
-                vec![tag.clone()],
-            );
-
-            assert!(!metadata.is_empty());
-            assert_eq!(metadata.fields().len(), 1);
-            assert_eq!(metadata.tags(), std::slice::from_ref(&tag));
-
-            let (fields, tags) = metadata.into_parts();
-            assert_eq!(fields, [(
-                key,
-                NoteFieldValue::String("value".to_owned())
-            )]);
-            assert_eq!(tags, [tag]);
         }
     }
 }

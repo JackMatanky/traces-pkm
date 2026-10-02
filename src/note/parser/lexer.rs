@@ -16,7 +16,7 @@ use crate::{
 /// Converts task emoji shorthands into date fields when `mode` is
 /// [`TaskFieldEmojis::Include`]. Tags are ignored during field scanning.
 #[must_use]
-pub(super) fn scan_fields(
+fn scan_fields(
     text: &str,
     mode: TaskFieldEmojis,
 ) -> Vec<(FieldKey, NoteFieldValue)> {
@@ -295,6 +295,9 @@ fn scan_tags(text: &str) -> Vec<Tag> {
 }
 
 /// Scans both inline fields and tags in a single operation.
+///
+/// Tags use a second lexing pass because the field lexer consumes whole
+/// bare-field lines, which would swallow tags inside field values.
 #[must_use]
 pub(super) fn scan_metadata(
     text: &str,

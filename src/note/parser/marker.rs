@@ -4,6 +4,12 @@
 //! following `CommonMark` and Obsidian whitespace rules.
 use crate::DelimiterType;
 
+/// Maximum buffered bytes for marker recognition.
+///
+/// Fits the widest complete marker prefix: `[`, a 4-byte symbol, `]`, and
+/// one trailing whitespace byte.
+const MAX_MARKER_BYTES: usize = 8;
+
 /// Action required by caller after advancing marker accumulation.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum MarkerAction<'a> {
@@ -37,7 +43,7 @@ const CLOSE_BRACKET: char = match DelimiterType::Bracket.close_char() {
 /// text with the marker and its single trailing ASCII whitespace character
 /// trimmed.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(super) struct MarkerScan<'a> {
+struct MarkerScan<'a> {
     symbol: char,
     remainder: &'a str,
 }
@@ -46,14 +52,14 @@ impl MarkerScan<'_> {
     /// Returns the character inside the marker's brackets.
     #[inline]
     #[must_use]
-    pub(super) const fn symbol(&self) -> char {
+    const fn symbol(&self) -> char {
         self.symbol
     }
 
     /// Returns the text after the marker and its trailing whitespace.
     #[inline]
     #[must_use]
-    pub(super) const fn remainder(&self) -> &str {
+    const fn remainder(&self) -> &str {
         self.remainder
     }
 }
@@ -61,7 +67,7 @@ impl MarkerScan<'_> {
 /// Classification of assembled item-leading text against the marker shape:
 /// `[`, one non-`]` character, `]`, then one ASCII whitespace character.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(super) enum MarkerPrefix<'a> {
+enum MarkerPrefix<'a> {
     /// `text` is a strict prefix of a potential marker (or exactly `[<char>]`
     /// awaiting its trailing whitespace); keep accumulating text.
     Incomplete,
@@ -77,7 +83,7 @@ pub(super) enum MarkerPrefix<'a> {
 /// prefix awaiting additional characters, or an invalid marker sequence.
 #[inline]
 #[must_use]
-pub(super) fn scan_marker_prefix(text: &str) -> MarkerPrefix<'_> {
+fn scan_marker_prefix(text: &str) -> MarkerPrefix<'_> {
     let Some(after_open) = text.strip_prefix(OPEN_BRACKET) else {
         return MarkerPrefix::Rejected;
     };
@@ -131,7 +137,7 @@ fn split_marker_exact(text: &str) -> Option<char> {
 /// Returns `Some` if `text` is a complete marker, or `None` otherwise.
 #[inline]
 #[must_use]
-pub(super) fn scan_marker_at_line_end(text: &str) -> Option<MarkerScan<'_>> {
+fn scan_marker_at_line_end(text: &str) -> Option<MarkerScan<'_>> {
     match scan_marker_prefix(text) {
         MarkerPrefix::Complete(scan) => Some(scan),
         MarkerPrefix::Incomplete => {
@@ -166,7 +172,8 @@ fn char_boundary_le(text: &str, max: usize) -> usize {
     }
     boundary
 }
-/// Classification of a decided item leading marker.
+
+/// Classification of a decided item-leading marker.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum ItemMarker {
     Plain,
@@ -181,7 +188,7 @@ pub(super) enum ItemMarker {
 pub(super) enum MarkerAccumulator {
     /// Leading bytes are still being assembled; classification is pending.
     Buffering {
-        buf: [u8; 8],
+        buf: [u8; MAX_MARKER_BYTES],
         len: u8,
     },
     /// Classification is final; the buffered bytes are retained so late
@@ -189,7 +196,7 @@ pub(super) enum MarkerAccumulator {
     /// return them.
     Decided {
         marker: ItemMarker,
-        buf: [u8; 8],
+        buf: [u8; MAX_MARKER_BYTES],
         len: u8,
     },
 }
@@ -200,7 +207,7 @@ impl MarkerAccumulator {
     #[must_use]
     pub(super) const fn new() -> Self {
         Self::Buffering {
-            buf: [0; 8],
+            buf: [0; MAX_MARKER_BYTES],
             len: 0,
         }
     }
@@ -253,6 +260,9 @@ impl MarkerAccumulator {
 
     /// Buffers incoming text while the leading marker is still undecided.
     fn push_buffering<'a>(&'a mut self, text: &'a str) -> MarkerAction<'a> {
+        if text.is_empty() {
+            return MarkerAction::None;
+        }
         let Self::Buffering {
             mut buf,
             mut len,
@@ -261,20 +271,13 @@ impl MarkerAccumulator {
             return MarkerAction::None;
         };
 
-        if len == 0 && !text.starts_with('[') {
-            *self = Self::Decided {
-                marker: ItemMarker::Plain,
-                buf,
-                len,
-            };
-            return MarkerAction::FlushPlain {
-                buffered: "",
-                trailing: text,
-            };
+        if len == 0 && !text.starts_with(OPEN_BRACKET) {
+            // With nothing buffered, an empty buffer flushes as "".
+            return self.flush_decided_plain(buf, len, text);
         }
 
         let current_len = usize::from(len);
-        let remaining = 8usize.saturating_sub(current_len);
+        let remaining = MAX_MARKER_BYTES.saturating_sub(current_len);
         let take_bytes = if text.len() <= remaining {
             text.len()
         } else {
@@ -295,6 +298,26 @@ impl MarkerAccumulator {
         len = len.saturating_add(u8::try_from(take_bytes).unwrap_or(0));
 
         let candidate = Self::buffered_str(&buf, len);
+        self.resolve_candidate(
+            buf,
+            len,
+            candidate,
+            text,
+            take_bytes,
+            current_len,
+        )
+    }
+
+    /// Decides the accumulator from the buffered candidate assembled so far.
+    fn resolve_candidate<'a>(
+        &'a mut self,
+        buf: [u8; MAX_MARKER_BYTES],
+        len: u8,
+        candidate: &str,
+        text: &'a str,
+        take_bytes: usize,
+        current_len: usize,
+    ) -> MarkerAction<'a> {
         match scan_marker_prefix(candidate) {
             MarkerPrefix::Complete(scan) => {
                 let symbol = scan.symbol();
@@ -339,7 +362,7 @@ impl MarkerAccumulator {
     /// text.
     fn flush_decided_plain<'s>(
         &'s mut self,
-        buf: [u8; 8],
+        buf: [u8; MAX_MARKER_BYTES],
         len: u8,
         trailing: &'s str,
     ) -> MarkerAction<'s> {
@@ -371,8 +394,8 @@ impl MarkerAccumulator {
     }
 
     /// Returns the buffered marker bytes as a string slice.
-    fn buffered_str(buf: &[u8; 8], len: u8) -> &str {
-        let clamped = usize::from(len.min(8));
+    fn buffered_str(buf: &[u8; MAX_MARKER_BYTES], len: u8) -> &str {
+        let clamped = usize::from(len).min(MAX_MARKER_BYTES);
         let slice = buf.get(..clamped).unwrap_or(buf.as_slice());
         std::str::from_utf8(slice).unwrap_or_default()
     }
@@ -653,6 +676,38 @@ mod tests {
             assert_eq!(acc.reject(), MarkerAction::None);
             assert!(acc.is_marked());
             assert_eq!(acc.marker_symbol(), Some('x'));
+        }
+
+        #[test]
+        fn flushes_plain_when_an_incomplete_marker_exceeds_the_buffer() {
+            // The marker shape fits the buffer, but a follow-up chunk cannot:
+            // the accumulator must flush the assembled prefix rather than
+            // buffer past its capacity.
+            let mut acc = MarkerAccumulator::new();
+            assert_eq!(acc.push_text("[✓"), MarkerAction::None);
+            assert_eq!(
+                acc.push_text("]🎉🎉🎉🎉🎉"),
+                MarkerAction::FlushPlain {
+                    buffered: "[✓]",
+                    trailing: "🎉🎉🎉🎉🎉"
+                }
+            );
+            assert!(!acc.is_marked());
+            assert_eq!(acc.marker_symbol(), None);
+        }
+
+        #[test]
+        fn decides_plain_when_a_wide_character_cannot_fit_the_buffer() {
+            // A character wider than the remaining buffer can never be the
+            // marker's trailing whitespace, so the item decides plain.
+            let mut acc = MarkerAccumulator::new();
+            assert_eq!(acc.push_text("[✓]"), MarkerAction::None);
+            assert_eq!(acc.push_text("🎉 task"), MarkerAction::FlushPlain {
+                buffered: "[✓]",
+                trailing: "🎉 task"
+            });
+            assert!(!acc.is_marked());
+            assert_eq!(acc.marker_symbol(), None);
         }
     }
 }
