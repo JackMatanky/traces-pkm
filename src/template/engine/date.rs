@@ -34,19 +34,17 @@
 
 use std::{fmt::Write as _, sync::Arc};
 
-use chrono::{
-    DateTime, Datelike as _, Days, Months, NaiveDate, NaiveDateTime, Utc,
-};
+use chrono::{DateTime, Datelike as _, NaiveDate, NaiveDateTime, Utc};
 use minijinja::{
     Environment, Error, ErrorKind,
     value::{Enumerator, Kwargs, Object, Value},
 };
-use num_traits::ToPrimitive as _;
 
 use super::error::{TemplateEngineResult, invalid_operation};
 use crate::{
     DEFAULT_DATE_FORMAT, DEFAULT_DATETIME_FORMAT, DateTimeValue, DateValue,
     DurationUnit,
+    date::{DateDiff, DatePoint, date_diff_measurement, shift_wall},
 };
 
 /// Method names `date` exposes, for [`DateOps::enumerate`].
@@ -475,78 +473,17 @@ fn date_shift_unit(
     // application); sub-day units shift the stored instant exactly, which a DST
     // transition then exposes in the local wall clock. A date-only input stays
     // civil for every unit: a zone-free date has no instant to shift.
-    let wall = match (parsed.precision, unit) {
-        (DatePrecision::Date, _)
-        | (
-            DatePrecision::DateTime,
-            DurationUnit::Year | DurationUnit::Month | DurationUnit::Day,
-        ) => shift_wall(parsed.wall, n, unit)
-            .ok_or_else(date_out_of_range_error)?,
-        (DatePrecision::DateTime, _) => {
-            let delta = match unit {
-                DurationUnit::Millisecond => {
-                    chrono::Duration::try_milliseconds(n)
-                }
-                u => chrono::Duration::try_seconds(
-                    u.seconds_i64()
-                        .ok_or_else(date_out_of_range_error)?
-                        .checked_mul(n)
-                        .ok_or_else(date_out_of_range_error)?,
-                ),
-            }
-            .ok_or_else(date_out_of_range_error)?;
-            let instant = parsed
-                .instant
-                .checked_add_signed(delta)
-                .ok_or_else(date_out_of_range_error)?;
-            DateTimeValue::from(instant)
-                .local_wall()
-                .ok_or_else(date_out_of_range_error)?
+    let wall = match parsed.precision {
+        DatePrecision::Date => shift_wall(parsed.wall, n, unit)
+            .map_err(|_| date_out_of_range_error())?,
+        DatePrecision::DateTime => {
+            let dt = DateTimeValue::from(parsed.instant);
+            let shifted =
+                dt.shift(n, unit).map_err(|_| date_out_of_range_error())?;
+            shifted.local_wall().ok_or_else(date_out_of_range_error)?
         }
     };
     format_precise(wall, parsed.precision)
-}
-
-/// Shifts a civil wall-clock datetime by `n` `unit`s.
-///
-/// Returns `None` when the unit has no whole-second value or the arithmetic
-/// overflows chrono's representable range.
-fn shift_wall(
-    wall: NaiveDateTime,
-    n: i64,
-    unit: DurationUnit,
-) -> Option<NaiveDateTime> {
-    match unit {
-        DurationUnit::Year => shift_months(wall, n.checked_mul(12)?),
-        DurationUnit::Month => shift_months(wall, n),
-        DurationUnit::Day => {
-            let days_u64 = u64::try_from(n.abs()).ok()?;
-            if n >= 0 {
-                wall.checked_add_days(Days::new(days_u64))
-            } else {
-                wall.checked_sub_days(Days::new(days_u64))
-            }
-        }
-        DurationUnit::Millisecond => {
-            wall.checked_add_signed(chrono::Duration::try_milliseconds(n)?)
-        }
-        u => wall.checked_add_signed(chrono::Duration::try_seconds(
-            u.seconds_i64()?.checked_mul(n)?,
-        )?),
-    }
-}
-
-/// Shifts `wall` by `months` calendar months, positive or negative.
-///
-/// Returns `None` when `months` doesn't fit a `u32` after taking its
-/// absolute value or the arithmetic overflows chrono's representable range.
-fn shift_months(wall: NaiveDateTime, months: i64) -> Option<NaiveDateTime> {
-    let months_u32 = u32::try_from(months.abs()).ok()?;
-    if months >= 0 {
-        wall.checked_add_months(Months::new(months_u32))
-    } else {
-        wall.checked_sub_months(Months::new(months_u32))
-    }
 }
 
 /// `{{ value | add_days(n) }}` is a convenience shortcut for
@@ -661,63 +598,6 @@ fn weekday(value: &str) -> TemplateEngineResult<u32> {
     Ok(parse_date(value)?.weekday().num_days_from_monday())
 }
 
-/// Whole calendar years from `from` to `to`, signed.
-///
-/// Delegates to chrono's [`NaiveDate::years_since`], which is day-of-year
-/// aware: a year is not "up" until `to`'s month/day reaches `from`'s. This
-/// wrapper just accepts either ordering.
-fn signed_years_since(from: NaiveDate, to: NaiveDate) -> i64 {
-    let (earlier, later, sign) = if to >= from {
-        (from, to, 1)
-    } else {
-        (to, from, -1)
-    };
-    #[expect(
-        clippy::expect_used,
-        reason = "earlier/later are ordered by construction just above, so \
-                  years_since's None case (base > self) is unreachable here"
-    )]
-    let years = later.years_since(earlier).expect(
-        "later >= earlier by construction, so years_since can't return None",
-    );
-    #[expect(
-        clippy::arithmetic_side_effects,
-        reason = "sign is always ±1 and years is bounded by NaiveDate's \
-                  representable range (~±262,000), so this multiply can't \
-                  overflow i64"
-    )]
-    let result = sign * i64::from(years);
-    result
-}
-
-/// Whole calendar months from `from` to `to`, signed. See
-/// [`signed_years_since`].
-///
-/// Chrono has no `months_since` equivalent, so this mirrors
-/// [`NaiveDate::years_since`]'s algorithm at month granularity: total calendar
-/// months between the dates, decremented by one when the day-of-month has not
-/// yet been reached.
-fn signed_months_since(from: NaiveDate, to: NaiveDate) -> i64 {
-    let (earlier, later, sign) = if to >= from {
-        (from, to, 1)
-    } else {
-        (to, from, -1)
-    };
-    #[expect(
-        clippy::arithmetic_side_effects,
-        reason = "year/month/day are all bounded by NaiveDate's representable \
-                  range (~±262,000 years), so the year subtraction, ×12 month \
-                  conversion, day comparison, and sign multiply can't \
-                  overflow i64"
-    )]
-    let result = sign
-        * (i64::from(later.year() - earlier.year()) * 12
-            + i64::from(later.month())
-            - i64::from(earlier.month())
-            - i64::from(later.day() < earlier.day()));
-    result
-}
-
 /// `{{ value | date_diff(other, unit="days") }}` returns the signed difference
 /// from the piped value to `other`, positive when `other` is later.
 ///
@@ -749,60 +629,19 @@ fn date_diff(
     let from = ParsedDate::parse(value)?;
     let to = ParsedDate::parse(other)?;
 
-    match unit {
-        DurationUnit::Year => Ok(Value::from(signed_years_since(
-            from.wall.date(),
-            to.wall.date(),
-        ))),
-        DurationUnit::Month => Ok(Value::from(signed_months_since(
-            from.wall.date(),
-            to.wall.date(),
-        ))),
-        u => {
-            let unit_secs = u.seconds();
-            // Fixed units measure elapsed time between the stored instants when
-            // both inputs carry a time component; a date-only input stays
-            // zone-free, so any such pair subtracts civil wall clocks.
-            let both_datetimes = from.precision == DatePrecision::DateTime
-                && to.precision == DatePrecision::DateTime;
-            let delta = if both_datetimes {
-                to.instant.signed_duration_since(from.instant)
-            } else {
-                to.wall.signed_duration_since(from.wall)
-            };
+    let both_datetimes = from.precision == DatePrecision::DateTime
+        && to.precision == DatePrecision::DateTime;
+    let diff = date_diff_measurement(
+        DatePoint::new(from.wall, from.instant),
+        DatePoint::new(to.wall, to.instant),
+        both_datetimes,
+        unit,
+    )
+    .map_err(|_| date_out_of_range_error())?;
 
-            if both_datetimes {
-                let whole_seconds =
-                    delta.num_seconds().to_f64().ok_or_else(|| {
-                        Error::new(
-                            ErrorKind::InvalidOperation,
-                            "date difference is too large to represent as \
-                             seconds",
-                        )
-                    })?;
-                let result = (whole_seconds
-                    + f64::from(delta.subsec_nanos()) / 1e9)
-                    / unit_secs;
-                Ok(Value::from(result))
-            } else if u == DurationUnit::Millisecond {
-                Ok(Value::from(delta.num_milliseconds()))
-            } else {
-                let unit_secs_i64 = u.seconds_i64().ok_or_else(|| {
-                    Error::new(
-                        ErrorKind::InvalidOperation,
-                        "duration unit has no whole-second value",
-                    )
-                })?;
-                #[expect(
-                    clippy::arithmetic_side_effects,
-                    reason = "unit_secs_i64 is 86_400, 3_600, 60, or 1 (fixed \
-                              units only), never zero, so this division never \
-                              panics"
-                )]
-                let result = delta.num_seconds() / unit_secs_i64;
-                Ok(Value::from(result))
-            }
-        }
+    match diff {
+        DateDiff::Whole(n) => Ok(Value::from(n)),
+        DateDiff::Exact(f) => Ok(Value::from(f)),
     }
 }
 
