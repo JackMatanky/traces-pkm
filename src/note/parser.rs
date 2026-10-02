@@ -258,15 +258,23 @@ struct ParserContext<'a> {
     /// Borrowed parse input providing the source text, path, and task and
     /// frontmatter configuration.
     input: &'a MarkdownParserInput<'a>,
+    /// Parsed YAML frontmatter, populated by the document's metadata block.
     frontmatter: Option<Frontmatter>,
+    /// Syntactic block currently being traversed.
     block: BlockContext,
+    /// Buffered frontmatter YAML text.
     metadata_buffer: String,
+    /// Outlinks recorded in document order.
     outlinks: Vec<Link>,
     /// Link currently being traversed and accumulating display text, if any.
     active_link: Option<ActiveLink>,
+    /// Nested list and list-item state for the document.
     list_nesting: ListTracker,
+    /// Buffer for top-level paragraph and heading text.
     body_buffer: String,
+    /// Inline fields keyed by canonical key in first-seen order.
     inline_fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
+    /// Tags scanned from body text in document order.
     tags: Vec<Tag>,
     /// Precomputed line-start positions for the source being parsed, used to
     /// populate the position fields of [`ListItem`](super::ListItem).
@@ -1081,6 +1089,19 @@ mod tests {
         use rstest::rstest;
 
         use super::*;
+
+        /// Asserts the note carries exactly one inline field whose key
+        /// canonically matches `key`, returning its values.
+        fn single_inline_field<'a>(
+            note: &'a Note,
+            key: &str,
+        ) -> &'a [NoteFieldValue] {
+            assert_eq!(note.inline_fields().len(), 1);
+            let (field_key, values) =
+                note.inline_fields().iter().next().expect("field present");
+            assert!(field_key.is_canonical_match(key));
+            values
+        }
         use crate::Tag;
 
         #[rstest]
@@ -1098,10 +1119,7 @@ mod tests {
         ) {
             let note = parse(input);
 
-            assert_eq!(note.inline_fields().len(), 1);
-            let (key, values) =
-                note.inline_fields().iter().next().expect("field present");
-            assert!(key.is_canonical_match(expected_key));
+            let values = single_inline_field(&note, expected_key);
             assert_eq!(
                 values.first().and_then(|v| v.as_str()),
                 Some(expected_value)
@@ -1122,15 +1140,11 @@ mod tests {
         #[test]
         fn extracts_a_bare_field_from_a_list_item_and_keeps_it_in_item_text() {
             let note = parse("- Status:: Draft");
-            assert_eq!(note.inline_fields().len(), 1);
+            let values = single_inline_field(&note, "status");
+            assert_eq!(values.first().and_then(|v| v.as_str()), Some("Draft"));
 
             let item = note.lists().first().expect("item present");
             assert_eq!(item.text(), "Status:: Draft");
-
-            let (key, values) =
-                note.inline_fields().iter().next().expect("field present");
-            assert!(key.is_canonical_match("status"));
-            assert_eq!(values.first().and_then(|v| v.as_str()), Some("Draft"));
         }
 
         #[test]
@@ -1250,10 +1264,7 @@ mod tests {
         ) {
             let note = parse(input);
 
-            assert_eq!(note.inline_fields().len(), 1);
-            let (key, values) =
-                note.inline_fields().iter().next().expect("field present");
-            assert!(key.is_canonical_match(expected_key));
+            let values = single_inline_field(&note, expected_key);
             assert_eq!(
                 values.first(),
                 Some(&NoteFieldValue::Date(
@@ -1340,10 +1351,7 @@ mod tests {
         fn extracts_a_bare_field_from_a_second_paragraph_within_a_loose_list_item()
          {
             let note = parse("- Task line\n\n  Status:: Draft\n");
-            assert_eq!(note.inline_fields().len(), 1);
-            let (key, values) =
-                note.inline_fields().iter().next().expect("field present");
-            assert!(key.is_canonical_match("status"));
+            let values = single_inline_field(&note, "status");
             assert_eq!(values.first().and_then(|v| v.as_str()), Some("Draft"));
         }
 
@@ -1410,10 +1418,7 @@ mod tests {
             let item = note.lists().first().expect("item present");
             assert_eq!(item.text(), "Status:: Draft #urgent");
 
-            assert_eq!(note.inline_fields().len(), 1);
-            let (key, values) =
-                note.inline_fields().iter().next().expect("field present");
-            assert!(key.is_canonical_match("status"));
+            let values = single_inline_field(&note, "status");
             assert_eq!(
                 values.first().and_then(|v| v.as_str()),
                 Some("Draft #urgent")
@@ -1447,10 +1452,7 @@ mod tests {
          {
             let note = parse("Status:: Draft`note` more text");
 
-            assert_eq!(note.inline_fields().len(), 1);
-            let (key, values) =
-                note.inline_fields().iter().next().expect("field present");
-            assert!(key.is_canonical_match("status"));
+            let values = single_inline_field(&note, "status");
             assert_eq!(
                 values.first().and_then(|v| v.as_str()),
                 Some("Draft more text")
@@ -1467,10 +1469,7 @@ mod tests {
         fn extracts_a_bare_field_from_heading_text() {
             let note = parse("# Status:: Draft");
 
-            assert_eq!(note.inline_fields().len(), 1);
-            let (key, values) =
-                note.inline_fields().iter().next().expect("field present");
-            assert!(key.is_canonical_match("status"));
+            let values = single_inline_field(&note, "status");
             assert_eq!(values.first().and_then(|v| v.as_str()), Some("Draft"));
         }
 
@@ -1478,11 +1477,8 @@ mod tests {
         fn extracts_a_visible_key_field_from_a_markdown_links_display_text() {
             let note = parse("[Status:: Draft](http://example.com)");
 
-            assert_eq!(note.inline_fields().len(), 1);
             assert_eq!(note.outlinks().len(), 1);
-            let (key, values) =
-                note.inline_fields().iter().next().expect("field present");
-            assert!(key.is_canonical_match("status"));
+            let values = single_inline_field(&note, "status");
             assert_eq!(values.first().and_then(|v| v.as_str()), Some("Draft"));
 
             let link = note.outlinks().first().expect("outlink present");
@@ -1494,10 +1490,7 @@ mod tests {
         fn extracts_a_visible_key_field_from_link_text_amid_other_prose() {
             let note = parse("See [Status:: Draft](http://example.com) here.");
 
-            assert_eq!(note.inline_fields().len(), 1);
-            let (key, values) =
-                note.inline_fields().iter().next().expect("field present");
-            assert!(key.is_canonical_match("status"));
+            let values = single_inline_field(&note, "status");
             assert_eq!(values.first().and_then(|v| v.as_str()), Some("Draft"));
         }
     }

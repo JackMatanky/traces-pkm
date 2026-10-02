@@ -24,7 +24,7 @@ fn scan_fields(
     let mut lexer = ItemToken::lexer_with_extras(text, mode);
     while let Some(Ok(token)) = lexer.next() {
         match token {
-            ItemToken::Field((key, value, _)) => fields.push((key, value)),
+            ItemToken::Field(field) => fields.push((field.key, field.value)),
             ItemToken::Date(date) => {
                 if let Ok(key) = FieldKey::try_new(date.kind().as_str()) {
                     fields.push((key, NoteFieldValue::Date(date.date())));
@@ -102,6 +102,17 @@ pub(super) enum FieldForm {
     Wrapped,
 }
 
+/// Scanned inline field token payload.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct FieldToken {
+    /// Canonical field key.
+    pub(super) key: FieldKey,
+    /// Parsed field value.
+    pub(super) value: NoteFieldValue,
+    /// Syntactic form the field was scanned in.
+    pub(super) form: FieldForm,
+}
+
 /// Token stream for item components in free-form Markdown text.
 #[derive(Debug, PartialEq, Logos)]
 #[logos(extras = TaskFieldEmojis, skip(r"[\s\S]", priority = 0))]
@@ -145,16 +156,14 @@ pub(super) enum ItemToken {
     #[token("(", |lex| wrapped_field_callback(lex, DelimiterType::Parenthesis))]
     /// Inline key-value field (`Key:: Value`, `[Key:: Value]`, `(Key::
     /// Value)`).
-    Field((FieldKey, NoteFieldValue, FieldForm)),
+    Field(FieldToken),
 }
 /// Parses a bare inline field (`Key:: Value`) starting at line begin.
 ///
 /// Rejects the match if it does not begin at the start of the source or
 /// immediately following a newline. Consumes the rest of the line as the raw
 /// value.
-fn body_field_callback(
-    lex: &mut Lexer<'_, ItemToken>,
-) -> Filter<(FieldKey, NoteFieldValue, FieldForm)> {
+fn body_field_callback(lex: &mut Lexer<'_, ItemToken>) -> Filter<FieldToken> {
     let at_line_start = char_before(lex).is_none_or(|ch| ch == '\n');
     if !at_line_start {
         return Filter::Skip;
@@ -168,7 +177,11 @@ fn body_field_callback(
     let Ok(key) = FieldKey::try_from(key) else {
         return Filter::Skip;
     };
-    let field = (key, parse_inline_value(value), FieldForm::Bare);
+    let field = FieldToken {
+        key,
+        value: parse_inline_value(value),
+        form: FieldForm::Bare,
+    };
     lex.bump(value_end);
     Filter::Emit(field)
 }
@@ -182,7 +195,7 @@ fn body_field_callback(
 fn wrapped_field_callback(
     lex: &mut Lexer<'_, ItemToken>,
     kind: DelimiterType,
-) -> Filter<(FieldKey, NoteFieldValue, FieldForm)> {
+) -> Filter<FieldToken> {
     let remainder = lex.remainder();
     let Some(sep) = remainder.find("::") else {
         return Filter::Skip;
@@ -206,7 +219,11 @@ fn wrapped_field_callback(
         .saturating_add(close)
         .saturating_add(kind.close_len());
     lex.bump(consumed);
-    Filter::Emit((key, parse_inline_value(value), FieldForm::Wrapped))
+    Filter::Emit(FieldToken {
+        key,
+        value: parse_inline_value(value),
+        form: FieldForm::Wrapped,
+    })
 }
 
 /// Parses a task emoji shorthand into a [`TaskDate`].
@@ -734,11 +751,11 @@ mod tests {
             let key = FieldKey::try_new("priority").unwrap();
             assert_eq!(
                 tokens.get(3).expect("token 3").value(),
-                &ItemToken::Field((
+                &ItemToken::Field(FieldToken {
                     key,
-                    NoteFieldValue::String("high".to_owned()),
-                    FieldForm::Wrapped
-                ))
+                    value: NoteFieldValue::String("high".to_owned()),
+                    form: FieldForm::Wrapped,
+                })
             );
             assert_eq!(tokens.get(3).expect("token 3").span_usize(), 32..49);
         }

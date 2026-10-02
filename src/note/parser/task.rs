@@ -133,9 +133,9 @@ impl<'a> TaskScan<'a> {
             let should_remove = match token.value() {
                 ItemToken::Priority(_) | ItemToken::Date(_) => true,
                 ItemToken::Tag(tag) => tag_filters.contains(tag),
-                ItemToken::Field((key, _, form)) => {
-                    matches!(form, FieldForm::Wrapped)
-                        && TaskDateType::is_field_key(key.canonical())
+                ItemToken::Field(field) => {
+                    matches!(field.form, FieldForm::Wrapped)
+                        && TaskDateType::is_field_key(field.key.canonical())
                 }
             };
 
@@ -484,7 +484,8 @@ mod tests {
             // A token ending exactly where the code span begins does not
             // overlap it: the retain filter is strict on both bounds.
             let raw = "🔺task";
-            let scan = TaskScan::scan(raw, &[4..raw.len()]);
+            let code_spans = std::iter::once(4..raw.len()).collect::<Vec<_>>();
+            let scan = TaskScan::scan(raw, &code_spans);
 
             assert_eq!(
                 scan.priority(&IndexMap::new()),
@@ -493,22 +494,6 @@ mod tests {
         }
     }
 
-    mod is_task_field_key {
-        use super::*;
-
-        #[test]
-        fn recognizes_task_field_keys_case_insensitively() {
-            assert!(TaskDateType::is_field_key("Due"));
-            assert!(TaskDateType::is_field_key("COMPLETION"));
-            assert!(TaskDateType::is_field_key("priority"));
-        }
-
-        #[test]
-        fn rejects_keys_outside_the_task_field_allowlist() {
-            assert!(!TaskDateType::is_field_key("store"));
-            assert!(!TaskDateType::is_field_key(""));
-        }
-    }
     mod subtask_completion {
         use super::*;
 
@@ -528,6 +513,11 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
+
+        /// Collects the raw text of every task in document order.
+        fn task_raw_texts(note: &Note) -> Vec<&str> {
+            note.tasks().map(ListItem::raw_text).collect()
+        }
         #[rstest]
         #[case::space_todo(' ', TaskStatusType::Todo)]
         #[case::checked_lowercase('x', TaskStatusType::Done)]
@@ -609,12 +599,7 @@ mod tests {
         fn classifies_a_marker_before_a_soft_break_as_a_task() {
             let note = parse("- [x]\n  continued");
 
-            let tasks: Vec<&ListItem> = note.tasks().collect();
-            assert_eq!(tasks.len(), 1);
-            assert_eq!(
-                tasks.first().copied().map(ListItem::raw_text),
-                Some("\ncontinued")
-            );
+            assert_eq!(task_raw_texts(&note), ["\ncontinued"]);
         }
 
         #[test]
@@ -667,13 +652,8 @@ mod tests {
         fn classifies_a_multibyte_symbol_marker_as_an_incomplete_task() {
             let note = parse("- [β] Task");
 
-            let tasks: Vec<&ListItem> = note.tasks().collect();
-            assert_eq!(tasks.len(), 1);
-            assert_eq!(
-                tasks.first().copied().map(ListItem::raw_text),
-                Some("Task")
-            );
-            let item = tasks.first().expect("task present");
+            assert_eq!(task_raw_texts(&note), ["Task"]);
+            let item = note.tasks().next().expect("task present");
             assert!(matches!(
                 item.kind(),
                 ListItemType::Task(task) if task.status().kind().completed() == Some(false)

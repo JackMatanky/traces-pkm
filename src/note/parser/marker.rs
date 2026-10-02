@@ -297,27 +297,33 @@ impl MarkerAccumulator {
         }
         len = len.saturating_add(u8::try_from(take_bytes).unwrap_or(0));
 
-        let candidate = Self::buffered_str(&buf, len);
-        self.resolve_candidate(
+        // Persist the extended buffer before resolution so the candidate is
+        // readable from `self` and the decision writes back atomically.
+        *self = Self::Buffering {
             buf,
             len,
-            candidate,
-            text,
-            take_bytes,
-            current_len,
-        )
+        };
+        self.resolve_candidate(text, take_bytes, current_len)
     }
 
     /// Decides the accumulator from the buffered candidate assembled so far.
+    ///
+    /// Called with the accumulator in the `Buffering` state after its buffer
+    /// was extended with the candidate bytes.
     fn resolve_candidate<'a>(
         &'a mut self,
-        buf: [u8; MAX_MARKER_BYTES],
-        len: u8,
-        candidate: &str,
         text: &'a str,
         take_bytes: usize,
         current_len: usize,
     ) -> MarkerAction<'a> {
+        let Self::Buffering {
+            buf,
+            len,
+        } = *self
+        else {
+            return MarkerAction::None;
+        };
+        let candidate = Self::buffered_str(&buf, len);
         match scan_marker_prefix(candidate) {
             MarkerPrefix::Complete(scan) => {
                 let symbol = scan.symbol();

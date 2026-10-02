@@ -114,8 +114,8 @@ impl Frontmatter {
         not(test),
         expect(
             dead_code,
-            reason = "called by Note::fields in test builds; retained for \
-                      accessor symmetry"
+            reason = "sole caller is Note::fields (index-query#03 reserved \
+                      accessor), itself dead in lib builds"
         )
     )]
     pub(crate) fn fields(&self) -> &IndexMap<FieldKey, NoteFieldValue> {

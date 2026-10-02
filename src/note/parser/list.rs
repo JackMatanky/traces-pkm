@@ -1,19 +1,15 @@
-//! Nested list and list-item tracking, marker classification, and task metadata
-//! extraction.
+//! Nested list and list-item tracking.
 //!
 //! [`ListTracker`] maintains explicit list and list-item stacks so nested
 //! Markdown structures never recurse through the call stack. [`ItemFrame`]
-//! drives the incremental [`MarkerAccumulator`] state machine that detects
-//! leading task markers.
-//!
-//! Status-marked items are evaluated against configured tag filters to classify
-//! them as [`ListItemType::Task`] or [`ListItemType::Checkbox`], extracting
-//! dates, priorities, and normalized clean text.
+//! pairs an active item's buffers, marker state, and scanned metadata, then
+//! finalizes the frame into a classified [`ListItem`].
 use indexmap::IndexMap;
 
 use super::{
     FlushedMetadata,
     marker::{MarkerAccumulator, MarkerAction},
+    task::SubTaskCompletion,
 };
 use crate::{
     FieldKey, SourceLine, Tag, TaskStatusMap,
@@ -84,32 +80,10 @@ impl ListTracker {
 
     /// Scans and flushes the active list item's scan buffer.
     ///
-    /// Resolves any pending marker, scans accumulated text for inline fields
-    /// and tags, and populates the item's local metadata collections.
-    ///
     /// Returns the flushed metadata for inclusion in document-level
     /// collections, or `None` if no item is active or the scan buffer is empty.
     fn flush_active_item_scan_buffer(&mut self) -> Option<FlushedMetadata> {
-        // The marker state must be decided before `has_marker` is read: a
-        // pending `- [x]` item flushes when a nested list starts, with no
-        // trailing-whitespace text chunk ever arriving.
-        self.resolve_pending_marker();
-        let item = self.item_stack.last_mut()?;
-        if item.buffers.is_scan_empty() {
-            return None;
-        }
-        let text = item.buffers.take_scan();
-        let mode = if item.marker.is_marked() {
-            super::lexer::TaskFieldEmojis::Include
-        } else {
-            super::lexer::TaskFieldEmojis::Exclude
-        };
-        let flushed = super::lexer::scan_metadata(&text, mode);
-        for (key, value) in flushed.fields() {
-            item.fields.entry(key.clone()).or_default().push(value.clone());
-        }
-        item.tags.extend_from_slice(flushed.tags());
-        Some(flushed)
+        self.item_stack.last_mut()?.flush_scan_buffer()
     }
 
     /// Pushes a list frame and flushes any active parent item's scan buffer.
@@ -163,59 +137,28 @@ impl ListTracker {
     /// Flushes and records the innermost list item.
     ///
     /// The flush decides any pending leading marker (see
-    /// [`Self::resolve_pending_marker`]); a decided marker resolves to
-    /// [`ListItemType::Task`] if tag filters are empty or any item tag matches
-    /// a configured tag filter, and to [`ListItemType::Checkbox`] otherwise.
-    /// Returns the flushed inline fields and tags, if any.
+    /// [`Self::resolve_pending_marker`]) before the item's final classification
+    /// reads its scanned metadata. Returns the flushed inline fields and tags,
+    /// if any.
     pub(super) fn end_item(
         &mut self,
         tag_filters: &[Tag],
         statuses: &TaskStatusMap,
     ) -> Option<FlushedMetadata> {
         let flushed = self.flush_active_item_scan_buffer();
-        if let Some(item_frame) = self.item_stack.pop() {
-            let fully_complete =
-                item_frame.subtask_completion.is_fully_complete();
-            // One tokenization pass feeds priority, date, and clean-text
-            // extraction. Extraction reads must precede the move of the raw
-            // text into `ListText` (NLL-enforced).
-            let scan = super::task::TaskScan::scan(
-                item_frame.buffers.text(),
-                item_frame.buffers.code_spans(),
-            );
-            let (item_type, clean) =
-                scan.classify(super::task::TaskClassificationParams {
-                    marker: item_frame.marker.marker_symbol(),
-                    fields: &item_frame.fields,
-                    tags: &item_frame.tags,
-                    tag_filters,
-                    statuses,
-                    fully_complete,
-                });
-            let text = ListText::new(item_frame.buffers.into_text(), clean);
-            let (is_task, is_complete) = match &item_type {
-                ListItemType::Task(task) => {
-                    (true, task.status().kind().is_complete())
-                }
-                _ => (false, true),
-            };
-            let item = ListItem::new(item_frame.line, text, item_type)
-                .with_depth(item_frame.depth)
-                .with_parent(item_frame.parent)
-                .with_is_ordered(item_frame.is_ordered)
-                .with_fields(item_frame.fields)
-                .with_tags(item_frame.tags);
+        if let Some(frame) = self.item_stack.pop() {
+            let finalized = frame.finish(tag_filters, statuses);
             if let Some(parent_item) = self.item_stack.last_mut() {
                 parent_item.subtask_completion.observe_child(
-                    is_task,
-                    is_complete,
-                    item_frame.subtask_completion,
+                    finalized.is_task,
+                    finalized.is_complete,
+                    finalized.completion,
                 );
-                parent_item.descendants.push(item);
-                parent_item.descendants.extend(item_frame.descendants);
+                parent_item.descendants.push(finalized.item);
+                parent_item.descendants.extend(finalized.descendants);
             } else {
-                self.lists.push(item);
-                self.lists.extend(item_frame.descendants);
+                self.lists.push(finalized.item);
+                self.lists.extend(finalized.descendants);
             }
         }
         flushed
@@ -258,8 +201,6 @@ impl ListTracker {
         true
     }
 }
-
-use super::task::SubTaskCompletion;
 
 /// Dual buffer pair maintaining display text and metadata scan text for an
 /// item.
@@ -380,6 +321,8 @@ struct ItemFrame {
 }
 
 impl ItemFrame {
+    /// Forwards text through the marker machine and applies the returned
+    /// [`MarkerAction`] to the item's buffers.
     fn push_text(&mut self, text: &str, in_code_block: bool) {
         match self.marker.push_text(text) {
             MarkerAction::None => {}
@@ -396,11 +339,15 @@ impl ItemFrame {
         }
     }
 
+    /// Resolves any pending marker, then writes the line terminator to both
+    /// buffers.
     fn push_break(&mut self) {
         self.resolve_pending_marker();
         self.buffers.push_break();
     }
 
+    /// Rejects a pending marker: inline content occupies the item's leading
+    /// slot, so no marker can be recognized there.
     fn reject_marker(&mut self) {
         if let MarkerAction::FlushPlain {
             buffered,
@@ -412,6 +359,7 @@ impl ItemFrame {
         }
     }
 
+    /// Force-decides a pending marker as if the item's first line ended.
     fn resolve_pending_marker(&mut self) {
         if let MarkerAction::FlushPlain {
             buffered,
@@ -423,13 +371,100 @@ impl ItemFrame {
         }
     }
 
+    /// Appends a literal character exclusively to the scan buffer.
     fn push_scan_char(&mut self, ch: char) {
         self.buffers.push_scan_char(ch);
     }
 
+    /// Appends code text exclusively to the display text buffer.
     fn push_code(&mut self, text: &str) {
         self.buffers.push_code(text);
     }
+
+    /// Scans and flushes this item's scan buffer into its local metadata.
+    ///
+    /// The marker state must be decided before the scan mode is read: a
+    /// pending `- [x]` item flushes when a nested list starts, with no
+    /// trailing-whitespace text chunk ever arriving. A marked item scans with
+    /// task emoji shorthands enabled; a plain item scans without them.
+    ///
+    /// Returns the flushed metadata, or `None` if the scan buffer is empty.
+    fn flush_scan_buffer(&mut self) -> Option<FlushedMetadata> {
+        self.resolve_pending_marker();
+        if self.buffers.is_scan_empty() {
+            return None;
+        }
+        let text = self.buffers.take_scan();
+        let mode = if self.marker.is_marked() {
+            super::lexer::TaskFieldEmojis::Include
+        } else {
+            super::lexer::TaskFieldEmojis::Exclude
+        };
+        let flushed = super::lexer::scan_metadata(&text, mode);
+        for (key, value) in flushed.fields() {
+            self.fields.entry(key.clone()).or_default().push(value.clone());
+        }
+        self.tags.extend_from_slice(flushed.tags());
+        Some(flushed)
+    }
+
+    /// Consumes the frame into a classified [`ListItem`].
+    ///
+    /// One tokenization pass feeds priority, date, and clean-text extraction.
+    /// Extraction reads must precede the move of the raw text into `ListText`
+    /// (NLL-enforced).
+    fn finish(
+        self,
+        tag_filters: &[Tag],
+        statuses: &TaskStatusMap,
+    ) -> FinalizedItem {
+        let scan = super::task::TaskScan::scan(
+            self.buffers.text(),
+            self.buffers.code_spans(),
+        );
+        let (item_type, clean) =
+            scan.classify(super::task::TaskClassificationParams {
+                marker: self.marker.marker_symbol(),
+                fields: &self.fields,
+                tags: &self.tags,
+                tag_filters,
+                statuses,
+                fully_complete: self.subtask_completion.is_fully_complete(),
+            });
+        let text = ListText::new(self.buffers.into_text(), clean);
+        let (is_task, is_complete) = match &item_type {
+            ListItemType::Task(task) => {
+                (true, task.status().kind().is_complete())
+            }
+            _ => (false, true),
+        };
+        FinalizedItem {
+            item: ListItem::new(self.line, text, item_type)
+                .with_depth(self.depth)
+                .with_parent(self.parent)
+                .with_is_ordered(self.is_ordered)
+                .with_fields(self.fields)
+                .with_tags(self.tags),
+            is_task,
+            is_complete,
+            completion: self.subtask_completion,
+            descendants: self.descendants,
+        }
+    }
+}
+
+/// A list item separated from its frame, ready for hierarchy attachment.
+struct FinalizedItem {
+    /// The classified item with its position, text, fields, and tags.
+    item: ListItem,
+    /// Whether the item classified as a task.
+    is_task: bool,
+    /// Whether the item's own task status is complete; `true` for non-tasks.
+    is_complete: bool,
+    /// The item's descendant-task completion state at close time.
+    completion: SubTaskCompletion,
+    /// Child items accumulated while the frame was open.
+    descendants: Vec<ListItem>,
 }
 
 /// An active list frame on the parser stack.
@@ -441,8 +476,15 @@ struct ListFrame {
 mod tests {
     use super::*;
     use crate::{
-        SourceLine, Tag, TaskStatusMap, note::ListItem, parse_note_str as parse,
+        Note, SourceLine, Tag, TaskStatusMap, note::ListItem,
+        parse_note_str as parse,
     };
+
+    /// Collects the raw text of every task in document order.
+    fn task_raw_texts(note: &Note) -> Vec<&str> {
+        note.tasks().map(ListItem::raw_text).collect()
+    }
+
     mod tracker_state {
 
         use super::*;
@@ -599,16 +641,7 @@ mod tests {
             let input = "- [ ] Task 1\n- Plain item\n- [x] Task 2";
             let note = parse(input);
 
-            let tasks: Vec<&ListItem> = note.tasks().collect();
-            assert_eq!(tasks.len(), 2);
-            assert_eq!(
-                tasks.first().copied().map(ListItem::raw_text),
-                Some("Task 1")
-            );
-            assert_eq!(
-                tasks.get(1).copied().map(ListItem::raw_text),
-                Some("Task 2")
-            );
+            assert_eq!(task_raw_texts(&note), ["Task 1", "Task 2"]);
         }
 
         #[test]
@@ -616,14 +649,14 @@ mod tests {
             let input = "- Plain parent\n  - [x] Subtask 1";
             let note = parse(input);
 
-            let tasks: Vec<&ListItem> = note.tasks().collect();
-            assert_eq!(tasks.len(), 1);
-            assert_eq!(
-                tasks.first().copied().map(ListItem::raw_text),
-                Some("Subtask 1")
-            );
-            let task =
-                tasks.first().unwrap().kind().as_task().expect("task kind");
+            assert_eq!(task_raw_texts(&note), ["Subtask 1"]);
+            let task = note
+                .tasks()
+                .next()
+                .expect("task present")
+                .kind()
+                .as_task()
+                .expect("task kind");
             assert_eq!(task.status().kind().completed(), Some(true));
         }
     }
