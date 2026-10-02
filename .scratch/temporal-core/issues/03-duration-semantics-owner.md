@@ -91,3 +91,42 @@ four amendments before pickup:
   `extracts_wrapped_naive_date_via_into_inner` deleted; engine
   `date_diff` gains a `weeks` case. Full gate green: 3117 unit + 71
   doc tests, strict clippy, `cargo doc -D warnings` clean.
+
+**2026-10-02 (rs-review-arch + rust-design remediation):**
+
+- Calendar-owner seam deepened: `DatePoint` now carries `has_time` and
+  owns the measurement (`DatePoint::diff`); the free
+  `date_diff_measurement` and its caller-computed `both_datetimes`
+  flag are gone, and the engine's `ParsedDate` holds a `DatePoint`
+  directly, so a stale precision flag is unrepresentable.
+- Engine owns an explicit `DateError` → render-error translation:
+  `LocalZoneLookup` (broken tz-data) keeps its distinct diagnosis and
+  source instead of being mislabeled as arithmetic overflow.
+- Deleted the seven test-only dead methods (`DateTimeValue::
+  {start_of_day, to_offset_string, to_time_string, to_date_string,
+  cmp_date, format_with}`, `DateValue::format_with`) and their tests:
+  seven `expect(dead_code)` suppressions eliminated.
+- Duration parser: per-part scan extracted (`scan_part`), the sign
+  rule got a single owner (`digits_after_sign`); `parse_number`
+  CC 17→14, NPath 648→360, `parse_prefix` NPath 240→under threshold.
+- `Add`/`Sub` merged into one `combine` implementation; synthesis
+  spelling extracted (`canonical_raw`, single-`String` accumulation);
+  `from_seconds` is now a composition over it.
+- The whole/sub-second split in `apply_part` has one owner
+  (`seconds_delta`, four call sites → one).
+- `UNIT_HINT` lives beside the unit registry and feeds the engine's
+  unknown-unit message (ends the drift that hid weeks); docs and
+  message now name `ms`, which the registry always accepted.
+- Least privilege: `shift_months`, `signed_years_since`,
+  `signed_months_since` are private; `shift_wall`'s and
+  `date_shift_unit`'s error docs no longer claim a "no whole-second
+  value" failure that cannot occur.
+- Tests: months/years local-wall shifts across DST (was 0% covered),
+  civil fractional calendar parts, negative civil shifts, truncated-
+  exponent rejections, engine `ms` pins, engine error-translation
+  pins; two format-table tautologies and the duplicated From-promotion
+  test deleted; four identical filter-render rstest bodies share one
+  helper. Gate green: 3113 unit + 71 doc tests, strict clippy,
+  `cargo doc -D warnings` clean; CRAP over-threshold functions in the
+  cluster fell from six to two (coverage on flagged paths
+  56-69% → 78-94%).

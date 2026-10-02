@@ -34,7 +34,7 @@
 
 use std::{fmt::Write as _, sync::Arc};
 
-use chrono::{DateTime, Datelike as _, NaiveDate, NaiveDateTime, Utc};
+use chrono::{Datelike as _, NaiveDate, NaiveDateTime, Utc};
 use minijinja::{
     Environment, Error, ErrorKind,
     value::{Enumerator, Kwargs, Object, Value},
@@ -43,8 +43,8 @@ use minijinja::{
 use super::error::{TemplateEngineResult, invalid_operation};
 use crate::{
     DEFAULT_DATE_FORMAT, DEFAULT_DATETIME_FORMAT, DateTimeValue, DateValue,
-    DurationUnit,
-    date::{DateDiff, DatePoint, date_diff_measurement, shift_wall},
+    DurationUnit, UNIT_HINT,
+    date::{DateDiff, DateError, DatePoint, shift_wall},
 };
 
 /// Method names `date` exposes, for [`DateOps::enumerate`].
@@ -183,16 +183,13 @@ impl DatePrecision {
 
 /// A successfully parsed date/time string.
 ///
-/// `wall` is the human-facing civil datetime: the local wall clock of
-/// `instant` for a datetime input, or the zone-free civil date at midnight
-/// for a date-only input. `instant` is the stored UTC instant used for
-/// storage, comparison, and fixed-duration arithmetic. Every arithmetic
-/// filter re-serializes `wall` at the original precision via
+/// `point` is the calendar-owner view of the input: the human-facing civil
+/// datetime (`wall`), the stored UTC instant, and whether the input carried
+/// a time component. Every arithmetic filter shifts or measures through
+/// [`DatePoint`], and re-serializes at the original precision via
 /// [`format_precise`].
 struct ParsedDate {
-    wall: NaiveDateTime,
-    instant: DateTime<Utc>,
-    precision: DatePrecision,
+    point: DatePoint,
 }
 
 impl ParsedDate {
@@ -218,9 +215,7 @@ impl ParsedDate {
                     .local_wall()
                     .ok_or_else(date_out_of_range_error)?;
                 Ok(Self {
-                    wall,
-                    instant,
-                    precision: DatePrecision::DateTime,
+                    point: DatePoint::new(wall, instant, true),
                 })
             }
             // `s` didn't parse as a date-time; try it as a bare date. If that
@@ -234,9 +229,7 @@ impl ParsedDate {
                     };
                     let instant = DateTimeValue::from(value).into_inner();
                     Ok(Self {
-                        wall,
-                        instant,
-                        precision: DatePrecision::Date,
+                        point: DatePoint::new(wall, instant, false),
                     })
                 }
                 Err(_date_source) => Err(invalid_operation(
@@ -244,6 +237,16 @@ impl ParsedDate {
                     datetime_source,
                 )),
             },
+        }
+    }
+
+    /// Returns the output precision for re-serialization: a datetime input
+    /// keeps its time-of-day, a date-only input stays date-only.
+    fn precision(&self) -> DatePrecision {
+        if self.point.has_time {
+            DatePrecision::DateTime
+        } else {
+            DatePrecision::Date
         }
     }
 }
@@ -342,7 +345,7 @@ fn format_precise(
 /// - [`ErrorKind::InvalidOperation`] if `s` is not a parseable date/time
 ///   string.
 fn parse_date(s: &str) -> Result<NaiveDateTime, Error> {
-    ParsedDate::parse(s).map(|parsed| parsed.wall)
+    ParsedDate::parse(s).map(|parsed| parsed.point.wall)
 }
 
 /// `{{ value | date_format(format_string) }}` re-formats a piped date/time
@@ -373,7 +376,7 @@ fn date_format(value: &str, format: &str) -> TemplateEngineResult<String> {
 /// - [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
 ///   string; see [`ParsedDate::parse`].
 fn timestamp(value: &str) -> TemplateEngineResult<i64> {
-    Ok(ParsedDate::parse(value)?.instant.timestamp())
+    Ok(ParsedDate::parse(value)?.point.instant.timestamp())
 }
 
 /// Parses `value` as a date/time string, transforms `datetime` via `op`, and
@@ -389,15 +392,15 @@ fn shift_date(
     op: impl FnOnce(NaiveDateTime) -> Option<NaiveDateTime>,
 ) -> TemplateEngineResult<String> {
     let parsed = ParsedDate::parse(value)?;
-    let shifted = op(parsed.wall).ok_or_else(date_out_of_range_error)?;
-    format_precise(shifted, parsed.precision)
+    let shifted = op(parsed.point.wall).ok_or_else(date_out_of_range_error)?;
+    format_precise(shifted, parsed.precision())
 }
 
 /// `{{ value | date_add(n, unit="days") }}` adds `n` `unit`s to a piped
 /// date/time string.
 ///
 /// `unit` defaults to `"days"` and accepts `"years"`, `"months"`, `"weeks"`,
-/// `"days"`, `"hours"`, `"minutes"`, and `"seconds"`.
+/// `"days"`, `"hours"`, `"minutes"`, `"seconds"`, or `"ms"`.
 ///
 /// `"years"`, `"months"`, `"weeks"`, and `"days"` preserve the civil wall
 /// clock across a DST transition; the remaining units shift the exact
@@ -461,29 +464,30 @@ fn date_sub(
 ///
 /// # Errors
 ///
-/// - [`ErrorKind::InvalidOperation`] if `value` is not parseable, `unit` has no
-///   whole-second value, or the shift overflows chrono's representable range.
+/// - [`ErrorKind::InvalidOperation`] if `value` is not parseable or the shift
+///   overflows chrono's representable range (see [`date_error`]).
 fn date_shift_unit(
     value: &str,
     n: i64,
     unit: DurationUnit,
 ) -> TemplateEngineResult<String> {
     let parsed = ParsedDate::parse(value)?;
+    let precision = parsed.precision();
     // Year, month, week, and day units shift the civil wall clock (calendar
     // application); sub-day units shift the stored instant exactly, which a DST
     // transition then exposes in the local wall clock. A date-only input stays
     // civil for every unit: a zone-free date has no instant to shift.
-    let wall = match parsed.precision {
-        DatePrecision::Date => shift_wall(parsed.wall, n, unit)
-            .map_err(|_| date_out_of_range_error())?,
+    let wall = match precision {
+        DatePrecision::Date => {
+            shift_wall(parsed.point.wall, n, unit).map_err(date_error)?
+        }
         DatePrecision::DateTime => {
-            let dt = DateTimeValue::from(parsed.instant);
-            let shifted =
-                dt.shift(n, unit).map_err(|_| date_out_of_range_error())?;
+            let dt = DateTimeValue::from(parsed.point.instant);
+            let shifted = dt.shift(n, unit).map_err(date_error)?;
             shifted.local_wall().ok_or_else(date_out_of_range_error)?
         }
     };
-    format_precise(wall, parsed.precision)
+    format_precise(wall, precision)
 }
 
 /// `{{ value | add_days(n) }}` is a convenience shortcut for
@@ -602,18 +606,21 @@ fn weekday(value: &str) -> TemplateEngineResult<u32> {
 /// from the piped value to `other`, positive when `other` is later.
 ///
 /// The `unit` kwarg defaults to `"days"` and accepts `"years"`, `"months"`,
-/// `"weeks"`, `"hours"`, `"minutes"`, or `"seconds"`. `"years"`/`"months"` are
-/// calendar counts: whole units elapsed, day-of-month aware (see the date
-/// module's [`signed_years_since`]/[`signed_months_since`]), always an `i64`
-/// regardless of input precision. The remaining units, including `"weeks"`
-/// and the default `"days"`, are fixed-duration: `f64` when both inputs carry
-/// a time component, otherwise an `i64` whole-unit count.
+/// `"weeks"`, `"hours"`, `"minutes"`, `"seconds"`, or `"ms"`.
+/// `"years"`/`"months"` are calendar counts: whole units elapsed, day-of-month
+/// aware (see the date module's `signed_years_since`/`signed_months_since`),
+/// always an `i64` regardless of input precision. The remaining units,
+/// including `"weeks"`, `"ms"`, and the default `"days"`, are fixed-duration:
+/// `f64` when both inputs carry a time component, otherwise an `i64` whole-unit
+/// count.
 ///
 /// # Errors
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` or `other` is not a parseable
 ///   date/time string (see [`ParsedDate::parse`]) or `unit` is not one of
 ///   [`DurationUnit::parse`]'s accepted names (see [`unit_kwarg`]).
+/// - [`ErrorKind::InvalidOperation`] if the difference overflows chrono's
+///   representable range (see [`date_error`]).
 /// - [`ErrorKind::TooManyArguments`] if `kwargs` carries any key besides
 ///   `unit`.
 #[expect(
@@ -630,15 +637,7 @@ fn date_diff(
     let from = ParsedDate::parse(value)?;
     let to = ParsedDate::parse(other)?;
 
-    let both_datetimes = from.precision == DatePrecision::DateTime
-        && to.precision == DatePrecision::DateTime;
-    let diff = date_diff_measurement(
-        DatePoint::new(from.wall, from.instant),
-        DatePoint::new(to.wall, to.instant),
-        both_datetimes,
-        unit,
-    )
-    .map_err(|_| date_out_of_range_error())?;
+    let diff = from.point.diff(to.point, unit).map_err(date_error)?;
 
     match diff {
         DateDiff::Whole(n) => Ok(Value::from(n)),
@@ -657,7 +656,7 @@ fn date_diff(
 /// - [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
 ///   string; see [`ParsedDate::parse`].
 fn is_past(value: &str) -> TemplateEngineResult<bool> {
-    Ok(ParsedDate::parse(value)?.instant < Utc::now())
+    Ok(ParsedDate::parse(value)?.point.instant < Utc::now())
 }
 
 /// `{% if value is is_future %}` mirrors [`is_past`] for future instants.
@@ -667,7 +666,7 @@ fn is_past(value: &str) -> TemplateEngineResult<bool> {
 /// - [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
 ///   string; see [`ParsedDate::parse`].
 fn is_future(value: &str) -> TemplateEngineResult<bool> {
-    Ok(ParsedDate::parse(value)?.instant > Utc::now())
+    Ok(ParsedDate::parse(value)?.point.instant > Utc::now())
 }
 
 /// `{% if value is is_leap_year %}` accepts either an integer year (`2024 is
@@ -719,18 +718,50 @@ fn date_out_of_range_error() -> Error {
     )
 }
 
+/// Translates a core [`DateError`] from the calendar owner into a render
+/// error.
+///
+/// An overflow keeps the shared range message; a local-zone lookup failure
+/// keeps its distinct diagnosis (a broken tz-data/OS environment, never a DST
+/// ambiguity, which the resolver resolves deterministically) with the source
+/// attached. Parse-shape failures cannot occur here: shift and diff receive
+/// already-parsed values, but the match stays exhaustive per
+/// `pat-exhaustive-enum`.
+fn date_error(error: DateError) -> Error {
+    match error {
+        DateError::LocalZoneLookup {
+            input,
+        } => invalid_operation(
+            format!("local timezone lookup failed for {input:?}"),
+            DateError::LocalZoneLookup {
+                input,
+            },
+        ),
+        DateError::OutOfRange
+        | DateError::Unparseable {
+            ..
+        }
+        | DateError::InvalidYearDigits {
+            ..
+        }
+        | DateError::InvalidPattern {
+            ..
+        } => date_out_of_range_error(),
+    }
+}
+
 /// Builds the error for a `unit="..."` kwarg naming anything outside
 /// [`DurationUnit::parse`]'s accepted unit names.
+///
+/// The expected-spellings hint comes from [`UNIT_HINT`], kept beside the
+/// unit registry so the message cannot drift from what [`unit_kwarg`]
+/// actually accepts.
 ///
 /// Shared by [`date_add`], [`date_sub`], and [`date_diff`] via [`unit_kwarg`].
 fn unknown_unit_error(unit: &str) -> Error {
     Error::new(
         ErrorKind::InvalidOperation,
-        format!(
-            "unknown unit {unit:?} (expected \"years\"/\"y\", \
-             \"months\"/\"mo\", \"weeks\"/\"w\", \"days\"/\"d\", \
-             \"hours\"/\"h\", \"minutes\"/\"m\", or \"seconds\"/\"s\")"
-        ),
+        format!("unknown unit {unit:?} (expected {UNIT_HINT})"),
     )
 }
 
@@ -746,6 +777,20 @@ mod tests {
         let mut env = Environment::new();
         DateOps.register(&mut env);
         env
+    }
+
+    /// Renders `{{ value | <filter_call> }}` under the registered
+    /// environment and asserts the exact output.
+    ///
+    /// Shared by the per-filter `shifts_a_piped_date` tables.
+    fn assert_filter_render(input: &str, filter_call: &str, expected: &str) {
+        let rendered = env()
+            .render_str(
+                &format!("{{{{ value | {filter_call} }}}}"),
+                minijinja::context! { value => input },
+            )
+            .expect("render succeeds");
+        pretty_assertions::assert_eq!(rendered, expected);
     }
 
     mod get_value {
@@ -1246,7 +1291,6 @@ mod tests {
     }
 
     mod add_and_sub_days {
-        use pretty_assertions::assert_eq;
         use rstest::rstest;
 
         use super::*;
@@ -1273,14 +1317,7 @@ mod tests {
             #[case] filter_call: &str,
             #[case] expected: &str,
         ) {
-            let rendered = env()
-                .render_str(
-                    &format!("{{{{ value | {filter_call} }}}}"),
-                    minijinja::context! { value => input },
-                )
-                .expect("render succeeds");
-
-            assert_eq!(rendered, expected);
+            assert_filter_render(input, filter_call, expected);
         }
 
         #[test]
@@ -1297,7 +1334,6 @@ mod tests {
     }
 
     mod add_and_sub_months {
-        use pretty_assertions::assert_eq;
         use rstest::rstest;
 
         use super::*;
@@ -1323,19 +1359,11 @@ mod tests {
             #[case] filter_call: &str,
             #[case] expected: &str,
         ) {
-            let rendered = env()
-                .render_str(
-                    &format!("{{{{ value | {filter_call} }}}}"),
-                    minijinja::context! { value => input },
-                )
-                .expect("render succeeds");
-
-            assert_eq!(rendered, expected);
+            assert_filter_render(input, filter_call, expected);
         }
     }
 
     mod add_and_sub_years {
-        use pretty_assertions::assert_eq;
         use rstest::rstest;
 
         use super::*;
@@ -1357,19 +1385,11 @@ mod tests {
             #[case] filter_call: &str,
             #[case] expected: &str,
         ) {
-            let rendered = env()
-                .render_str(
-                    &format!("{{{{ value | {filter_call} }}}}"),
-                    minijinja::context! { value => input },
-                )
-                .expect("render succeeds");
-
-            assert_eq!(rendered, expected);
+            assert_filter_render(input, filter_call, expected);
         }
     }
 
     mod start_and_end_of_month {
-        use pretty_assertions::assert_eq;
         use rstest::rstest;
 
         use super::*;
@@ -1396,14 +1416,7 @@ mod tests {
             #[case] filter_call: &str,
             #[case] expected: &str,
         ) {
-            let rendered = env()
-                .render_str(
-                    &format!("{{{{ value | {filter_call} }}}}"),
-                    minijinja::context! { value => input },
-                )
-                .expect("render succeeds");
-
-            assert_eq!(rendered, expected);
+            assert_filter_render(input, filter_call, expected);
         }
     }
 
@@ -1455,6 +1468,18 @@ mod tests {
             assert_eq!(rendered, "7");
         }
 
+        #[test]
+        fn milliseconds_are_a_whole_count_for_date_only_inputs() {
+            let rendered = env()
+                .render_str(
+                    r#"{{ "2026-07-23" | date_diff("2026-07-24", unit="ms") }}"#,
+                    minijinja::context!(),
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered, "86400000");
+        }
+
         #[rstest]
         #[case::hours(
             "2026-07-23 00:00:00",
@@ -1491,6 +1516,12 @@ mod tests {
             "2026-08-06 00:00:00",
             "weeks",
             "2.0"
+        )]
+        #[case::milliseconds_as_a_fixed_unit(
+            "2026-07-23 00:00:00",
+            "2026-07-23T00:00:01.5",
+            "ms",
+            "1500.0"
         )]
         fn returns_sub_day_precision_when_both_inputs_have_time(
             #[case] value: &str,
@@ -1841,6 +1872,42 @@ mod tests {
                 .expect_err("a list argument fails cleanly");
 
             assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+        }
+    }
+
+    mod error_translation {
+        use super::*;
+
+        #[test]
+        fn preserves_the_local_zone_lookup_diagnosis() {
+            let error = date_error(DateError::LocalZoneLookup {
+                input: "2026-03-08 02:30:00".into(),
+            });
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+            assert!(
+                error.to_string().contains("local timezone lookup failed"),
+                "expected the zone diagnosis, got {error}"
+            );
+
+            // The typed DateError survives in the source chain for callers
+            // that inspect it, instead of being flattened into the generic
+            // overflow message.
+            let source = std::error::Error::source(&error)
+                .expect("source chain present")
+                .downcast_ref::<DateError>()
+                .expect("DateError preserved as source");
+            assert!(matches!(source, DateError::LocalZoneLookup { .. }));
+        }
+
+        #[test]
+        fn keeps_the_range_message_for_an_overflow() {
+            let error = date_error(DateError::OutOfRange);
+            assert!(
+                error
+                    .to_string()
+                    .contains("date arithmetic overflowed the supported range"),
+                "unexpected detail: {error}"
+            );
         }
     }
 }
