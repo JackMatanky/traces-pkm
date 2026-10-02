@@ -452,11 +452,11 @@ fn date_sub(
 /// Shifts `value` by `n` `unit`s, applying calendar or fixed-duration
 /// semantics per `unit`.
 ///
-/// `"years"`, `"months"`, and `"days"` shift the civil wall clock (calendar
-/// application), preserving the clock reading across a DST transition; the
-/// remaining fixed units shift the stored instant exactly, so the wall clock
-/// can land earlier or later than a naive `n`-unit shift across a
-/// transition. A date-only input stays civil for every unit: a zone-free
+/// `"years"`, `"months"`, `"weeks"`, and `"days"` shift the civil wall clock
+/// (calendar application), preserving the clock reading across a DST
+/// transition; the remaining fixed units shift the stored instant exactly, so
+/// the wall clock can land earlier or later than a naive `n`-unit shift across
+/// a transition. A date-only input stays civil for every unit: a zone-free
 /// date has no instant to shift.
 ///
 /// # Errors
@@ -469,7 +469,7 @@ fn date_shift_unit(
     unit: DurationUnit,
 ) -> TemplateEngineResult<String> {
     let parsed = ParsedDate::parse(value)?;
-    // Day, month, and year units shift the civil wall clock (calendar
+    // Year, month, week, and day units shift the civil wall clock (calendar
     // application); sub-day units shift the stored instant exactly, which a DST
     // transition then exposes in the local wall clock. A date-only input stays
     // civil for every unit: a zone-free date has no instant to shift.
@@ -603,7 +603,7 @@ fn weekday(value: &str) -> TemplateEngineResult<u32> {
 ///
 /// The `unit` kwarg defaults to `"days"` and accepts `"years"`, `"months"`,
 /// `"hours"`, `"minutes"`, or `"seconds"`. `"years"`/`"months"` are calendar
-/// counts: whole units elapsed, day-of-month aware (see
+/// counts: whole units elapsed, day-of-month aware (see the date module's
 /// [`signed_years_since`]/[`signed_months_since`]), always an `i64` regardless
 /// of input precision. The remaining units are fixed-duration: `f64` when both
 /// inputs carry a time component, otherwise an `i64` whole-unit count.

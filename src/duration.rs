@@ -1719,12 +1719,20 @@ mod tests {
                 let dv = DurationValue::parse(input).unwrap();
                 let parts = dv.parts().unwrap();
                 let fold_total = DurationValue::fold_parts(parts);
-                let folded_seconds =
-                    DurationSeconds::try_from(fold_total).unwrap();
 
-                // Assert: bit-exact equality between fold over parts and stored
-                // seconds
-                assert_eq!(folded_seconds, dv.to_seconds());
+                // Assert: bit-exact equality between the fold over parts and
+                // the stored seconds, compared as raw `f64` so a signed-zero
+                // divergence could not hide behind `total_cmp`.
+                #[expect(
+                    clippy::float_cmp,
+                    reason = "ticket 03 pins the bit-exact Σ invariant with \
+                              raw `f64` `==`"
+                )]
+                let bit_exact = fold_total == dv.to_seconds().0;
+                assert!(
+                    bit_exact,
+                    "Σ fold must reconstruct stored seconds bit-exactly"
+                );
             }
         }
 
@@ -1736,16 +1744,31 @@ mod tests {
             #[test]
             fn add_and_sub_combine_parts_for_some_operands() {
                 // Arrange
-                let a = DurationValue::parse("1h").unwrap();
-                let b = DurationValue::parse("30m").unwrap();
+                let expected = DurationValue::parse("1h 30m").unwrap();
 
                 // Act
-                let sum = a.clone() + b.clone();
-                let sub = sum.clone() - b;
+                let sum = DurationValue::parse("1h").unwrap()
+                    + DurationValue::parse("30m").unwrap();
 
-                // Assert
-                assert_eq!(sum, DurationValue::parse("1h 30m").unwrap());
-                assert_eq!(sub.to_seconds(), a.to_seconds());
+                // Assert: `1h` + `30m` equals the `1h 30m` spelling
+                // (value-level pin, spec line 88), and the
+                // fold-based result survives subtraction of the
+                // same operand.
+                assert_eq!(sum, expected);
+                let sub = expected - DurationValue::parse("30m").unwrap();
+                assert_eq!(
+                    sub.to_seconds(),
+                    DurationSeconds::try_from(3_600.0).unwrap()
+                );
+
+                // `Sub` keeps the negated rhs entry as the regime witness.
+                let sub_parts =
+                    sub.parts().expect("Some+Some Sub retains parts");
+                assert_eq!(sub_parts.len(), 3);
+                assert_eq!(
+                    sub_parts.last().copied(),
+                    Some((-30.0, DurationUnit::Minute))
+                );
             }
 
             #[test]
@@ -1758,11 +1781,19 @@ mod tests {
                 let sum = a + b;
                 let sum_parts = sum.parts().unwrap();
                 let fold_total = DurationValue::fold_parts(sum_parts);
-                let folded_seconds = DurationSeconds::normalized(fold_total);
 
-                // Assert: fold over combined parts bit-exactly equals stored
-                // seconds
-                assert_eq!(folded_seconds, sum.to_seconds());
+                // Assert: fold over the combined parts bit-exactly equals the
+                // stored seconds, compared as raw `f64`.
+                #[expect(
+                    clippy::float_cmp,
+                    reason = "ticket 03 pins the bit-exact Σ invariant with \
+                              raw `f64` `==`"
+                )]
+                let bit_exact = fold_total == sum.to_seconds().0;
+                assert!(
+                    bit_exact,
+                    "Σ fold must reconstruct stored seconds bit-exactly"
+                );
             }
 
             #[test]
@@ -1785,6 +1816,26 @@ mod tests {
             }
 
             #[test]
+            fn sub_with_none_operand_clears_parts_and_subtracts_seconds() {
+                // Arrange
+                let none_dv = DurationValue::from_seconds(
+                    DurationSeconds::try_from(3_600.0).unwrap(),
+                );
+                let some_dv = DurationValue::parse("30m").unwrap();
+
+                // Act
+                let diff = none_dv - some_dv;
+
+                // Assert: mixed `Some`+`None` ⇒ `None` witness; seconds
+                // subtract directly (`Sub` = add of the negated rhs).
+                assert!(diff.parts().is_none());
+                assert_eq!(
+                    diff.to_seconds(),
+                    DurationSeconds::try_from(1_800.0).unwrap()
+                );
+            }
+
+            #[test]
             fn mul_scales_parts_and_preserves_bit_exact_sigma() {
                 // Arrange
                 let dv = DurationValue::parse("1h 30m").unwrap();
@@ -1793,7 +1844,6 @@ mod tests {
                 let scaled = dv * 2.5;
                 let parts = scaled.parts().unwrap();
                 let fold_total = DurationValue::fold_parts(parts);
-                let folded_seconds = DurationSeconds::normalized(fold_total);
 
                 // Assert
                 assert_eq!(parts.len(), 2);
@@ -1805,7 +1855,16 @@ mod tests {
                     parts.get(1).copied(),
                     Some((75.0, DurationUnit::Minute))
                 );
-                assert_eq!(folded_seconds, scaled.to_seconds());
+                #[expect(
+                    clippy::float_cmp,
+                    reason = "ticket 03 pins the bit-exact Σ invariant with \
+                              raw `f64` `==`"
+                )]
+                let bit_exact = fold_total == scaled.to_seconds().0;
+                assert!(
+                    bit_exact,
+                    "Σ fold must reconstruct stored seconds bit-exactly"
+                );
             }
 
             #[test]
@@ -1829,6 +1888,29 @@ mod tests {
                 assert!(!nan_dv.to_seconds().0.is_finite());
                 assert!(matches!(
                     TimeDelta::try_from(nan_dv),
+                    Err(DurationError::NonFiniteSeconds)
+                ));
+            }
+
+            #[test]
+            fn mul_overflow_leaves_non_finite_seconds_rejected_by_conversions()
+            {
+                // Arrange: `1s` has a unit ratio of exactly 1, so scaling by
+                // `f64::MAX` stays finite and the next doubling overflows.
+                let dv = DurationValue::parse("1s").unwrap();
+
+                // Act
+                let huge = dv * f64::MAX;
+                assert!(huge.to_seconds().0.is_finite());
+                let overflowed = huge * 2.0;
+
+                // Assert: the overflow leaves non-finite seconds that every
+                // consuming conversion rejects, and the display never lies as
+                // `"0s"`.
+                assert!(!overflowed.to_seconds().0.is_finite());
+                assert_eq!(overflowed.as_str(), "infs");
+                assert!(matches!(
+                    TimeDelta::try_from(overflowed),
                     Err(DurationError::NonFiniteSeconds)
                 ));
             }

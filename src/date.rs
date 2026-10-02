@@ -466,10 +466,6 @@ impl DateValue {
         self,
         duration: &DurationValue,
     ) -> Result<Self, DateError> {
-        let total_secs = duration.to_seconds().0;
-        if !total_secs.is_finite() {
-            return Err(DateError::OutOfRange);
-        }
         if let Some(parts) = duration.parts() {
             let mut current = self;
             for &(mag, unit) in parts {
@@ -477,6 +473,9 @@ impl DateValue {
             }
             Ok(current)
         } else {
+            // Fixed magnitude without a written shape: applied as exact
+            // seconds on the civil wall clock; non-finite input is rejected
+            // by the `TimeDelta` conversion.
             let wall =
                 self.0.and_hms_opt(0, 0, 0).ok_or(DateError::OutOfRange)?;
             let delta = TimeDelta::try_from(duration.to_seconds())
@@ -934,10 +933,6 @@ impl DateTimeValue {
         self,
         duration: &DurationValue,
     ) -> Result<Self, DateError> {
-        let total_secs = duration.to_seconds().0;
-        if !total_secs.is_finite() {
-            return Err(DateError::OutOfRange);
-        }
         if let Some(parts) = duration.parts() {
             let mut current = self;
             for &(mag, unit) in parts {
@@ -945,6 +940,9 @@ impl DateTimeValue {
             }
             Ok(current)
         } else {
+            // Fixed magnitude without a written shape: applied as exact
+            // seconds on the stored instant; non-finite input is rejected by
+            // the `TimeDelta` conversion.
             let delta = TimeDelta::try_from(duration.to_seconds())
                 .map_err(|_| DateError::OutOfRange)?;
             let instant = self
@@ -991,10 +989,17 @@ impl DateTimeValue {
                             subsec_nanos,
                         ))
                         .ok_or(DateError::OutOfRange)?;
-                    let instant = current
-                        .0
+                    // The whole part keeps the local wall clock via `shift`;
+                    // the fractional remainder is still part of a calendar
+                    // unit, so it round-trips through the local zone too
+                    // (spec D12) instead of landing as exact seconds on the
+                    // stored instant.
+                    let wall =
+                        current.local_wall().ok_or(DateError::OutOfRange)?;
+                    let shifted_wall = wall
                         .checked_add_signed(delta)
                         .ok_or(DateError::OutOfRange)?;
+                    let instant = local_naive_to_utc(shifted_wall)?;
                     current = Self(instant);
                 }
                 Ok(current)
@@ -1214,8 +1219,14 @@ pub(crate) enum DateDiff {
     Exact(f64),
 }
 
-/// Computes the difference from `from_wall`/`from_instant` to
-/// `to_wall`/`to_instant` in `unit`s.
+/// Computes the difference from `from` to `to` in `unit`s.
+///
+/// # Arguments
+///
+/// - `from`/`to`: the [`DatePoint`] pair being measured.
+/// - `both_datetimes`: whether both inputs carry a time component; it selects
+///   the fixed-unit frame described below.
+/// - `unit`: the measurement unit.
 ///
 /// Preserves the declared measurement split:
 /// - When both inputs are datetimes (`both_datetimes == true`), fixed units
@@ -1878,8 +1889,8 @@ mod tests {
         }
     }
 
-    mod arithmetic {
-        use pretty_assertions::assert_eq;
+    mod calendar_owner {
+        use pretty_assertions::{assert_eq, assert_ne};
 
         use super::*;
 
@@ -1920,11 +1931,46 @@ mod tests {
                 DurationValue::parse("1s").expect("valid duration");
             assert_eq!(near_min.apply(&(one_second * -1.0)).ok(), None);
         }
-    }
-    mod calendar_owner {
-        use pretty_assertions::{assert_eq, assert_ne};
 
-        use super::*;
+        #[test]
+        fn shift_preserves_the_local_wall_clock_for_calendar_units_across_dst()
+        {
+            TzGuard::set("America/New_York");
+
+            // Saturday March 7, 2026 at 12:00 EST (UTC 17:00:00)
+            let base = DateTimeValue::parse_iso("2026-03-07 12:00:00").unwrap();
+
+            // 1 day via `shift` keeps 12:00 on the wall clock across the gap.
+            let shifted_day = base.shift(1, DurationUnit::Day).unwrap();
+            assert_eq!(
+                shifted_day.local_wall().unwrap().to_string(),
+                "2026-03-08 12:00:00"
+            );
+
+            // `shift` routes week and 7-day units through the same calendar
+            // path, so they shift identically and keep 12:00.
+            let shifted_week = base.shift(1, DurationUnit::Week).unwrap();
+            let shifted_7d = base.shift(7, DurationUnit::Day).unwrap();
+            assert_eq!(shifted_week, shifted_7d);
+            assert_eq!(
+                shifted_week.local_wall().unwrap().to_string(),
+                "2026-03-14 12:00:00"
+            );
+
+            // 168 hours shifts the instant and lands 13:00 across the gap.
+            let shifted_168h = base.shift(168, DurationUnit::Hour).unwrap();
+            assert_ne!(shifted_week, shifted_168h);
+            assert_eq!(
+                shifted_168h.local_wall().unwrap().to_string(),
+                "2026-03-14 13:00:00"
+            );
+
+            // `shift` and `apply` agree for the same calendar unit: the
+            // calendar owner owns the semantics in exactly one place.
+            let applied_week =
+                base.apply(&DurationValue::parse("1w").unwrap()).unwrap();
+            assert_eq!(shifted_week, applied_week);
+        }
 
         #[test]
         fn a2_prime_equal_duration_values_shift_dates_differently() {
@@ -1953,10 +1999,10 @@ mod tests {
 
         #[test]
         fn month_clamping_matches_chrono_documented_behavior() {
-            // Chrono documentation: "If the resulting day of the month is not
-            // valid for the target month and year, the day of the
-            // month is clamped to the last day of the target
-            // month."
+            // Chrono's [`NaiveDate::checked_add_months`] clamps the day of the
+            // month to the last valid day of the target month when the target
+            // day doesn't exist (its documented behavior); the calendar owner
+            // delegates month shifts to it, so the clamp is pinned here.
             let jan_31_non_leap = DateValue::parse_iso("2023-01-31").unwrap();
             let feb_clamped =
                 jan_31_non_leap.shift(1, DurationUnit::Month).unwrap();
@@ -2090,6 +2136,48 @@ mod tests {
 
             // Different written order yields different result
             assert_ne!(res_1d_1h, res_1h_1d);
+        }
+
+        #[test]
+        fn fractional_calendar_part_keeps_the_local_wall_clock_across_dst() {
+            TzGuard::set("America/New_York");
+
+            // Saturday March 7, 2026 at 06:00 EST (UTC 11:00:00)
+            let base = DateTimeValue::parse_iso("2026-03-07 06:00:00").unwrap();
+
+            // 1.5d == 36h == 1d 12h as values (129,600 fixed seconds)
+            let one_and_half_days = DurationValue::parse("1.5d").unwrap();
+            let thirty_six_hours = DurationValue::parse("36h").unwrap();
+            let written_order = DurationValue::parse("1d 12h").unwrap();
+            assert_eq!(one_and_half_days, thirty_six_hours);
+            assert_eq!(one_and_half_days, written_order);
+
+            // The fractional day is a calendar-unit remainder, so it keeps the
+            // local wall clock (spec D12): 1d lands Sunday 06:00 EDT, then the
+            // 0.5-day remainder adds 12 wall hours to Sunday 18:00 EDT.
+            let shifted_fractional = base.apply(&one_and_half_days).unwrap();
+            assert_eq!(
+                shifted_fractional.local_wall().unwrap().to_string(),
+                "2026-03-08 18:00:00"
+            );
+            assert_eq!(
+                shifted_fractional,
+                DateTimeValue::parse_iso("2026-03-08T22:00:00Z").unwrap()
+            );
+
+            // The fractional spelling decomposes exactly like its written-order
+            // equivalent "1d 12h".
+            assert_eq!(shifted_fractional, base.apply(&written_order).unwrap());
+
+            // 36h shifts the stored instant exactly and lands an hour later on
+            // the wall clock across the 2026-03-08 gap: equal values, different
+            // shifts (the declared A2′ incoherence, spec line 87).
+            let shifted_exact = base.apply(&thirty_six_hours).unwrap();
+            assert_ne!(shifted_fractional, shifted_exact);
+            assert_eq!(
+                shifted_exact.local_wall().unwrap().to_string(),
+                "2026-03-08 19:00:00"
+            );
         }
 
         #[test]
