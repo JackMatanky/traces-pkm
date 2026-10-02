@@ -64,3 +64,30 @@ four amendments before pickup:
   higher-order, variable-length units like days, weeks, months, and
   years", luxon `docs/zones.md`) — matches the implemented `1w ≡ 7d`
   wall-day semantics, so no divergence-register entry is needed.
+
+**2026-10-02 (design-review remediation):**
+
+- `date_diff_measurement`'s fixed-unit arm enumerated (was a `u =>`
+  catch-all, violating `pat-exhaustive-enum`); adding a unit now forces
+  the calendar/fixed decision there too.
+- `DateValue::shift` delegates to `shift_wall` on midnight (per-unit
+  semantics in exactly one place); `shift_date_months` deleted, along
+  with its `dead_code` expectation.
+- Duration grammar accepts exponent floats (`"1e3s"`, `".5e-3"`): the
+  `from_seconds` fallback renders the spec-pinned `DurationSeconds`
+  dialect (exponent outside `[1e-6, 1e15)`), so synthesized spellings
+  now round-trip through `parse` (pinned for `1e300`, `-1e300`,
+  `1e-300`); fold-overflow to `NonFiniteSeconds` pinned (two finite
+  `1e308` parts).
+- Least privilege: `fold_parts` and `DurationParts` made private;
+  `TryFrom<&DurationValue> for TimeDelta` deleted (zero production
+  callers; owned impl retained).
+- D13 weeks amendment completed in the engine: `date_add`/`date_diff`
+  docs and `unknown_unit_error`'s message now name weeks.
+- Docs unified: `DateError` and both module docs name arithmetic
+  failures and the calendar owner; `shift_wall` contract stated.
+- Tests: `tomorrow/today/yesterday` render in one template (removes the
+  documented midnight-rollover flake); duplicate
+  `extracts_wrapped_naive_date_via_into_inner` deleted; engine
+  `date_diff` gains a `weeks` case. Full gate green: 3117 unit + 71
+  doc tests, strict clippy, `cargo doc -D warnings` clean.

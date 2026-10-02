@@ -396,13 +396,13 @@ fn shift_date(
 /// `{{ value | date_add(n, unit="days") }}` adds `n` `unit`s to a piped
 /// date/time string.
 ///
-/// `unit` defaults to `"days"` and accepts `"years"`, `"months"`, `"days"`,
-/// `"hours"`, `"minutes"`, and `"seconds"`.
+/// `unit` defaults to `"days"` and accepts `"years"`, `"months"`, `"weeks"`,
+/// `"days"`, `"hours"`, `"minutes"`, and `"seconds"`.
 ///
-/// `"years"`/`"months"`/`"days"` preserve the civil wall clock across a DST
-/// transition; the remaining units shift the exact instant, so the wall
-/// clock can land earlier or later than a naive `n`-unit shift (see
-/// [`date_shift_unit`]).
+/// `"years"`, `"months"`, `"weeks"`, and `"days"` preserve the civil wall
+/// clock across a DST transition; the remaining units shift the exact
+/// instant, so the wall clock can land earlier or later than a naive `n`-unit
+/// shift (see [`date_shift_unit`]).
 ///
 /// # Errors
 ///
@@ -602,11 +602,12 @@ fn weekday(value: &str) -> TemplateEngineResult<u32> {
 /// from the piped value to `other`, positive when `other` is later.
 ///
 /// The `unit` kwarg defaults to `"days"` and accepts `"years"`, `"months"`,
-/// `"hours"`, `"minutes"`, or `"seconds"`. `"years"`/`"months"` are calendar
-/// counts: whole units elapsed, day-of-month aware (see the date module's
-/// [`signed_years_since`]/[`signed_months_since`]), always an `i64` regardless
-/// of input precision. The remaining units are fixed-duration: `f64` when both
-/// inputs carry a time component, otherwise an `i64` whole-unit count.
+/// `"weeks"`, `"hours"`, `"minutes"`, or `"seconds"`. `"years"`/`"months"` are
+/// calendar counts: whole units elapsed, day-of-month aware (see the date
+/// module's [`signed_years_since`]/[`signed_months_since`]), always an `i64`
+/// regardless of input precision. The remaining units, including `"weeks"`
+/// and the default `"days"`, are fixed-duration: `f64` when both inputs carry
+/// a time component, otherwise an `i64` whole-unit count.
 ///
 /// # Errors
 ///
@@ -727,8 +728,8 @@ fn unknown_unit_error(unit: &str) -> Error {
         ErrorKind::InvalidOperation,
         format!(
             "unknown unit {unit:?} (expected \"years\"/\"y\", \
-             \"months\"/\"mo\", \"days\"/\"d\", \"hours\"/\"h\", \
-             \"minutes\"/\"m\", or \"seconds\"/\"s\")"
+             \"months\"/\"mo\", \"weeks\"/\"w\", \"days\"/\"d\", \
+             \"hours\"/\"h\", \"minutes\"/\"m\", or \"seconds\"/\"s\")"
         ),
     )
 }
@@ -851,9 +852,9 @@ mod tests {
     /// `today`/`tomorrow`/`yesterday` share the same nondeterministic clock,
     /// but their relative dates are deterministic within one render window.
     ///
-    /// Whatever `today()` returns, `tomorrow()` and `yesterday()` should be one
-    /// calendar day ahead and behind it, except for a midnight rollover between
-    /// calls.
+    /// All three render inside one template so they read the clock in a
+    /// single evaluation; a local-midnight crossing between separate renders
+    /// would otherwise flake the one-day-apart assertions.
     mod today_tomorrow_yesterday {
         use pretty_assertions::assert_eq;
         use rstest::rstest;
@@ -862,22 +863,29 @@ mod tests {
 
         #[test]
         fn tomorrow_and_yesterday_are_one_day_from_today() {
-            let rendered_env = env();
-            let today: NaiveDate = rendered_env
-                .render_str("{{ date.today() }}", minijinja::context!())
-                .expect("render succeeds")
+            let rendered = env()
+                .render_str(
+                    "{{ date.yesterday() }}/{{ date.today() }}/{{ \
+                     date.tomorrow() }}",
+                    minijinja::context!(),
+                )
+                .expect("render succeeds");
+            let mut parts = rendered.split('/');
+            let yesterday: NaiveDate = parts
+                .next()
+                .expect("yesterday segment")
                 .parse()
-                .expect("today() renders a valid ISO date");
-            let tomorrow: NaiveDate = rendered_env
-                .render_str("{{ date.tomorrow() }}", minijinja::context!())
-                .expect("render succeeds")
+                .expect("valid ISO date");
+            let today: NaiveDate = parts
+                .next()
+                .expect("today segment")
                 .parse()
-                .expect("tomorrow() renders a valid ISO date");
-            let yesterday: NaiveDate = rendered_env
-                .render_str("{{ date.yesterday() }}", minijinja::context!())
-                .expect("render succeeds")
+                .expect("valid ISO date");
+            let tomorrow: NaiveDate = parts
+                .next()
+                .expect("tomorrow segment")
                 .parse()
-                .expect("yesterday() renders a valid ISO date");
+                .expect("valid ISO date");
 
             assert_eq!(tomorrow, today.succ_opt().unwrap());
             assert_eq!(yesterday, today.pred_opt().unwrap());
@@ -1477,6 +1485,12 @@ mod tests {
             "2026-07-23 12:00:00",
             "days",
             "0.5"
+        )]
+        #[case::weeks_as_a_fixed_unit(
+            "2026-07-23 00:00:00",
+            "2026-08-06 00:00:00",
+            "weeks",
+            "2.0"
         )]
         fn returns_sub_day_precision_when_both_inputs_have_time(
             #[case] value: &str,

@@ -8,7 +8,8 @@
 //!
 //! - [`DurationUnit`]: unit registry (parsing, seconds conversion, naming).
 //!   Single source of truth; callers should not maintain their own registries.
-//! - [`DurationValue`]: a parsed duration carrying its total seconds.
+//! - [`DurationValue`]: a parsed duration carrying its total seconds, its
+//!   original spelling, and its retained written parts (the regime witness).
 //! - [`DurationSeconds`]: a finite `f64` newtype with [`Ord`], [`Add`],
 //!   [`Sub`], and [`Mul`].
 //! - [`DurationError`]: error type for parse and conversion failures.
@@ -27,7 +28,7 @@ use num_traits::ToPrimitive as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Retained duration components in written left-to-right order.
-pub(crate) type DurationParts = Box<[(f64, DurationUnit)]>;
+type DurationParts = Box<[(f64, DurationUnit)]>;
 
 /// A validated duration expression with its total seconds and original source
 /// spelling.
@@ -361,7 +362,7 @@ impl DurationValue {
                   change user-visible Duration floats that tests pin with \
                   exact equality; not a hot path"
     )]
-    pub(crate) fn fold_parts(parts: &[(f64, DurationUnit)]) -> f64 {
+    fn fold_parts(parts: &[(f64, DurationUnit)]) -> f64 {
         parts.iter().fold(0.0f64, |acc, &(magnitude, unit)| {
             acc + magnitude * unit.fixed_seconds()
         })
@@ -446,8 +447,10 @@ impl DurationValue {
         }
     }
 
-    /// Parses a decimal number starting at `pos`, supporting optional leading
-    /// `+` or `-`.
+    /// Parses a decimal number starting at `pos`, supporting an optional
+    /// leading `+` or `-` and an optional trailing exponent (`"1e5"`,
+    /// `".5e-3"`), the same float syntax the [`DurationSeconds`]
+    /// [`Display`](fmt::Display) dialect emits for extreme magnitudes.
     fn parse_number(
         bytes: &[u8],
         mut pos: usize,
@@ -472,17 +475,34 @@ impl DurationValue {
             pos = pos.saturating_add(1);
         }
         let mut has_decimal = false;
+        let mut has_digit = false;
         while pos < bytes.len() {
             let Some(&b) = bytes.get(pos) else {
                 break;
             };
             if b.is_ascii_digit() {
+                has_digit = true;
                 pos = pos.saturating_add(1);
             } else if b == b'.' && !has_decimal {
                 has_decimal = true;
                 pos = pos.saturating_add(1);
             } else {
                 break;
+            }
+        }
+        // An exponent may follow a digit-bearing mantissa. A truncated
+        // exponent (`"1e"`, `"1e+"`) is not consumed: the `e` falls to the
+        // unit scanner and is reported as an unknown unit, as before.
+        if has_digit && matches!(bytes.get(pos), Some(b'e' | b'E')) {
+            let mut exp_pos = pos.saturating_add(1);
+            if matches!(bytes.get(exp_pos), Some(b'+' | b'-')) {
+                exp_pos = exp_pos.saturating_add(1);
+            }
+            if bytes.get(exp_pos).is_some_and(u8::is_ascii_digit) {
+                while bytes.get(exp_pos).is_some_and(u8::is_ascii_digit) {
+                    exp_pos = exp_pos.saturating_add(1);
+                }
+                pos = exp_pos;
             }
         }
         Self::parsed_number(num_start, pos, input)
@@ -500,8 +520,8 @@ impl DurationValue {
             });
         }
         // `start`/`end` are byte offsets produced by scanning only
-        // single-byte ASCII (`+`/`-`/`.`/digit), so they always land on
-        // char boundaries within `input`: a direct `str` slice can't fail.
+        // single-byte ASCII (`+`/`-`/`.`/digit/`e`/`E`), so they always land
+        // on char boundaries within `input`: a direct `str` slice can't fail.
         let Some(text) = input.get(start..end) else {
             return Err(DurationError::MissingNumber {
                 input: input.to_owned(),
@@ -586,17 +606,6 @@ impl TryFrom<DurationValue> for TimeDelta {
     /// a `NonFiniteSeconds` error on arithmetic overflow.
     #[inline]
     fn try_from(duration: DurationValue) -> Result<Self, Self::Error> {
-        Self::try_from(duration.to_seconds())
-    }
-}
-
-impl TryFrom<&DurationValue> for TimeDelta {
-    type Error = DurationError;
-
-    /// Converts to a [`TimeDelta`] via the duration's total seconds, returning
-    /// a `NonFiniteSeconds` error on arithmetic overflow.
-    #[inline]
-    fn try_from(duration: &DurationValue) -> Result<Self, Self::Error> {
         Self::try_from(duration.to_seconds())
     }
 }
@@ -1195,6 +1204,11 @@ mod tests {
             #[case::without_leading_digit(".5h", 1_800.0)]
             #[case::negative_without_leading_digit("-.5h", -1_800.0)]
             #[case::positive_with_leading_plus("+.5h", 1_800.0)]
+            #[case::exponent("1e3s", 1_000.0)]
+            #[case::negative_exponent("1e-2h", 36.0)]
+            #[case::explicit_exponent_sign("1e+2d", 8_640_000.0)]
+            #[case::uppercase_exponent("1E3m", 60_000.0)]
+            #[case::exponent_after_decimal(".5e2s", 50.0)]
             fn parses_decimal(#[case] input: &str, #[case] expected: f64) {
                 assert_eq!(
                     DurationValue::parse(input).unwrap().to_seconds(),
@@ -1283,6 +1297,18 @@ mod tests {
                         DurationError::NonFiniteNumber { input }
                         if input == &overflowing
                     ));
+                }
+
+                #[test]
+                fn rejects_a_multi_part_fold_overflowing_to_infinity() {
+                    // Each part is finite (1e308 is below `f64::MAX`), but
+                    // their Σ overflows: the parse-level guard is
+                    // `NonFiniteSeconds`, not `NonFiniteNumber`, which
+                    // targets per-part magnitudes.
+                    let huge =
+                        format!("1{}s 1{}s", "0".repeat(308), "0".repeat(308));
+                    let err = DurationValue::parse(&huge).unwrap_err();
+                    assert!(matches!(err, DurationError::NonFiniteSeconds));
                 }
 
                 #[rstest]
@@ -1429,6 +1455,9 @@ mod tests {
             )]
             #[case::negative(-5_400.0)]
             #[case::negative_compound(-(86_400.0 + 3_600.0))]
+            #[case::scientific_huge(1e300)]
+            #[case::scientific_negative_huge(-1e300)]
+            #[case::scientific_tiny(1e-300)]
             fn roundtrips_through_parser(#[case] raw_seconds: f64) {
                 let secs = DurationSeconds::try_from(raw_seconds).unwrap();
                 let synthesized = DurationValue::from_seconds(secs);
@@ -2183,15 +2212,6 @@ mod tests {
                 DurationSeconds::try_from(input_secs).expect("finite seconds");
             let result = TimeDelta::try_from(seconds);
             assert!(matches!(result, Err(DurationError::NonFiniteSeconds)));
-        }
-
-        #[test]
-        fn delegates_to_duration_seconds_impl() {
-            let duration = DurationValue::parse("30m").expect("valid duration");
-            let converted = TimeDelta::try_from(&duration).expect("in range");
-            let via_seconds =
-                TimeDelta::try_from(duration.to_seconds()).expect("in range");
-            assert_eq!(converted, via_seconds);
         }
     }
 }

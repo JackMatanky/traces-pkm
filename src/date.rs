@@ -18,7 +18,18 @@
 //! - [`DateTimeValue`] - Parsed UTC date-time instant.
 //! - [`DateFormat`] - Format grammar for calendar date recognition.
 //! - [`DateTimeFormat`] - Format grammar for date-time recognition.
-//! - [`DateError`] - Error type for parse and formatting failures.
+//! - [`DatePoint`] - Wall-clock/instant pair measured by the calendar owner.
+//! - [`DateDiff`] - Result of a calendar-owner difference measurement.
+//! - [`DateError`] - Error type for parsing, formatting, and arithmetic
+//!   failures.
+//!
+//! # Calendar owner
+//!
+//! This module owns date arithmetic for the crate (spec D12/D13):
+//! [`DateValue::shift`], [`DateValue::apply`], [`DateTimeValue::shift`], and
+//! [`DateTimeValue::apply`] apply calendar or fixed-duration semantics in
+//! exactly one place, and the template engine delegates to them through
+//! [`shift_wall`] and [`date_diff_measurement`].
 
 use std::{borrow::Cow, fmt, str::FromStr, time::SystemTime};
 
@@ -371,6 +382,9 @@ impl DateValue {
     /// Shifts this civil date by `n` `unit`s.
     ///
     /// Pure civil arithmetic: zone-free dates never touch the DST resolver.
+    /// Delegates to [`shift_wall`] on midnight of this date and keeps the
+    /// resulting calendar day, so the owner defines the per-unit semantics
+    /// in exactly one place.
     ///
     /// # Errors
     ///
@@ -389,61 +403,8 @@ impl DateValue {
         n: i64,
         unit: DurationUnit,
     ) -> Result<Self, DateError> {
-        match unit {
-            DurationUnit::Year => {
-                let months = n.checked_mul(12).ok_or(DateError::OutOfRange)?;
-                shift_date_months(self.0, months).map(Self)
-            }
-            DurationUnit::Month => shift_date_months(self.0, n).map(Self),
-            DurationUnit::Week => {
-                let days = n.checked_mul(7).ok_or(DateError::OutOfRange)?;
-                let days_u64 = days.unsigned_abs();
-                let shifted = if days >= 0 {
-                    self.0.checked_add_days(Days::new(days_u64))
-                } else {
-                    self.0.checked_sub_days(Days::new(days_u64))
-                }
-                .ok_or(DateError::OutOfRange)?;
-                Ok(Self(shifted))
-            }
-            DurationUnit::Day => {
-                let days_u64 = n.unsigned_abs();
-                let shifted = if n >= 0 {
-                    self.0.checked_add_days(Days::new(days_u64))
-                } else {
-                    self.0.checked_sub_days(Days::new(days_u64))
-                }
-                .ok_or(DateError::OutOfRange)?;
-                Ok(Self(shifted))
-            }
-            DurationUnit::Millisecond => {
-                let wall =
-                    self.0.and_hms_opt(0, 0, 0).ok_or(DateError::OutOfRange)?;
-                let delta = chrono::Duration::try_milliseconds(n)
-                    .ok_or(DateError::OutOfRange)?;
-                let shifted_wall = wall
-                    .checked_add_signed(delta)
-                    .ok_or(DateError::OutOfRange)?;
-                Ok(Self(shifted_wall.date()))
-            }
-            DurationUnit::Second
-            | DurationUnit::Minute
-            | DurationUnit::Hour => {
-                let wall =
-                    self.0.and_hms_opt(0, 0, 0).ok_or(DateError::OutOfRange)?;
-                let secs = unit
-                    .fixed_seconds_i64()
-                    .ok_or(DateError::OutOfRange)?
-                    .checked_mul(n)
-                    .ok_or(DateError::OutOfRange)?;
-                let delta = chrono::Duration::try_seconds(secs)
-                    .ok_or(DateError::OutOfRange)?;
-                let shifted_wall = wall
-                    .checked_add_signed(delta)
-                    .ok_or(DateError::OutOfRange)?;
-                Ok(Self(shifted_wall.date()))
-            }
-        }
+        let wall = self.0.and_hms_opt(0, 0, 0).ok_or(DateError::OutOfRange)?;
+        shift_wall(wall, n, unit).map(|shifted| Self(shifted.date()))
     }
 
     /// Applies `duration` to this civil date.
@@ -1163,10 +1124,13 @@ impl<'de> Deserialize<'de> for DateTimeValue {
     }
 }
 
-/// Error type for date/date-time parse and formatting failures.
+/// Error type for date/date-time parsing, formatting, and arithmetic
+/// failures.
 ///
 /// Returned by [`DateValue`]'s and [`DateTimeValue`]'s crate-internal
-/// `parse_iso` and `format_with` methods.
+/// `parse_iso` and `format_with` methods, by the calendar owner's
+/// `shift`/`apply`/`diff` operations, and by the [`From<DateValue>`]
+/// promotion.
 #[derive(Debug, Clone, Eq, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum DateError {
@@ -1256,8 +1220,13 @@ pub(crate) fn date_diff_measurement(
             from.wall.date(),
             to.wall.date(),
         ))),
-        u => {
-            let unit_secs = u.fixed_seconds();
+        DurationUnit::Week
+        | DurationUnit::Day
+        | DurationUnit::Hour
+        | DurationUnit::Minute
+        | DurationUnit::Second
+        | DurationUnit::Millisecond => {
+            let unit_secs = unit.fixed_seconds();
             let delta = if both_datetimes {
                 to.instant.signed_duration_since(from.instant)
             } else {
@@ -1273,16 +1242,16 @@ pub(crate) fn date_diff_measurement(
                     + f64::from(delta.subsec_nanos()) / 1e9)
                     / unit_secs;
                 Ok(DateDiff::Exact(result))
-            } else if u == DurationUnit::Millisecond {
+            } else if unit == DurationUnit::Millisecond {
                 Ok(DateDiff::Whole(delta.num_milliseconds()))
             } else {
                 let unit_secs_i64 =
-                    u.fixed_seconds_i64().ok_or(DateError::OutOfRange)?;
+                    unit.fixed_seconds_i64().ok_or(DateError::OutOfRange)?;
                 #[expect(
                     clippy::arithmetic_side_effects,
-                    reason = "unit_secs_i64 is 86_400, 3_600, 60, or 1 (fixed \
-                              units only), never zero, so this division never \
-                              panics"
+                    reason = "unit_secs_i64 is 604_800, 86_400, 3_600, 60, or \
+                              1 (fixed units only), never zero, so this \
+                              division never panics"
                 )]
                 let result = delta.num_seconds() / unit_secs_i64;
                 Ok(DateDiff::Whole(result))
@@ -1315,11 +1284,14 @@ impl DatePoint {
     }
 }
 
-/// Shifts a civil wall-clock datetime by `n` `unit`s.
+/// Shifts a civil wall-clock datetime by `n` `unit`s, preserving the
+/// time-of-day component.
 ///
 /// Calendar units ([`DurationUnit::Year`], [`DurationUnit::Month`],
-/// [`DurationUnit::Week`], [`DurationUnit::Day`]) shift civil calendar
-/// components directly. Sub-day units shift civil time.
+/// [`DurationUnit::Week`], [`DurationUnit::Day`]) shift calendar days with
+/// month clamping per chrono's documented behavior; sub-day units shift the
+/// time exactly. No zone is ever consulted: callers wanting DST-aware
+/// local-wall semantics route through [`DateTimeValue::shift`] instead.
 ///
 /// # Errors
 ///
@@ -1391,29 +1363,6 @@ pub(crate) fn shift_months(
         wall.checked_add_months(Months::new(months_u32))
     } else {
         wall.checked_sub_months(Months::new(months_u32))
-    }
-    .ok_or(DateError::OutOfRange)
-}
-
-/// Shifts `date` by `months` calendar months, positive or negative.
-///
-/// Clamps to the last day of the target month per chrono's documented behavior.
-///
-/// # Errors
-///
-/// - [`DateError::OutOfRange`] if `months` does not fit a `u32` or the
-///   arithmetic overflows representable bounds.
-#[cfg_attr(not(test), expect(dead_code, reason = "called by DateValue::shift"))]
-pub(crate) fn shift_date_months(
-    date: NaiveDate,
-    months: i64,
-) -> Result<NaiveDate, DateError> {
-    let months_u32 = u32::try_from(months.unsigned_abs())
-        .map_err(|_| DateError::OutOfRange)?;
-    if months >= 0 {
-        date.checked_add_months(Months::new(months_u32))
-    } else {
-        date.checked_sub_months(Months::new(months_u32))
     }
     .ok_or(DateError::OutOfRange)
 }
@@ -2362,6 +2311,7 @@ mod tests {
                 NaiveDate::from_ymd_opt(2026, 7, 29).expect("valid date")
             );
         }
+
         #[test]
         fn converts_from_naive_date_via_from_trait() {
             let naive =
@@ -2371,13 +2321,6 @@ mod tests {
                 date,
                 DateValue::parse_iso("2026-07-29").expect("valid date")
             );
-        }
-
-        #[test]
-        fn extracts_wrapped_naive_date_via_into_inner() {
-            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
-            let naive: NaiveDate = date.into();
-            assert_eq!(date.into_inner(), naive);
         }
     }
 
