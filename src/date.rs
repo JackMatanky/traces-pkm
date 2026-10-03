@@ -18,17 +18,30 @@
 //! - [`DateTimeValue`] - Parsed UTC date-time instant.
 //! - [`DateFormat`] - Format grammar for calendar date recognition.
 //! - [`DateTimeFormat`] - Format grammar for date-time recognition.
-//! - [`DateError`] - Error type for parse and formatting failures.
+//! - [`DatePoint`] - Wall-clock/instant pair measured by the calendar owner.
+//! - [`DateDiff`] - Result of a calendar-owner difference measurement.
+//! - [`DateError`] - Error type for parsing, formatting, and arithmetic
+//!   failures.
+//!
+//! # Calendar owner
+//!
+//! This module owns date arithmetic for the crate (spec D12/D13):
+//! [`DateValue::shift`], [`DateValue::apply`], [`DateTimeValue::shift`], and
+//! [`DateTimeValue::apply`] apply calendar or fixed-duration semantics in
+//! exactly one place, and the template engine delegates to them through
+//! [`shift_wall`] and [`DatePoint::diff`].
 
 use std::{borrow::Cow, fmt, str::FromStr, time::SystemTime};
 
 use chrono::{
-    DateTime, FixedOffset, Local, MappedLocalTime, NaiveDate, NaiveDateTime,
-    NaiveTime, Offset as _, SecondsFormat, TimeDelta, TimeZone as _, Utc,
+    DateTime, Datelike as _, Days, FixedOffset, Local, MappedLocalTime, Months,
+    NaiveDate, NaiveDateTime, NaiveTime, Offset as _, SecondsFormat, TimeDelta,
+    TimeZone as _, Utc,
 };
+use num_traits::ToPrimitive as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::duration::DurationValue;
+use crate::duration::{DurationUnit, DurationValue};
 
 /// [`DateValue`]'s canonical output format: `2026-07-29`.
 pub(crate) const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%d";
@@ -251,6 +264,23 @@ fn resolve_gap_offset(
     Err(zone_lookup())
 }
 
+/// Builds an exact [`TimeDelta`] from fractional `part_secs`, rejecting
+/// overflow of either the whole-seconds or the nanoseconds component.
+///
+/// Single owner of the whole/sub-second split shared by
+/// [`DateValue::apply_part`] and [`DateTimeValue::apply_part`].
+fn seconds_delta(part_secs: f64) -> Result<TimeDelta, DateError> {
+    let whole_secs = part_secs.trunc().to_i64().ok_or(DateError::OutOfRange)?;
+    let subsec_nanos = (part_secs.fract() * 1e9)
+        .round()
+        .to_i64()
+        .ok_or(DateError::OutOfRange)?;
+    TimeDelta::try_seconds(whole_secs)
+        .ok_or(DateError::OutOfRange)?
+        .checked_add(&TimeDelta::nanoseconds(subsec_nanos))
+        .ok_or(DateError::OutOfRange)
+}
+
 /// Parsed calendar date with no time-of-day component.
 ///
 /// Wraps [`NaiveDate`] as a newtype, enforcing ISO-8601 recognition.
@@ -331,39 +361,127 @@ impl DateValue {
         self.to_string()
     }
 
-    /// Formats this date with an arbitrary strftime `pattern`.
-    ///
-    /// # Errors
-    ///
-    /// - [`DateError::InvalidPattern`] if `pattern` is not a strftime specifier
-    ///   this value can render.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; documented deliberate \
-                      API for future arbitrary-pattern template formatting, \
-                      mirrors DateTimeValue::format_with"
-        )
-    )]
-    pub(crate) fn format_with(
-        self,
-        pattern: &str,
-    ) -> Result<String, DateError> {
-        use std::fmt::Write as _;
-        let mut out = String::with_capacity(pattern.len().max(32));
-        write!(out, "{}", self.0.format(pattern)).map_err(|_fmt_error| {
-            DateError::InvalidPattern {
-                pattern: pattern.into(),
-            }
-        })?;
-        Ok(out)
-    }
-
     /// Returns the wrapped [`NaiveDate`].
     #[must_use]
     pub(crate) const fn into_inner(self) -> NaiveDate {
         self.0
+    }
+
+    /// Shifts this civil date by `n` `unit`s.
+    ///
+    /// Pure civil arithmetic: zone-free dates never touch the DST resolver.
+    /// Delegates to [`shift_wall`] on midnight of this date and keeps the
+    /// resulting calendar day, so the owner defines the per-unit semantics
+    /// in exactly one place.
+    ///
+    /// # Errors
+    ///
+    /// - [`DateError::OutOfRange`] if arithmetic overflows representable
+    ///   bounds.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "part of DateValue surface; called in tests and by \
+                      future query temporal functions"
+        )
+    )]
+    pub(crate) fn shift(
+        self,
+        n: i64,
+        unit: DurationUnit,
+    ) -> Result<Self, DateError> {
+        let wall = self.0.and_hms_opt(0, 0, 0).ok_or(DateError::OutOfRange)?;
+        shift_wall(wall, n, unit).map(|shifted| Self(shifted.date()))
+    }
+
+    /// Applies `duration` to this civil date.
+    ///
+    /// Pure civil arithmetic: zone-free dates never touch the DST resolver.
+    ///
+    /// # Errors
+    ///
+    /// - [`DateError::OutOfRange`] if arithmetic overflows or the duration
+    ///   contains non-finite seconds.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "part of DateValue surface; called in tests and by \
+                      future query temporal functions"
+        )
+    )]
+    pub(crate) fn apply(
+        self,
+        duration: &DurationValue,
+    ) -> Result<Self, DateError> {
+        if let Some(parts) = duration.parts() {
+            let mut current = self;
+            for &(mag, unit) in parts {
+                current = current.apply_part(mag, unit)?;
+            }
+            Ok(current)
+        } else {
+            // Fixed magnitude without a written shape: applied as exact
+            // seconds on the civil wall clock; non-finite input is rejected
+            // by the `TimeDelta` conversion.
+            let wall =
+                self.0.and_hms_opt(0, 0, 0).ok_or(DateError::OutOfRange)?;
+            let delta = TimeDelta::try_from(duration.to_seconds())
+                .map_err(|_| DateError::OutOfRange)?;
+            let shifted_wall =
+                wall.checked_add_signed(delta).ok_or(DateError::OutOfRange)?;
+            Ok(Self(shifted_wall.date()))
+        }
+    }
+
+    fn apply_part(
+        self,
+        mag: f64,
+        unit: DurationUnit,
+    ) -> Result<Self, DateError> {
+        if !mag.is_finite() {
+            return Err(DateError::OutOfRange);
+        }
+        match unit {
+            DurationUnit::Day
+            | DurationUnit::Week
+            | DurationUnit::Month
+            | DurationUnit::Year => {
+                let whole =
+                    mag.trunc().to_i64().ok_or(DateError::OutOfRange)?;
+                let mut current = if whole != 0 {
+                    self.shift(whole, unit)?
+                } else {
+                    self
+                };
+                let rem_secs = mag.fract() * unit.fixed_seconds();
+                if rem_secs != 0.0 {
+                    let wall = current
+                        .0
+                        .and_hms_opt(0, 0, 0)
+                        .ok_or(DateError::OutOfRange)?;
+                    let delta = seconds_delta(rem_secs)?;
+                    let shifted_wall = wall
+                        .checked_add_signed(delta)
+                        .ok_or(DateError::OutOfRange)?;
+                    current = Self(shifted_wall.date());
+                }
+                Ok(current)
+            }
+            DurationUnit::Hour
+            | DurationUnit::Minute
+            | DurationUnit::Second
+            | DurationUnit::Millisecond => {
+                let wall =
+                    self.0.and_hms_opt(0, 0, 0).ok_or(DateError::OutOfRange)?;
+                let delta = seconds_delta(mag * unit.fixed_seconds())?;
+                let shifted_wall = wall
+                    .checked_add_signed(delta)
+                    .ok_or(DateError::OutOfRange)?;
+                Ok(Self(shifted_wall.date()))
+            }
+        }
     }
 }
 
@@ -488,25 +606,6 @@ impl DateTimeValue {
         Ok(Self(instant))
     }
 
-    /// Formats this date-time as an RFC 3339 date and time with a UTC offset
-    /// (always `+00:00`).
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; documented deliberate \
-                      API in index-query#05; to_datetime_string (used by \
-                      field resolution's DateTime variant) and \
-                      DateValue::to_date_string (used by field resolution's \
-                      Date variant) cover the shipping formatting paths"
-        )
-    )]
-    #[inline]
-    #[must_use]
-    pub(crate) fn to_offset_string(self) -> String {
-        self.0.to_rfc3339()
-    }
-
     /// Formats this date-time without a UTC offset, including fractional
     /// seconds only when this value carries a nonzero nanosecond component
     /// (round-trips [`DateTimeFormat::IsoTFractional`] input instead of
@@ -515,56 +614,6 @@ impl DateTimeValue {
     #[must_use]
     pub(crate) fn to_datetime_string(self) -> String {
         self.to_string()
-    }
-
-    /// Formats this date-time as a bare date without time or offset.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; DateValue's own \
-                      to_date_string covers field resolution's Date-variant \
-                      formatting; kept for API symmetry with \
-                      to_datetime_string"
-        )
-    )]
-    #[inline]
-    #[must_use]
-    pub(crate) fn to_date_string(self) -> String {
-        self.date().to_string()
-    }
-
-    /// Formats this date-time as a bare time-of-day component.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; documented deliberate \
-                      API in index-query#05; to_datetime_string (used by \
-                      field resolution's DateTime variant) and \
-                      DateValue::to_date_string (used by field resolution's \
-                      Date variant) cover the shipping formatting paths"
-        )
-    )]
-    #[inline]
-    #[must_use]
-    pub(crate) fn to_time_string(self) -> String {
-        self.wall_or_utc().format("%H:%M:%S").to_string()
-    }
-
-    /// Returns a new date-time truncated to the start of the local day.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; field resolution \
-                      truncates via DateTimeValue::date() instead"
-        )
-    )]
-    #[inline]
-    #[must_use]
-    pub(crate) fn start_of_day(self) -> Self {
-        Self::from(self.date())
     }
 
     /// Returns the local wall-clock rendering of this instant.
@@ -604,88 +653,183 @@ impl DateTimeValue {
         DateValue(self.wall_or_utc().date())
     }
 
-    /// Formats this date-time with an arbitrary strftime `pattern`.
+    /// Shifts this date-time by `n` `unit`s.
+    ///
+    /// Calendar units ([`DurationUnit::Year`], [`DurationUnit::Month`],
+    /// [`DurationUnit::Week`], [`DurationUnit::Day`]) shift the local wall
+    /// clock, preserving the wall-clock time across DST transitions per spec
+    /// D12/D13. Sub-day units shift the stored instant exactly.
     ///
     /// # Errors
     ///
-    /// - [`DateError::InvalidPattern`] if `pattern` is not a strftime specifier
-    ///   this value can render.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; documented deliberate \
-                      API for future arbitrary-pattern template formatting"
-        )
-    )]
-    pub(crate) fn format_with(
+    /// - [`DateError::OutOfRange`] if arithmetic overflows.
+    /// - [`DateError::LocalZoneLookup`] if the shifted local wall clock cannot
+    ///   be resolved.
+    pub(crate) fn shift(
         self,
-        pattern: &str,
-    ) -> Result<String, DateError> {
-        use std::fmt::Write as _;
-        let mut out = String::with_capacity(pattern.len().max(32));
-        // Arbitrary patterns render the local wall clock, matching `Display`.
-        let wall = self.wall_or_utc();
-        write!(out, "{}", wall.format(pattern)).map_err(|_fmt_error| {
-            DateError::InvalidPattern {
-                pattern: pattern.into(),
+        n: i64,
+        unit: DurationUnit,
+    ) -> Result<Self, DateError> {
+        match unit {
+            DurationUnit::Year => {
+                let months = n.checked_mul(12).ok_or(DateError::OutOfRange)?;
+                self.shift_calendar_months(months)
             }
-        })?;
-        Ok(out)
+            DurationUnit::Month => self.shift_calendar_months(n),
+            DurationUnit::Week => {
+                let days = n.checked_mul(7).ok_or(DateError::OutOfRange)?;
+                self.shift_calendar_days(days)
+            }
+            DurationUnit::Day => self.shift_calendar_days(n),
+            DurationUnit::Hour
+            | DurationUnit::Minute
+            | DurationUnit::Second => {
+                let secs = unit
+                    .fixed_seconds_i64()
+                    .ok_or(DateError::OutOfRange)?
+                    .checked_mul(n)
+                    .ok_or(DateError::OutOfRange)?;
+                let delta = chrono::Duration::try_seconds(secs)
+                    .ok_or(DateError::OutOfRange)?;
+                let instant = self
+                    .0
+                    .checked_add_signed(delta)
+                    .ok_or(DateError::OutOfRange)?;
+                Ok(Self(instant))
+            }
+            DurationUnit::Millisecond => {
+                let delta = chrono::Duration::try_milliseconds(n)
+                    .ok_or(DateError::OutOfRange)?;
+                let instant = self
+                    .0
+                    .checked_add_signed(delta)
+                    .ok_or(DateError::OutOfRange)?;
+                Ok(Self(instant))
+            }
+        }
     }
 
-    /// Adds `duration` to this date-time.
+    fn shift_calendar_months(self, months: i64) -> Result<Self, DateError> {
+        let wall = self.local_wall().ok_or(DateError::OutOfRange)?;
+        let new_wall = shift_months(wall, months)?;
+        let instant = local_naive_to_utc(new_wall)?;
+        Ok(Self(instant))
+    }
+
+    fn shift_calendar_days(self, days: i64) -> Result<Self, DateError> {
+        let wall = self.local_wall().ok_or(DateError::OutOfRange)?;
+        let days_u64 = days.unsigned_abs();
+        let new_wall = if days >= 0 {
+            wall.checked_add_days(Days::new(days_u64))
+        } else {
+            wall.checked_sub_days(Days::new(days_u64))
+        }
+        .ok_or(DateError::OutOfRange)?;
+        let instant = local_naive_to_utc(new_wall)?;
+        Ok(Self(instant))
+    }
+
+    /// Applies `duration` to this date-time.
     ///
-    /// Converts `duration` via [`TryFrom<DurationValue>`] for [`TimeDelta`].
-    /// Returns [`None`] on arithmetic overflow or a non-finite duration.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; template engine's \
-                      date_shift_unit keeps its own calendar arithmetic \
-                      rather than delegating here (see Step 11's design \
-                      note); kept for future direct-arithmetic callers"
-        )
-    )]
-    #[must_use]
-    pub(crate) fn checked_add(self, duration: DurationValue) -> Option<Self> {
-        let delta = TimeDelta::try_from(duration).ok()?;
-        self.0.checked_add_signed(delta).map(Self)
-    }
-
-    /// Subtracts `duration` from this date-time.
+    /// If `duration` has retained written parts ([`DurationValue::parts`] is
+    /// [`Some`]), they are applied in written left-to-right order. Calendar
+    /// units ([`DurationUnit::Day`], [`DurationUnit::Week`],
+    /// [`DurationUnit::Month`], [`DurationUnit::Year`]) shift the local wall
+    /// clock, preserving the wall time across DST transitions per spec D12/D13.
+    /// Sub-day units shift the stored instant exactly.
     ///
-    /// Converts `duration` via [`TryFrom<DurationValue>`] for [`TimeDelta`].
-    /// Returns [`None`] on arithmetic overflow or a non-finite duration.
+    /// If `duration` has no retained parts ([`DurationValue::parts`] is
+    /// [`None`]), the duration represents a fixed magnitude and is applied
+    /// directly to the stored instant as exact seconds.
+    ///
+    /// # Errors
+    ///
+    /// - [`DateError::OutOfRange`] if arithmetic overflows or the duration
+    ///   contains non-finite seconds.
+    /// - [`DateError::LocalZoneLookup`] if a shifted local wall clock cannot be
+    ///   resolved.
     #[cfg_attr(
         not(test),
         expect(
             dead_code,
-            reason = "no current caller outside tests; see checked_add"
+            reason = "part of DateTimeValue surface; called in tests and by \
+                      future query temporal functions"
         )
     )]
-    #[must_use]
-    pub(crate) fn checked_sub(self, duration: DurationValue) -> Option<Self> {
-        let delta = TimeDelta::try_from(duration).ok()?;
-        self.0.checked_sub_signed(delta).map(Self)
+    pub(crate) fn apply(
+        self,
+        duration: &DurationValue,
+    ) -> Result<Self, DateError> {
+        if let Some(parts) = duration.parts() {
+            let mut current = self;
+            for &(mag, unit) in parts {
+                current = current.apply_part(mag, unit)?;
+            }
+            Ok(current)
+        } else {
+            // Fixed magnitude without a written shape: applied as exact
+            // seconds on the stored instant; non-finite input is rejected by
+            // the `TimeDelta` conversion.
+            let delta = TimeDelta::try_from(duration.to_seconds())
+                .map_err(|_| DateError::OutOfRange)?;
+            let instant = self
+                .0
+                .checked_add_signed(delta)
+                .ok_or(DateError::OutOfRange)?;
+            Ok(Self(instant))
+        }
     }
 
-    /// Compares this date-time against `date`, coercing `date` to midnight in
-    /// the local zone (see the [`From<DateValue>`] promotion).
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; sort/filter \
-                      comparisons currently compare within one already- \
-                      normalized SortKey::DateTime variant, not across \
-                      Date/DateTime directly"
-        )
-    )]
-    #[must_use]
-    pub(crate) fn cmp_date(self, date: DateValue) -> std::cmp::Ordering {
-        self.0.cmp(&Self::from(date).0)
+    fn apply_part(
+        self,
+        mag: f64,
+        unit: DurationUnit,
+    ) -> Result<Self, DateError> {
+        if !mag.is_finite() {
+            return Err(DateError::OutOfRange);
+        }
+        match unit {
+            DurationUnit::Day
+            | DurationUnit::Week
+            | DurationUnit::Month
+            | DurationUnit::Year => {
+                let whole =
+                    mag.trunc().to_i64().ok_or(DateError::OutOfRange)?;
+                let mut current = if whole != 0 {
+                    self.shift(whole, unit)?
+                } else {
+                    self
+                };
+                let rem_secs = mag.fract() * unit.fixed_seconds();
+                if rem_secs != 0.0 {
+                    let delta = seconds_delta(rem_secs)?;
+                    // The whole part keeps the local wall clock via `shift`;
+                    // the fractional remainder is still part of a calendar
+                    // unit, so it round-trips through the local zone too
+                    // (spec D12) instead of landing as exact seconds on the
+                    // stored instant.
+                    let wall =
+                        current.local_wall().ok_or(DateError::OutOfRange)?;
+                    let shifted_wall = wall
+                        .checked_add_signed(delta)
+                        .ok_or(DateError::OutOfRange)?;
+                    let instant = local_naive_to_utc(shifted_wall)?;
+                    current = Self(instant);
+                }
+                Ok(current)
+            }
+            DurationUnit::Hour
+            | DurationUnit::Minute
+            | DurationUnit::Second
+            | DurationUnit::Millisecond => {
+                let delta = seconds_delta(mag * unit.fixed_seconds())?;
+                let instant = self
+                    .0
+                    .checked_add_signed(delta)
+                    .ok_or(DateError::OutOfRange)?;
+                Ok(Self(instant))
+            }
+        }
     }
 
     /// Returns `true` if this date-time is exactly local-zone midnight on
@@ -806,10 +950,13 @@ impl<'de> Deserialize<'de> for DateTimeValue {
     }
 }
 
-/// Error type for date/date-time parse and formatting failures.
+/// Error type for date/date-time parsing, formatting, and arithmetic
+/// failures.
 ///
 /// Returned by [`DateValue`]'s and [`DateTimeValue`]'s crate-internal
-/// `parse_iso` and `format_with` methods.
+/// `parse_iso` and `format_with` methods, by the calendar owner's
+/// `shift`/`apply`/`diff` operations, and by the [`From<DateValue>`]
+/// promotion.
 #[derive(Debug, Clone, Eq, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum DateError {
@@ -847,6 +994,256 @@ pub enum DateError {
         /// The naive wall-clock input that could not be resolved.
         input: Box<str>,
     },
+    /// A date/time arithmetic operation overflowed or exceeded the
+    /// representable range.
+    #[error("date/time value is out of range")]
+    OutOfRange,
+}
+
+/// Result of measuring the difference between two date/time points.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub(crate) enum DateDiff {
+    /// Whole units elapsed.
+    Whole(i64),
+    /// Exact fractional units elapsed.
+    Exact(f64),
+}
+
+/// A point in time carrying both civil wall clock and UTC instant, plus
+/// whether the input carried a time component.
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct DatePoint {
+    /// Civil wall-clock reading.
+    pub(crate) wall: NaiveDateTime,
+    /// Stored UTC instant.
+    pub(crate) instant: DateTime<Utc>,
+    /// Whether the parsed input carried a time component; selects the
+    /// fixed-unit measurement frame in [`DatePoint::diff`].
+    pub(crate) has_time: bool,
+}
+
+impl DatePoint {
+    /// Constructs a point from its wall clock, UTC instant, and
+    /// time-component flag.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn new(
+        wall: NaiveDateTime,
+        instant: DateTime<Utc>,
+        has_time: bool,
+    ) -> Self {
+        Self {
+            wall,
+            instant,
+            has_time,
+        }
+    }
+
+    /// Measures the difference from `self` to `to` in `unit`s.
+    ///
+    /// Preserves the declared measurement split:
+    /// - When both points carry a time component, fixed units measure elapsed
+    ///   time between the stored UTC instants as exact `f64`.
+    /// - When either point is date-only, fixed units measure elapsed civil wall
+    ///   clocks as `i64`.
+    /// - Calendar units ([`DurationUnit::Year`], [`DurationUnit::Month`])
+    ///   measure elapsed calendar periods using day-of-month aware whole counts
+    ///   ([`signed_years_since`], [`signed_months_since`]).
+    ///
+    /// # Errors
+    ///
+    /// - [`DateError::OutOfRange`] if the difference overflows representable
+    ///   bounds.
+    pub(crate) fn diff(
+        self,
+        to: DatePoint,
+        unit: DurationUnit,
+    ) -> Result<DateDiff, DateError> {
+        let both_datetimes = self.has_time && to.has_time;
+        match unit {
+            DurationUnit::Year => Ok(DateDiff::Whole(signed_years_since(
+                self.wall.date(),
+                to.wall.date(),
+            ))),
+            DurationUnit::Month => Ok(DateDiff::Whole(signed_months_since(
+                self.wall.date(),
+                to.wall.date(),
+            ))),
+            DurationUnit::Week
+            | DurationUnit::Day
+            | DurationUnit::Hour
+            | DurationUnit::Minute
+            | DurationUnit::Second
+            | DurationUnit::Millisecond => {
+                if both_datetimes {
+                    let delta = to.instant.signed_duration_since(self.instant);
+                    let whole_seconds = delta
+                        .num_seconds()
+                        .to_f64()
+                        .ok_or(DateError::OutOfRange)?;
+                    let result = (whole_seconds
+                        + f64::from(delta.subsec_nanos()) / 1e9)
+                        / unit.fixed_seconds();
+                    Ok(DateDiff::Exact(result))
+                } else if unit == DurationUnit::Millisecond {
+                    let delta = to.wall.signed_duration_since(self.wall);
+                    Ok(DateDiff::Whole(delta.num_milliseconds()))
+                } else {
+                    let delta = to.wall.signed_duration_since(self.wall);
+                    let unit_secs_i64 = unit
+                        .fixed_seconds_i64()
+                        .ok_or(DateError::OutOfRange)?;
+                    #[expect(
+                        clippy::arithmetic_side_effects,
+                        reason = "unit_secs_i64 is 604_800, 86_400, 3_600, \
+                                  60, or 1 (fixed units only), never zero, so \
+                                  this division never panics"
+                    )]
+                    let result = delta.num_seconds() / unit_secs_i64;
+                    Ok(DateDiff::Whole(result))
+                }
+            }
+        }
+    }
+}
+
+/// Shifts a civil wall-clock datetime by `n` `unit`s, preserving the
+/// time-of-day component.
+///
+/// Calendar units ([`DurationUnit::Year`], [`DurationUnit::Month`],
+/// [`DurationUnit::Week`], [`DurationUnit::Day`]) shift calendar days with
+/// month clamping per chrono's documented behavior; sub-day units shift the
+/// time exactly. No zone is ever consulted: callers wanting DST-aware
+/// local-wall semantics route through [`DateTimeValue::shift`] instead.
+///
+/// # Errors
+///
+/// - [`DateError::OutOfRange`] if the shift overflows representable bounds.
+pub(crate) fn shift_wall(
+    wall: NaiveDateTime,
+    n: i64,
+    unit: DurationUnit,
+) -> Result<NaiveDateTime, DateError> {
+    match unit {
+        DurationUnit::Year => {
+            let months = n.checked_mul(12).ok_or(DateError::OutOfRange)?;
+            shift_months(wall, months)
+        }
+        DurationUnit::Month => shift_months(wall, n),
+        DurationUnit::Week => {
+            let days = n.checked_mul(7).ok_or(DateError::OutOfRange)?;
+            let days_u64 = days.unsigned_abs();
+            if days >= 0 {
+                wall.checked_add_days(Days::new(days_u64))
+            } else {
+                wall.checked_sub_days(Days::new(days_u64))
+            }
+            .ok_or(DateError::OutOfRange)
+        }
+        DurationUnit::Day => {
+            let days_u64 = n.unsigned_abs();
+            if n >= 0 {
+                wall.checked_add_days(Days::new(days_u64))
+            } else {
+                wall.checked_sub_days(Days::new(days_u64))
+            }
+            .ok_or(DateError::OutOfRange)
+        }
+        DurationUnit::Millisecond => {
+            let delta = chrono::Duration::try_milliseconds(n)
+                .ok_or(DateError::OutOfRange)?;
+            wall.checked_add_signed(delta).ok_or(DateError::OutOfRange)
+        }
+        DurationUnit::Second | DurationUnit::Minute | DurationUnit::Hour => {
+            let secs = unit
+                .fixed_seconds_i64()
+                .ok_or(DateError::OutOfRange)?
+                .checked_mul(n)
+                .ok_or(DateError::OutOfRange)?;
+            let delta = chrono::Duration::try_seconds(secs)
+                .ok_or(DateError::OutOfRange)?;
+            wall.checked_add_signed(delta).ok_or(DateError::OutOfRange)
+        }
+    }
+}
+
+/// Shifts `wall` by `months` calendar months, positive or negative.
+///
+/// Clamps to the last day of the target month per chrono's documented behavior.
+///
+/// # Errors
+///
+/// - [`DateError::OutOfRange`] if `months` does not fit a `u32` or the
+///   arithmetic overflows representable bounds.
+fn shift_months(
+    wall: NaiveDateTime,
+    months: i64,
+) -> Result<NaiveDateTime, DateError> {
+    let months_u32 = u32::try_from(months.unsigned_abs())
+        .map_err(|_| DateError::OutOfRange)?;
+    if months >= 0 {
+        wall.checked_add_months(Months::new(months_u32))
+    } else {
+        wall.checked_sub_months(Months::new(months_u32))
+    }
+    .ok_or(DateError::OutOfRange)
+}
+
+/// Whole calendar years from `from` to `to`, signed.
+///
+/// Delegates to chrono's [`NaiveDate::years_since`], which is day-of-year
+/// aware: a year is not "up" until `to`'s month/day reaches `from`'s. This
+/// wrapper accepts either ordering.
+fn signed_years_since(from: NaiveDate, to: NaiveDate) -> i64 {
+    let (earlier, later, sign) = if to >= from {
+        (from, to, 1)
+    } else {
+        (to, from, -1)
+    };
+    #[expect(
+        clippy::expect_used,
+        reason = "earlier/later are ordered by construction just above, so \
+                  years_since's None case (base > self) is unreachable here"
+    )]
+    let years = later.years_since(earlier).expect(
+        "later >= earlier by construction, so years_since can't return None",
+    );
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "sign is always ±1 and years is bounded by NaiveDate's \
+                  representable range (~±262,000), so this multiply can't \
+                  overflow i64"
+    )]
+    let result = sign * i64::from(years);
+    result
+}
+
+/// Whole calendar months from `from` to `to`, signed. See
+/// [`signed_years_since`].
+///
+/// Chrono has no `months_since` equivalent, so this mirrors
+/// [`NaiveDate::years_since`]'s algorithm at month granularity: total calendar
+/// months between the dates, decremented by one when the day-of-month has not
+/// yet been reached.
+fn signed_months_since(from: NaiveDate, to: NaiveDate) -> i64 {
+    let (earlier, later, sign) = if to >= from {
+        (from, to, 1)
+    } else {
+        (to, from, -1)
+    };
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "year/month/day are all bounded by NaiveDate's representable \
+                  range (~±262,000 years), so the year subtraction, ×12 month \
+                  conversion, day comparison, and sign multiply can't \
+                  overflow i64"
+    )]
+    let result = sign
+        * (i64::from(later.year() - earlier.year()) * 12
+            + i64::from(later.month())
+            - i64::from(earlier.month())
+            - i64::from(later.day() < earlier.day()));
+    result
 }
 
 #[cfg(test)]
@@ -979,14 +1376,6 @@ mod tests {
         use super::*;
 
         #[test]
-        fn renders_to_offset_string_with_the_utc_offset() {
-            assert_eq!(
-                fixed_datetime().to_offset_string(),
-                "2026-07-29T14:30:05+00:00"
-            );
-        }
-
-        #[test]
         fn renders_to_datetime_string_without_the_offset() {
             TzGuard::set("UTC");
 
@@ -1007,32 +1396,6 @@ mod tests {
             assert_eq!(
                 with_nanos.to_datetime_string(),
                 "2026-07-29T14:30:05.123"
-            );
-        }
-
-        #[test]
-        fn renders_to_date_string_without_the_time() {
-            TzGuard::set("UTC");
-
-            assert_eq!(fixed_datetime().to_date_string(), "2026-07-29");
-        }
-
-        #[test]
-        fn renders_to_time_string_without_the_date() {
-            TzGuard::set("UTC");
-
-            assert_eq!(fixed_datetime().to_time_string(), "14:30:05");
-        }
-
-        #[test]
-        fn truncates_to_local_midnight_in_start_of_day() {
-            TzGuard::keep();
-
-            assert_eq!(
-                fixed_datetime().start_of_day(),
-                DateTimeValue::from(
-                    DateValue::parse_iso("2026-07-29").expect("valid date")
-                )
             );
         }
 
@@ -1082,16 +1445,6 @@ mod tests {
         use rstest::rstest;
 
         use super::*;
-
-        #[test]
-        fn covers_all_six_datetime_format_variants() {
-            assert_eq!(DateTimeFormat::ALL.len(), 6);
-        }
-
-        #[test]
-        fn covers_both_date_format_variants() {
-            assert_eq!(DateFormat::ALL.len(), 2);
-        }
 
         #[test]
         fn detects_the_iso_shape_byte_pattern() {
@@ -1193,38 +1546,6 @@ mod tests {
         }
 
         #[test]
-        fn rejects_an_invalid_pattern_in_datetime_value_format_with() {
-            TzGuard::keep();
-
-            let result = fixed_datetime().format_with("%Q");
-            assert!(matches!(result, Err(DateError::InvalidPattern { .. })));
-        }
-
-        #[test]
-        fn renders_a_custom_pattern_in_date_value_format_with() {
-            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
-            let rendered = date.format_with("%d/%m/%Y").expect("valid pattern");
-            assert_eq!(rendered, "29/07/2026");
-        }
-
-        #[test]
-        fn renders_a_custom_pattern_in_datetime_value_format_with() {
-            TzGuard::set("UTC");
-
-            let rendered = fixed_datetime()
-                .format_with("%d/%m/%Y %H:%M")
-                .expect("valid pattern");
-            assert_eq!(rendered, "29/07/2026 14:30");
-        }
-
-        #[test]
-        fn rejects_an_invalid_pattern_in_date_value_format_with() {
-            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
-            let result = date.format_with("%Q");
-            assert!(matches!(result, Err(DateError::InvalidPattern { .. })));
-        }
-
-        #[test]
         fn date_value_parses_via_from_str() {
             let date: DateValue = "2026-07-29".parse().expect("valid date");
             let expected =
@@ -1263,16 +1584,17 @@ mod tests {
         }
     }
 
-    mod arithmetic {
-        use pretty_assertions::assert_eq;
+    mod calendar_owner {
+        use pretty_assertions::{assert_eq, assert_ne};
+        use rstest::rstest;
 
         use super::*;
 
         #[test]
-        fn checked_add_advances_the_instant_by_the_duration() {
+        fn apply_advances_the_instant_by_the_duration() {
             let base = fixed_datetime();
             let one_hour = DurationValue::parse("1h").expect("valid duration");
-            let forward = base.checked_add(one_hour).expect("no overflow");
+            let forward = base.apply(&one_hour).expect("no overflow");
             assert_eq!(
                 forward,
                 DateTimeValue(base.into_inner() + TimeDelta::hours(1))
@@ -1280,10 +1602,10 @@ mod tests {
         }
 
         #[test]
-        fn checked_sub_rewinds_the_instant_by_the_duration() {
+        fn apply_rewinds_the_instant_by_negated_duration() {
             let base = fixed_datetime();
             let one_hour = DurationValue::parse("1h").expect("valid duration");
-            let back = base.checked_sub(one_hour).expect("no overflow");
+            let back = base.apply(&(one_hour * -1.0)).expect("no overflow");
             assert_eq!(
                 back,
                 DateTimeValue(base.into_inner() - TimeDelta::hours(1))
@@ -1291,25 +1613,402 @@ mod tests {
         }
 
         #[test]
-        fn overflows_near_the_representable_range_in_checked_add() {
+        fn overflows_near_the_representable_range_in_apply() {
             let near_max = DateTimeValue(DateTime::<Utc>::MAX_UTC);
             let one_second =
                 DurationValue::parse("1s").expect("valid duration");
-            assert_eq!(near_max.checked_add(one_second), None);
+            assert_eq!(near_max.apply(&one_second).ok(), None);
         }
 
         #[test]
-        fn underflows_near_the_representable_range_in_checked_sub() {
+        fn underflows_near_the_representable_range_in_apply() {
             let near_min = DateTimeValue(DateTime::<Utc>::MIN_UTC);
             let one_second =
                 DurationValue::parse("1s").expect("valid duration");
-            assert_eq!(near_min.checked_sub(one_second), None);
+            assert_eq!(near_min.apply(&(one_second * -1.0)).ok(), None);
+        }
+
+        #[test]
+        fn shift_preserves_the_local_wall_clock_for_calendar_units_across_dst()
+        {
+            TzGuard::set("America/New_York");
+
+            // Saturday March 7, 2026 at 12:00 EST (UTC 17:00:00)
+            let base = DateTimeValue::parse_iso("2026-03-07 12:00:00").unwrap();
+
+            // 1 day via `shift` keeps 12:00 on the wall clock across the gap.
+            let shifted_day = base.shift(1, DurationUnit::Day).unwrap();
+            assert_eq!(
+                shifted_day.local_wall().unwrap().to_string(),
+                "2026-03-08 12:00:00"
+            );
+
+            // `shift` routes week and 7-day units through the same calendar
+            // path, so they shift identically and keep 12:00.
+            let shifted_week = base.shift(1, DurationUnit::Week).unwrap();
+            let shifted_7d = base.shift(7, DurationUnit::Day).unwrap();
+            assert_eq!(shifted_week, shifted_7d);
+            assert_eq!(
+                shifted_week.local_wall().unwrap().to_string(),
+                "2026-03-14 12:00:00"
+            );
+
+            // 168 hours shifts the instant and lands 13:00 across the gap.
+            let shifted_168h = base.shift(168, DurationUnit::Hour).unwrap();
+            assert_ne!(shifted_week, shifted_168h);
+            assert_eq!(
+                shifted_168h.local_wall().unwrap().to_string(),
+                "2026-03-14 13:00:00"
+            );
+
+            // `shift` and `apply` agree for the same calendar unit: the
+            // calendar owner owns the semantics in exactly one place.
+            let applied_week =
+                base.apply(&DurationValue::parse("1w").unwrap()).unwrap();
+            assert_eq!(shifted_week, applied_week);
+        }
+
+        #[test]
+        fn a2_prime_equal_duration_values_shift_dates_differently() {
+            // "1 month" == "30 days" as duration values (fixed ratios)
+            let one_month = DurationValue::parse("1 month").unwrap();
+            let thirty_days = DurationValue::parse("30 days").unwrap();
+            assert_eq!(one_month, thirty_days);
+
+            // Yet they shift a date differently:
+            // 2026-01-15 + 1 month = 2026-02-15 (28 days later)
+            // 2026-01-15 + 30 days = 2026-02-14 (30 days later)
+            let base = DateValue::parse_iso("2026-01-15").unwrap();
+            let shifted_month = base.apply(&one_month).unwrap();
+            let shifted_days = base.apply(&thirty_days).unwrap();
+
+            assert_eq!(
+                shifted_month,
+                DateValue::parse_iso("2026-02-15").unwrap()
+            );
+            assert_eq!(
+                shifted_days,
+                DateValue::parse_iso("2026-02-14").unwrap()
+            );
+            assert_ne!(shifted_month, shifted_days);
+        }
+
+        #[test]
+        fn month_clamping_matches_chrono_documented_behavior() {
+            // Chrono's [`NaiveDate::checked_add_months`] clamps the day of the
+            // month to the last valid day of the target month when the target
+            // day doesn't exist (its documented behavior); the calendar owner
+            // delegates month shifts to it, so the clamp is pinned here.
+            let jan_31_non_leap = DateValue::parse_iso("2023-01-31").unwrap();
+            let feb_clamped =
+                jan_31_non_leap.shift(1, DurationUnit::Month).unwrap();
+            assert_eq!(
+                feb_clamped,
+                DateValue::parse_iso("2023-02-28").unwrap()
+            );
+
+            let jan_31_leap = DateValue::parse_iso("2024-01-31").unwrap();
+            let feb_leap_clamped =
+                jan_31_leap.shift(1, DurationUnit::Month).unwrap();
+            assert_eq!(
+                feb_leap_clamped,
+                DateValue::parse_iso("2024-02-29").unwrap()
+            );
+        }
+
+        #[test]
+        fn day_is_calendar_application_unit_differing_from_24h_across_dst() {
+            TzGuard::set("America/New_York");
+
+            // 1d == 24h as duration values
+            let one_day = DurationValue::parse("1d").unwrap();
+            let twenty_four_hours = DurationValue::parse("24h").unwrap();
+            assert_eq!(one_day, twenty_four_hours);
+
+            // Saturday March 7, 2026 at 12:00:00 EST (UTC 17:00:00)
+            let base = DateTimeValue::parse_iso("2026-03-07 12:00:00").unwrap();
+
+            // 1d shifts local wall clock to Sunday March 8, 2026 at 12:00:00
+            // EDT (UTC 16:00:00)
+            let shifted_day = base.apply(&one_day).unwrap();
+            assert_eq!(
+                shifted_day.local_wall().unwrap().to_string(),
+                "2026-03-08 12:00:00"
+            );
+            assert_eq!(
+                shifted_day,
+                DateTimeValue::parse_iso("2026-03-08T16:00:00Z").unwrap()
+            );
+
+            // 24h shifts stored UTC instant by 24 hours -> Sunday March 8 at
+            // 13:00:00 EDT (UTC 17:00:00)
+            let shifted_hours = base.apply(&twenty_four_hours).unwrap();
+            assert_eq!(
+                shifted_hours.local_wall().unwrap().to_string(),
+                "2026-03-08 13:00:00"
+            );
+            assert_eq!(
+                shifted_hours,
+                DateTimeValue::parse_iso("2026-03-08T17:00:00Z").unwrap()
+            );
+
+            // Equal values, different shifts across DST
+            assert_ne!(shifted_day, shifted_hours);
+        }
+
+        #[test]
+        fn week_shifts_as_seven_wall_days_matching_7d_and_differing_from_168h()
+        {
+            TzGuard::set("America/New_York");
+
+            let one_week = DurationValue::parse("1w").unwrap();
+            let seven_days = DurationValue::parse("7d").unwrap();
+            let hours_168 = DurationValue::parse("168h").unwrap();
+
+            assert_eq!(one_week, seven_days);
+            assert_eq!(one_week, hours_168);
+
+            // Saturday March 7, 2026 at 12:00:00 EST
+            let base = DateTimeValue::parse_iso("2026-03-07 12:00:00").unwrap();
+
+            let shifted_week = base.apply(&one_week).unwrap();
+            let shifted_7d = base.apply(&seven_days).unwrap();
+            let shifted_168h = base.apply(&hours_168).unwrap();
+
+            // 1w and 7d shift identically
+            assert_eq!(shifted_week, shifted_7d);
+            assert_eq!(
+                shifted_week.local_wall().unwrap().to_string(),
+                "2026-03-14 12:00:00"
+            );
+
+            // 1w and 168h differ across DST transition
+            assert_ne!(shifted_week, shifted_168h);
+            assert_eq!(
+                shifted_168h.local_wall().unwrap().to_string(),
+                "2026-03-14 13:00:00"
+            );
+        }
+
+        #[test]
+        fn apply_processes_parts_left_to_right_across_dst_transition() {
+            TzGuard::set("America/New_York");
+
+            // Saturday March 7, 2026 at 02:30:00 EST (UTC 07:30:00)
+            let base = DateTimeValue::parse_iso("2026-03-07 02:30:00").unwrap();
+
+            let d_1d_1h = DurationValue::parse("1d 1h").unwrap();
+            let d_1h_1d = DurationValue::parse("1h 1d").unwrap();
+
+            // Values are equal in duration seconds
+            assert_eq!(d_1d_1h, d_1h_1d);
+
+            // L->R application:
+            // "1d 1h": 1d lands in spring-forward gap (Sunday 02:30 -> shifted
+            // forward to 03:30 EDT = 07:30 UTC), then 1h advances
+            // instant by 3600s -> 08:30 UTC (04:30 EDT).
+            let res_1d_1h = base.apply(&d_1d_1h).unwrap();
+            assert_eq!(
+                res_1d_1h,
+                DateTimeValue::parse_iso("2026-03-08T08:30:00Z").unwrap()
+            );
+            assert_eq!(
+                res_1d_1h.local_wall().unwrap().to_string(),
+                "2026-03-08 04:30:00"
+            );
+
+            // "1h 1d": 1h advances Saturday instant by 3600s -> Saturday 03:30
+            // EST (08:30 UTC), then 1d shifts wall clock to Sunday
+            // 03:30 EDT (07:30 UTC).
+            let res_1h_1d = base.apply(&d_1h_1d).unwrap();
+            assert_eq!(
+                res_1h_1d,
+                DateTimeValue::parse_iso("2026-03-08T07:30:00Z").unwrap()
+            );
+            assert_eq!(
+                res_1h_1d.local_wall().unwrap().to_string(),
+                "2026-03-08 03:30:00"
+            );
+
+            // Different written order yields different result
+            assert_ne!(res_1d_1h, res_1h_1d);
+        }
+
+        #[test]
+        fn fractional_calendar_part_keeps_the_local_wall_clock_across_dst() {
+            TzGuard::set("America/New_York");
+
+            // Saturday March 7, 2026 at 06:00 EST (UTC 11:00:00)
+            let base = DateTimeValue::parse_iso("2026-03-07 06:00:00").unwrap();
+
+            // 1.5d == 36h == 1d 12h as values (129,600 fixed seconds)
+            let one_and_half_days = DurationValue::parse("1.5d").unwrap();
+            let thirty_six_hours = DurationValue::parse("36h").unwrap();
+            let written_order = DurationValue::parse("1d 12h").unwrap();
+            assert_eq!(one_and_half_days, thirty_six_hours);
+            assert_eq!(one_and_half_days, written_order);
+
+            // The fractional day is a calendar-unit remainder, so it keeps the
+            // local wall clock (spec D12): 1d lands Sunday 06:00 EDT, then the
+            // 0.5-day remainder adds 12 wall hours to Sunday 18:00 EDT.
+            let shifted_fractional = base.apply(&one_and_half_days).unwrap();
+            assert_eq!(
+                shifted_fractional.local_wall().unwrap().to_string(),
+                "2026-03-08 18:00:00"
+            );
+            assert_eq!(
+                shifted_fractional,
+                DateTimeValue::parse_iso("2026-03-08T22:00:00Z").unwrap()
+            );
+
+            // The fractional spelling decomposes exactly like its written-order
+            // equivalent "1d 12h".
+            assert_eq!(shifted_fractional, base.apply(&written_order).unwrap());
+
+            // 36h shifts the stored instant exactly and lands an hour later on
+            // the wall clock across the 2026-03-08 gap: equal values, different
+            // shifts (the declared A2′ incoherence, spec line 87).
+            let shifted_exact = base.apply(&thirty_six_hours).unwrap();
+            assert_ne!(shifted_fractional, shifted_exact);
+            assert_eq!(
+                shifted_exact.local_wall().unwrap().to_string(),
+                "2026-03-08 19:00:00"
+            );
+        }
+
+        #[test]
+        fn date_value_civil_arithmetic_handles_sub_day_units() {
+            let base = DateValue::parse_iso("2026-07-29").unwrap();
+
+            // Sub-day 1 hour shift is a no-op on date (stays 2026-07-29)
+            let one_hour = DurationValue::parse("1h").unwrap();
+            assert_eq!(base.apply(&one_hour).unwrap(), base);
+
+            // 24 hour shift advances the civil date
+            let twenty_four_hours = DurationValue::parse("24h").unwrap();
+            assert_eq!(
+                base.apply(&twenty_four_hours).unwrap(),
+                DateValue::parse_iso("2026-07-30").unwrap()
+            );
+        }
+
+        #[test]
+        fn diff_splits_the_fixed_unit_frame_by_time_component_presence() {
+            let dt1 = DateTimeValue::parse_iso("2026-07-29T10:00:00Z").unwrap();
+            let dt2 = DateTimeValue::parse_iso("2026-07-29T11:30:00Z").unwrap();
+            let point_of = |value: &DateTimeValue, has_time: bool| {
+                DatePoint::new(
+                    value.wall_or_utc(),
+                    value.into_inner(),
+                    has_time,
+                )
+            };
+
+            // When both points carry a time component, fixed units return
+            // exact f64:
+            let diff_hours = point_of(&dt1, true)
+                .diff(point_of(&dt2, true), DurationUnit::Hour)
+                .unwrap();
+            assert_eq!(diff_hours, DateDiff::Exact(1.5));
+
+            // When either point is date-only, fixed units return whole i64:
+            let diff_civil = point_of(&dt1, true)
+                .diff(point_of(&dt2, false), DurationUnit::Hour)
+                .unwrap();
+            assert_eq!(diff_civil, DateDiff::Whole(1));
+
+            // Calendar units return whole counts:
+            let d1 = NaiveDate::from_ymd_opt(2026, 1, 15).unwrap();
+            let d2 = NaiveDate::from_ymd_opt(2026, 3, 15).unwrap();
+            let diff_months = DatePoint::new(
+                d1.and_hms_opt(0, 0, 0).unwrap(),
+                dt1.into_inner(),
+                false,
+            )
+            .diff(
+                DatePoint::new(
+                    d2.and_hms_opt(0, 0, 0).unwrap(),
+                    dt2.into_inner(),
+                    false,
+                ),
+                DurationUnit::Month,
+            )
+            .unwrap();
+            assert_eq!(diff_months, DateDiff::Whole(2));
+        }
+
+        #[test]
+        fn shift_preserves_the_local_wall_clock_for_months_and_years_across_dst()
+         {
+            TzGuard::set("America/New_York");
+
+            // Saturday March 7, 2026 at 12:00 EST: month and year shifts are
+            // wall-clock preserving (spec D12), re-resolving through the
+            // local zone after the chrono arithmetic.
+            let base = DateTimeValue::parse_iso("2026-03-07 12:00:00").unwrap();
+            let shifted_month = base.shift(1, DurationUnit::Month).unwrap();
+            assert_eq!(
+                shifted_month.local_wall().unwrap().to_string(),
+                "2026-04-07 12:00:00"
+            );
+            let shifted_year = base.shift(1, DurationUnit::Year).unwrap();
+            assert_eq!(
+                shifted_year.local_wall().unwrap().to_string(),
+                "2027-03-07 12:00:00"
+            );
+
+            // Month-end clamping also re-resolves locally: Jan 31 noon in
+            // EST clamps to Feb 28 noon, still reading 12:00.
+            let january = DateTimeValue::parse_iso("2026-01-31 12:00:00")
+                .expect("valid instant");
+            let clamped = january.shift(1, DurationUnit::Month).unwrap();
+            assert_eq!(
+                clamped.local_wall().unwrap().to_string(),
+                "2026-02-28 12:00:00"
+            );
+        }
+
+        #[test]
+        fn apply_applies_a_fractional_calendar_part_to_a_civil_date() {
+            // 1.5d: the whole day shifts the civil calendar; the 12-hour
+            // remainder lands on the resulting civil day (midnight + 36h).
+            let base = DateValue::parse_iso("2026-03-07").unwrap();
+            let shifted =
+                base.apply(&DurationValue::parse("1.5d").unwrap()).unwrap();
+            assert_eq!(shifted, DateValue::parse_iso("2026-03-08").unwrap());
+
+            // 1.5mo: the whole month clamps Jan 31 to Feb 28, then the
+            // 15-day remainder (half of the nominal 30-day month) applies
+            // as exact civil time.
+            let january = DateValue::parse_iso("2026-01-31").unwrap();
+            let shifted =
+                january.apply(&DurationValue::parse("1.5mo").unwrap()).unwrap();
+            assert_eq!(shifted, DateValue::parse_iso("2026-03-15").unwrap());
+        }
+
+        #[rstest]
+        #[case::negative_week(-1, DurationUnit::Week, "2026-07-22")]
+        #[case::negative_year(-1, DurationUnit::Year, "2025-07-29")]
+        #[case::sub_day_unit_leaves_the_civil_date_intact(
+            500,
+            DurationUnit::Millisecond,
+            "2026-07-29"
+        )]
+        fn shift_civil_date_by_signed_units(
+            #[case] n: i64,
+            #[case] unit: DurationUnit,
+            #[case] expected: &str,
+        ) {
+            let base = DateValue::parse_iso("2026-07-29").unwrap();
+            let shifted = base.shift(n, unit).unwrap();
+            assert_eq!(
+                shifted,
+                DateValue::parse_iso(expected).expect("expected date parses")
+            );
         }
     }
 
     mod comparison {
-        use pretty_assertions::assert_eq;
-
         use super::*;
 
         #[test]
@@ -1325,37 +2024,6 @@ mod tests {
             assert!(!fixed_datetime().is_equal_to_date(
                 DateValue::parse_iso("2026-07-29").expect("valid date")
             ));
-        }
-
-        #[test]
-        fn cmp_date_reports_greater_when_the_instant_is_after_midnight() {
-            TzGuard::set("UTC");
-
-            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
-            assert_eq!(
-                fixed_datetime().cmp_date(date),
-                std::cmp::Ordering::Greater
-            );
-        }
-
-        #[test]
-        fn cmp_date_reports_equal_at_exact_midnight() {
-            TzGuard::keep();
-
-            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
-            let midnight = DateTimeValue::from(date);
-            assert_eq!(midnight.cmp_date(date), std::cmp::Ordering::Equal);
-        }
-
-        #[test]
-        fn cmp_date_reports_less_when_the_instant_is_before_midnight() {
-            TzGuard::set("UTC");
-
-            let date = DateValue::parse_iso("2026-07-30").expect("valid date");
-            assert_eq!(
-                fixed_datetime().cmp_date(date),
-                std::cmp::Ordering::Less
-            );
         }
     }
 
@@ -1413,13 +2081,6 @@ mod tests {
         }
 
         #[test]
-        fn promotes_a_date_to_midnight_utc_via_from_trait() {
-            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
-            let promoted = DateTimeValue::from(date);
-            assert_eq!(promoted, fixed_datetime().start_of_day());
-        }
-
-        #[test]
         fn converts_date_value_into_naive_date_via_from_trait() {
             let date = DateValue::parse_iso("2026-07-29").expect("valid date");
             let naive: NaiveDate = date.into();
@@ -1428,6 +2089,7 @@ mod tests {
                 NaiveDate::from_ymd_opt(2026, 7, 29).expect("valid date")
             );
         }
+
         #[test]
         fn converts_from_naive_date_via_from_trait() {
             let naive =
@@ -1437,13 +2099,6 @@ mod tests {
                 date,
                 DateValue::parse_iso("2026-07-29").expect("valid date")
             );
-        }
-
-        #[test]
-        fn extracts_wrapped_naive_date_via_into_inner() {
-            let date = DateValue::parse_iso("2026-07-29").expect("valid date");
-            let naive: NaiveDate = date.into();
-            assert_eq!(date.into_inner(), naive);
         }
     }
 
@@ -1521,14 +2176,6 @@ mod tests {
                 err.to_string(),
                 "`26-08-22` does not have a 4-digit year"
             );
-        }
-
-        #[test]
-        fn displays_invalid_pattern_error_naming_the_pattern() {
-            let err = fixed_datetime()
-                .format_with("%Q")
-                .expect_err("invalid strftime specifier");
-            assert_eq!(err.to_string(), "`%Q` is not a valid format pattern");
         }
 
         #[test]

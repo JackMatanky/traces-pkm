@@ -98,7 +98,7 @@ pub use dialog::{
 };
 pub(crate) use dirtree::{DirNode, DirTree, DirTreeError};
 pub use duration::{DurationError, DurationValue};
-pub(crate) use duration::{DurationSeconds, DurationUnit};
+pub(crate) use duration::{DurationSeconds, DurationUnit, UNIT_HINT};
 pub(crate) use field::{
     FieldKey, FieldKeyRef, FieldName, FieldNameError, FieldNameRef, FieldValue,
 };
