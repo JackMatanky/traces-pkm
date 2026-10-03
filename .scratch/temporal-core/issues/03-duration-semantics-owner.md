@@ -4,7 +4,7 @@
 
 **Blocked by:** None (01 and 02 merged).
 
-**Status:** resolved — implemented on `duration-semantics-owner` (`57ea1b09`, review remediation `fe4c01e2`)
+**Status:** resolved — implemented on `duration-semantics-owner` (`57ea1b09`; remediation: `fe4c01e2` rs-review-spec, `2e4304d2` rs-review-design, `bcc938b5` rs-review-arch + rust-design audit)
 
 Skills: `rust-skills`, `rust-unit-testing`, `rust-doc`, `codebase-design`. Rules: `api-parse-dont-validate` (Σ invariant by construction), `type-enum-states` (parts as regime witness), `pat-exhaustive-enum` (regime-witness and calendar/fixed unit matches enumerate every `DurationUnit` variant — no `_`/`u =>` arm, so adding a unit forces a calendar-vs-fixed decision, backing item 29), `api-operator-overload` (`Sub` = negated-`Add` and non-finite-yielding `Mul` justified in rustdoc), `num-overflow-explicit`, `num-float-compare` (bit-exact Σ fold, `Mul` non-finite), `err-result-over-panic` (owner out-of-range → `Result`; `Mul` never panics), `err-doc-errors` + `doc-all-public` (owner fns' `# Errors`, narrowed `DurationValue` type docs), `anti-over-abstraction` (no `Clock`/`TimeZone` traits — one adapter = hypothetical seam); DST pinning tests use ticket 02's `TzGuard` (`src/tz_guard.rs`) — `TZ` injected per test, never shared/global (spec line 122); calendar application uses chrono's own primitives (`checked_add_months(Months)` / `checked_add_days(Days)` on the local naive value) — no hand-rolled month arithmetic; zone conversions mirror ticket 02's rule verbatim: local→UTC via `and_utc()`/`naive_utc()`; UTC→local wall clock for calendar application (spec D12) via offset-based checked arithmetic (`Local.offset_from_utc_datetime(&naive_utc)` then `naive_utc.checked_add_offset(offset.fix())`, `None` → out-of-range error); never `.naive_local()` (documented `# Panics` at range edge — chrono `expect("Local time out of range…")`) and never `.naive_utc()` where the local wall clock is wanted (wrong frame). Design record: `../review.md` §4 (A2′), §5.1–5.2, §9 (S1+S2).
 
@@ -92,7 +92,7 @@ four amendments before pickup:
   `date_diff` gains a `weeks` case. Full gate green: 3117 unit + 71
   doc tests, strict clippy, `cargo doc -D warnings` clean.
 
-**2026-10-02 (rs-review-arch + rust-design remediation):**
+**2026-10-02 (rs-review-arch + rust-design remediation, committed as `bcc938b5`):**
 
 - Calendar-owner seam deepened: `DatePoint` now carries `has_time` and
   owns the measurement (`DatePoint::diff`); the free
@@ -130,3 +130,60 @@ four amendments before pickup:
   `cargo doc -D warnings` clean; CRAP over-threshold functions in the
   cluster fell from six to two (coverage on flagged paths
   56-69% → 78-94%).
+
+**2026-10-03 (final shape & handoff notes):**
+
+Checkpoint after the full review/audit cycle (`57ea1b09` → `bcc938b5`,
++548/−645 net over the audit round). Where each responsibility now
+lives — checklist line numbers above predate the remediations and are
+stale; these symbols are the current pointers:
+
+- `src/duration.rs` — `DurationValue::parse`/`parse_prefix` share the
+  per-part scan `scan_part`; the sign rule has one owner
+  (`digits_after_sign`, used by `parse_number` and
+  `can_start_duration_segment`); `Add`/`Sub` delegate to `combine`;
+  synthesized spellings come from `canonical_raw` (single-`String`
+  greedy decomposition, `DurationSeconds` Display dialect fallback);
+  `fold_parts`/`DurationParts` are private; `UNIT_HINT` sits beside
+  `UNIT_MAP` as the machine-owned "expected units" hint the engine
+  formats into its unknown-unit error.
+- `src/date.rs` — `DatePoint { wall, instant, has_time }` is the
+  measurement seam (`DatePoint::diff`; the free
+  `date_diff_measurement` is gone); `shift_wall` is the civil
+  per-unit core, `shift_months`/`signed_years_since`/
+  `signed_months_since` are module-private; `seconds_delta` owns the
+  whole/sub-second split for both `apply_part` impls; `local_zone`
+  resolution (`local_naive_to_utc`, `resolve_gap_offset`) unchanged.
+- `src/template/engine/date.rs` — `ParsedDate` holds a `DatePoint`;
+  arithmetic filters delegate to the owner and translate `DateError`
+  through one `date_error` fn (`LocalZoneLookup` keeps its diagnosis
+  and typed source; everything else maps to the range error).
+
+Deliberate remaining state (do not "fix" without reading the audit):
+
+- `DurationValue::parts`, `is_calendar`, `from_seconds`,
+  `DateValue::shift`/`apply`, `DateTimeValue::apply` still carry
+  narrowly-scoped `expect(dead_code)` — they are the ticket's
+  spec-mandated surface with tests as first consumers; the query
+  temporal functions (ticket 04's `classify`, index-query#05) are the
+  declared production consumers.
+- `DurationValue` reports LCOM4=2 and complexity >50 under `mess`
+  (advisory): the parse-machinery vs value/arithmetic method clusters
+  of one cohesive domain type. Disposition: no split — the module is
+  the spec-mandated single registry; splitting would fragment the
+  owner without relocating knowledge.
+- The calendar-vs-fixed unit classification is intentionally repeated
+  as exhaustive arm shape in `is_calendar`, `shift_wall`,
+  `DateTimeValue::shift`, both `apply_part`s, and `DatePoint::diff`:
+  `pat-exhaustive-enum` makes the compiler the policy owner (adding a
+  unit forces the decision everywhere). Do not replace the matches
+  with a shared `is_calendar()` predicate — that would bypass the
+  exhaustiveness gate.
+- Residual CRAP over-threshold: `DateTimeValue::shift` (17.4 @ 78.1%
+  cov) and `shift_wall` (15.1 @ 93.8%) — inherent per-unit match
+  branchiness, both improved from 21.9 @ 68.8%.
+- Deferred (named, not lost): optional Criterion bench for
+  `DurationValue::parse`/`from_seconds` if the `canonical_raw`
+  allocation shape is ever questioned; no duration/date bench exists
+  in `benches/`, and the audit's performance notes on these paths are
+  labeled hypotheses.
