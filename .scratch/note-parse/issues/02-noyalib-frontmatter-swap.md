@@ -3,7 +3,7 @@
 **Source:** .scratch/md-pkm-lsp/issues/19-frontmatter-and-inline-field-intelligence.md (resolved decision; its "`YamlVersion::V1_1` for Dataview compatibility" line is **corrected** by this ticket — see Rationale) + .scratch/md-pkm-lsp/issues/11-source-span-and-position-model.md §6
 **What to build:** All YAML parsing and serialization routes through `noyalib` (0.0.51) and the `yaml_serde` dependency (imported as `serde_yaml`) is removed. Frontmatter parsing calls `noyalib::from_str_with_config::<noyalib::Value>` with one shared `ParserConfig::serde_yaml_compat()` — YAML **1.2** semantics with serde_yaml-parity knobs — preserving existing valid-YAML behaviour exactly. The template engine's `to_yaml`/`from_yaml` filters move to `noyalib::to_string` / `noyalib::from_str_with_config` with the same config. Malformed-YAML behaviour: **silent-empty stays, plus a structured try-API is added** — `From<&RawFrontmatter>` keeps `warn!` + empty `Frontmatter` (existing tests pass unchanged) and a new `RawFrontmatter::parse` returns the structured failure to the caller (feeds ticket 19 diagnostics later). Note: md-pkm-lsp ticket 19 lists ticket-11 changes as its prerequisite, but that gate governs the spans half, which is out of scope here; this swap is orthogonal and may run in parallel with 01. `Spanned<T>`/CST remain out of scope (tickets 11/19) but the core-API choice keeps them reachable.
 **Blocked by:** None (can start immediately)
-**Status:** ready-for-agent
+**Status:** resolved
 
 ## Rationale: YAML 1.2, not 1.1
 
