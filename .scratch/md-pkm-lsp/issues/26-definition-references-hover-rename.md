@@ -1,7 +1,7 @@
 # Definition, references, hover, rename & workspace-edit behavior
 
 Type: grilling
-Blocked by: 11, 15, 16, 19, 22
+Blocked by: 11, 15, 16, 19, 22, 23
 
 ## Question
 

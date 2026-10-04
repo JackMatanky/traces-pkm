@@ -1,7 +1,7 @@
 # Completion architecture: context detection & dispatch
 
 Type: grilling
-Blocked by: 15, 16, 19, 21, 22
+Blocked by: 15, 16, 19, 21, 22, 23
 
 ## Question
 

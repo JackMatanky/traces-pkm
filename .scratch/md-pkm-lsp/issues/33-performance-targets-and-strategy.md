@@ -110,3 +110,9 @@ Metadata (paths, tags, links, headings, file-classes, frontmatter field names) a
 | Query strategy | Inverted index now, <5ms gotodef | Linear scan of 20K entries is fast but not O(1); inverted index eliminates it entirely |
 | Memory model | Evictable LRU with 3 tiers | Best balance of performance (metadata always resident) and system strain (ASTs evictable); schema definitions always resident for frontmatter intelligence |
 | Benchmark plan | Extend index_refresh.rs + new lsp_latency.rs (reconciled 2026-09-23: `index_lifecycle.rs` decomposed) | Both refresh-path additions and interactive latency need dedicated benchmarks |
+
+### Amended by 23 (2026-10-04)
+
+- **Task rows → always-resident tier** (or 33 prices vault-wide refill): full reload = 15.7–19.6ms baseline / 21.9–28.9ms current at every vault size, full rebuild = 406ms@20K — both unusable in-request; per-note refill alone is fine (typical 0.07–1ms). ASTs are scheduled for a 256-entry LRU (`### 5`/tier notes), so a future workspace-wide task walk would pay re-parse per evicted file unless task rows are resident. Today's `WorkspaceIndex::assemble` keeps all ASTs resident — this amends the *plan*, not current code.
+- **Missing `workspace/symbol` latency row added**: proposed row, number unfilled — derive from `bench_query_tasks_density` at the 20K-file design anchor with a stated mean→p95 factor (measured resident query: 0.665ms@60K rows, 1.77ms@100K, 18.08ms@1M — resident-only, parse excluded).
+- **Tension surfaced per `map.md:33`:** measured `parse_markdown__line_density/4000` (51.2KB fixture, 4,000-*character* lines — not 4,000 lines) = 18.6ms > the <10ms single-file reparse target; the bench itself flags this as an unexplained anomaly (`benches/note_parsing.rs:470-476`). Root-cause owed to the implementation spec before it counts as a settled conflict. Realistic 4,000-line notes ≈2–6ms (under target).
