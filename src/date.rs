@@ -8,10 +8,10 @@
 //!
 //! # Clock doctrine
 //!
-//! A naive datetime means what a human means: it is read in the process's
-//! local zone and stored as UTC (see [`local_naive_to_utc`]); a date-only
-//! value stays a zone-free civil date. Instants render as the local wall
-//! clock and travel as UTC for storage and comparison.
+//! A naive datetime means what a human means: it is read in the process's local
+//! zone and stored as UTC (see [`local_naive_to_utc`]); a date-only value stays
+//! a zone-free civil date. Instants render as the local wall clock and travel
+//! as UTC for storage and comparison.
 //!
 //! # Key types
 //!
@@ -43,6 +43,12 @@ use num_traits::ToPrimitive as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::duration::{DurationUnit, DurationValue};
+
+/// [`DateValue`]'s canonical output format: `2026-07-29`.
+pub(crate) const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%d";
+
+/// [`DateTimeValue`]'s canonical output format: `2026-07-29T14:30:00`.
+pub(crate) const DEFAULT_DATETIME_FORMAT: &str = "%Y-%m-%dT%H:%M:%S";
 
 /// Parsed calendar date with no time-of-day component.
 ///
@@ -146,8 +152,8 @@ impl DateValue {
     /// Shifts this civil date by `n` `unit`s.
     ///
     /// Pure civil arithmetic: zone-free dates never touch the DST resolver.
-    /// Delegates to [`shift_wall`] at midnight and keeps the resulting
-    /// calendar day, so per-unit semantics live in exactly one place.
+    /// Delegates to [`shift_wall`] at midnight and keeps the resulting calendar
+    /// day, so per-unit semantics live in exactly one place.
     ///
     /// # Errors
     ///
@@ -435,9 +441,9 @@ impl DateTimeValue {
     ///
     /// Every human-facing rendering goes through this conversion: the offset
     /// comes from [`Local::offset_from_utc_datetime`] and is applied with
-    /// [`NaiveDateTime::checked_add_offset`], which returns [`None`] instead
-    /// of panicking at `NaiveDateTime`'s range edge (`.naive_local()` would
-    /// panic there).
+    /// [`NaiveDateTime::checked_add_offset`], which returns [`None`] instead of
+    /// panicking at `NaiveDateTime`'s range edge (`.naive_local()` would panic
+    /// there).
     #[inline]
     #[must_use]
     pub(crate) fn local_wall(self) -> Option<NaiveDateTime> {
@@ -607,11 +613,11 @@ impl DateTimeValue {
     /// Applies one written `(magnitude, unit)` part to this date-time.
     ///
     /// Calendar units ([`DurationUnit::Year`], [`DurationUnit::Month`],
-    /// [`DurationUnit::Week`], [`DurationUnit::Day`]) truncate to a whole
-    /// count for [`Self::shift`]; the fractional remainder is still calendar
-    /// time, so it advances the local wall clock and re-resolves through the
-    /// local zone rather than landing as exact seconds on the instant. Sub-day
-    /// units shift the instant exactly.
+    /// [`DurationUnit::Week`], [`DurationUnit::Day`]) truncate to a whole count
+    /// for [`Self::shift`]; the fractional remainder is still calendar time, so
+    /// it advances the local wall clock and re-resolves through the local zone
+    /// rather than landing as exact seconds on the instant. Sub-day units shift
+    /// the instant exactly.
     ///
     /// # Errors
     ///
@@ -688,8 +694,8 @@ impl DateTimeValue {
 ///
 /// Fractional seconds appear only for a nonzero nanosecond component, so
 /// `DateTimeFormat::IsoTFractional` input keeps its full sub-second precision.
-/// When the local offset cannot be applied, the UTC wall clock renders
-/// instead of panicking (see `DateTimeValue::local_wall`).
+/// When the local offset cannot be applied, the UTC wall clock renders instead
+/// of panicking (see `DateTimeValue::local_wall`).
 impl fmt::Display for DateTimeValue {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -779,12 +785,6 @@ impl<'de> Deserialize<'de> for DateTimeValue {
         Self::parse_iso(&s).map_err(serde::de::Error::custom)
     }
 }
-
-/// [`DateValue`]'s canonical output format: `2026-07-29`.
-pub(crate) const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%d";
-
-/// [`DateTimeValue`]'s canonical output format: `2026-07-29T14:30:00`.
-pub(crate) const DEFAULT_DATETIME_FORMAT: &str = "%Y-%m-%dT%H:%M:%S";
 
 /// Recognized date input format shapes tried in order by
 /// [`DateValue::parse_iso`].
@@ -1027,8 +1027,8 @@ pub(crate) enum DateDiff {
 /// Resolves a naive local wall-clock datetime to a UTC instant under the
 /// crate's DST doctrine.
 ///
-/// A wall-clock time written without a zone is read in the process's local
-/// zone and stored as UTC. Resolution never fails on a DST boundary:
+/// A wall-clock time written without a zone is read in the process's local zone
+/// and stored as UTC. Resolution never fails on a DST boundary:
 ///
 /// - Ambiguous fall-back times resolve to their earliest occurrence;
 /// - Spring-forward gaps shift forward by the gap, matching Temporal's
@@ -1075,9 +1075,9 @@ fn local_naive_to_utc(wall: NaiveDateTime) -> Result<DateTime<Utc>, DateError> {
             Ok(instant.and_utc())
         }
         MappedLocalTime::None => {
-            // A gap resolves `None` across the whole skipped span, so no
-            // probe inside it resolves; the pre-transition offset shifts the
-            // gap time forward by exactly the gap.
+            // A gap resolves `None` across the whole skipped span, so no probe
+            // inside it resolves; the pre-transition offset shifts the gap time
+            // forward by exactly the gap.
             let offset = resolve_gap_offset(wall, &zone_lookup)?;
             let instant =
                 wall.checked_sub_offset(offset).ok_or_else(zone_lookup)?;

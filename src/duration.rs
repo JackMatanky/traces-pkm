@@ -28,14 +28,74 @@ use chrono::TimeDelta;
 use num_traits::ToPrimitive as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+/// At or above this magnitude, [`DurationSeconds`]'s [`Display`](fmt::Display)
+/// switches to scientific notation.
+const DISPLAY_EXPONENT_UPPER: f64 = 1e15;
+
+/// Below this magnitude (excluding exact zero), [`DurationSeconds`]'s
+/// [`Display`](fmt::Display) switches to scientific notation.
+const DISPLAY_EXPONENT_LOWER: f64 = 1e-6;
+
+/// Human-readable list of accepted unit spellings for error messages.
+///
+/// Kept beside [`UNIT_MAP`] as a reminder to update both when a unit or
+/// spelling family is added to the registry: this lists one spelling per
+/// family, not every accepted alias.
+pub(crate) const UNIT_HINT: &str =
+    "\"years\"/\"y\", \"months\"/\"mo\", \"weeks\"/\"w\", \"days\"/\"d\", \
+     \"hours\"/\"h\", \"minutes\"/\"m\", \"seconds\"/\"s\", or \"ms\"";
+
+/// Case-insensitive unit string to [`DurationUnit`] mapping.
+///
+/// Contains all accepted abbreviations and full names. Keys are stored
+/// lowercase; lookup in [`DurationUnit::parse`] lowercases the input before
+/// matching.
+static UNIT_MAP: phf::Map<&'static str, DurationUnit> = phf::phf_map! {
+    "ms" => DurationUnit::Millisecond,
+    "millisecond" => DurationUnit::Millisecond,
+    "milliseconds" => DurationUnit::Millisecond,
+    "s" => DurationUnit::Second,
+    "sec" => DurationUnit::Second,
+    "secs" => DurationUnit::Second,
+    "second" => DurationUnit::Second,
+    "seconds" => DurationUnit::Second,
+    "m" => DurationUnit::Minute,
+    "min" => DurationUnit::Minute,
+    "mins" => DurationUnit::Minute,
+    "minute" => DurationUnit::Minute,
+    "minutes" => DurationUnit::Minute,
+    "h" => DurationUnit::Hour,
+    "hr" => DurationUnit::Hour,
+    "hrs" => DurationUnit::Hour,
+    "hour" => DurationUnit::Hour,
+    "hours" => DurationUnit::Hour,
+    "d" => DurationUnit::Day,
+    "day" => DurationUnit::Day,
+    "days" => DurationUnit::Day,
+    "w" => DurationUnit::Week,
+    "wk" => DurationUnit::Week,
+    "wks" => DurationUnit::Week,
+    "week" => DurationUnit::Week,
+    "weeks" => DurationUnit::Week,
+    "mo" => DurationUnit::Month,
+    "mos" => DurationUnit::Month,
+    "month" => DurationUnit::Month,
+    "months" => DurationUnit::Month,
+    "y" => DurationUnit::Year,
+    "yr" => DurationUnit::Year,
+    "yrs" => DurationUnit::Year,
+    "year" => DurationUnit::Year,
+    "years" => DurationUnit::Year,
+};
+
 /// A validated duration expression with its total seconds and original source
 /// spelling.
 ///
 /// Fresh values come from the crate-internal `parse`, `parse_prefix`, and
-/// `from_seconds` constructors or the [`FromStr`] implementation; `Add`,
-/// `Sub`, and `Mul` derive new values from those. Parsing guarantees a finite
-/// seconds value; arithmetic such as [`Mul`] may produce non-finite values,
-/// which consuming conversions reject.
+/// `from_seconds` constructors or the [`FromStr`] implementation; `Add`, `Sub`,
+/// and `Mul` derive new values from those. Parsing guarantees a finite seconds
+/// value; arithmetic such as [`Mul`] may produce non-finite values, which
+/// consuming conversions reject.
 ///
 /// # Examples
 ///
@@ -248,9 +308,9 @@ impl DurationValue {
 
     /// Negates every magnitude in `parts` when `is_negative` is `true`.
     ///
-    /// Both parse loops end with this fold: only the first part's sign
-    /// applies, so the retained magnitudes are non-negative until this point
-    /// (a later part may repeat a redundant `+` but never an explicit `-`).
+    /// Both parse loops end with this fold: only the first part's sign applies,
+    /// so the retained magnitudes are non-negative until this point (a later
+    /// part may repeat a redundant `+` but never an explicit `-`).
     fn apply_sign(parts: &mut [(f64, DurationUnit)], is_negative: bool) {
         let sign = if is_negative {
             -1.0
@@ -279,14 +339,14 @@ impl DurationValue {
     /// Synthesizes a canonical [`DurationValue`] from a [`DurationSeconds`]
     /// value.
     ///
-    /// Greedily decomposes `seconds.0.abs()` into Weeks, Days, Hours,
-    /// Minutes, Seconds, and Milliseconds (ratios from
-    /// [`DurationUnit::fixed_seconds`]); Month and Year are omitted because
-    /// their lengths are calendar-dependent. Zero yields `"0s"`; a negative
-    /// duration starts with `"-"`. When the decomposition cannot represent a
-    /// nonzero magnitude (a sub-millisecond remainder rounds to zero, or `u64`
-    /// overflows at the other extreme), falls back to [`DurationSeconds`]'s
-    /// [`Display`](fmt::Display) so the result never lies as `"0s"`.
+    /// Greedily decomposes `seconds.0.abs()` into Weeks, Days, Hours, Minutes,
+    /// Seconds, and Milliseconds (ratios from [`DurationUnit::fixed_seconds`]);
+    /// Month and Year are omitted because their lengths are calendar-dependent.
+    /// Zero yields `"0s"`; a negative duration starts with `"-"`. When the
+    /// decomposition cannot represent a nonzero magnitude (a sub-millisecond
+    /// remainder rounds to zero, or `u64` overflows at the other extreme),
+    /// falls back to [`DurationSeconds`]'s [`Display`](fmt::Display) so the
+    /// result never lies as `"0s"`.
     #[cfg_attr(
         not(test),
         expect(
@@ -347,10 +407,10 @@ impl DurationValue {
         }
 
         // The decomposition can't represent every magnitude: a sub-millisecond
-        // remainder rounds to zero, and a huge magnitude overflows `u64` in
-        // the milliseconds conversion above (read back as 0). Either way
-        // nothing was written for a nonzero `total_secs`; fall back to the
-        // honest `DurationSeconds` dialect instead of lying with `"0s"`.
+        // remainder rounds to zero, and a huge magnitude overflows `u64` in the
+        // milliseconds conversion above (read back as 0). Either way nothing
+        // was written for a nonzero `total_secs`; fall back to the honest
+        // `DurationSeconds` dialect instead of lying with `"0s"`.
         if decomposed {
             raw.into_boxed_str()
         } else {
@@ -777,8 +837,8 @@ impl Sub for DurationValue {
 /// Scales a duration by a scalar factor.
 ///
 /// With retained parts ([`Some`]), each part's magnitude scales by `rhs` and
-/// seconds come from the single left-to-right fold over the scaled parts;
-/// with [`None`], seconds scale directly.
+/// seconds come from the single left-to-right fold over the scaled parts; with
+/// [`None`], seconds scale directly.
 ///
 /// A non-finite scalar (`NaN` or `±inf`) or overflow yields non-finite seconds,
 /// which consuming conversions reject with [`DurationError::NonFiniteSeconds`];
@@ -916,8 +976,8 @@ impl DurationUnit {
     /// [`Self::fixed_seconds`].
     ///
     /// `None` only for [`Self::Millisecond`]; every other variant is listed
-    /// explicitly, so adding a unit forces it to declare whether its ratio is
-    /// a whole number of seconds.
+    /// explicitly, so adding a unit forces it to declare whether its ratio is a
+    /// whole number of seconds.
     #[must_use]
     #[expect(
         clippy::as_conversions,
@@ -941,58 +1001,6 @@ impl DurationUnit {
         }
     }
 }
-
-/// Human-readable list of accepted unit spellings for error messages.
-///
-/// Kept beside [`UNIT_MAP`] as a reminder to update both when a unit or
-/// spelling family is added to the registry: this lists one spelling per
-/// family, not every accepted alias.
-pub(crate) const UNIT_HINT: &str =
-    "\"years\"/\"y\", \"months\"/\"mo\", \"weeks\"/\"w\", \"days\"/\"d\", \
-     \"hours\"/\"h\", \"minutes\"/\"m\", \"seconds\"/\"s\", or \"ms\"";
-
-/// Case-insensitive unit string to [`DurationUnit`] mapping.
-///
-/// Contains all accepted abbreviations and full names. Keys are stored
-/// lowercase; lookup in [`DurationUnit::parse`] lowercases the input before
-/// matching.
-static UNIT_MAP: phf::Map<&'static str, DurationUnit> = phf::phf_map! {
-    "ms" => DurationUnit::Millisecond,
-    "millisecond" => DurationUnit::Millisecond,
-    "milliseconds" => DurationUnit::Millisecond,
-    "s" => DurationUnit::Second,
-    "sec" => DurationUnit::Second,
-    "secs" => DurationUnit::Second,
-    "second" => DurationUnit::Second,
-    "seconds" => DurationUnit::Second,
-    "m" => DurationUnit::Minute,
-    "min" => DurationUnit::Minute,
-    "mins" => DurationUnit::Minute,
-    "minute" => DurationUnit::Minute,
-    "minutes" => DurationUnit::Minute,
-    "h" => DurationUnit::Hour,
-    "hr" => DurationUnit::Hour,
-    "hrs" => DurationUnit::Hour,
-    "hour" => DurationUnit::Hour,
-    "hours" => DurationUnit::Hour,
-    "d" => DurationUnit::Day,
-    "day" => DurationUnit::Day,
-    "days" => DurationUnit::Day,
-    "w" => DurationUnit::Week,
-    "wk" => DurationUnit::Week,
-    "wks" => DurationUnit::Week,
-    "week" => DurationUnit::Week,
-    "weeks" => DurationUnit::Week,
-    "mo" => DurationUnit::Month,
-    "mos" => DurationUnit::Month,
-    "month" => DurationUnit::Month,
-    "months" => DurationUnit::Month,
-    "y" => DurationUnit::Year,
-    "yr" => DurationUnit::Year,
-    "yrs" => DurationUnit::Year,
-    "year" => DurationUnit::Year,
-    "years" => DurationUnit::Year,
-};
 
 /// A duration measured in seconds.
 ///
@@ -1079,14 +1087,6 @@ impl Ord for DurationSeconds {
         self.0.total_cmp(&other.0)
     }
 }
-
-/// At or above this magnitude, [`DurationSeconds`]'s [`Display`](fmt::Display)
-/// switches to scientific notation.
-const DISPLAY_EXPONENT_UPPER: f64 = 1e15;
-
-/// Below this magnitude (excluding exact zero), [`DurationSeconds`]'s
-/// [`Display`](fmt::Display) switches to scientific notation.
-const DISPLAY_EXPONENT_LOWER: f64 = 1e-6;
 
 /// Renders in scientific notation once the magnitude reaches or clears
 /// [`DISPLAY_EXPONENT_UPPER`] or falls below [`DISPLAY_EXPONENT_LOWER`] (exact
