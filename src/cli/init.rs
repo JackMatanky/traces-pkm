@@ -14,10 +14,9 @@ use clap::Args;
 use super::error::{CliError, CliResult};
 use crate::{
     DialogProvider,
-    config::{ConfigService, LOCAL_CONFIG_DIR},
+    config::{ConfigService, DEFAULT_LOCAL_TEMPLATES_DIR, LOCAL_CONFIG_DIR},
 };
 
-const DEFAULT_TEMPLATE_DIRECTORY: &str = ".traces/templates";
 const DEFAULT_OUTPUT_DIRECTORY: &str = ".";
 
 /// Arguments for `traces init`.
@@ -58,7 +57,7 @@ impl Init {
         provider: &dyn DialogProvider,
     ) -> Result<InitInput, CliError> {
         let directory = provider
-            .text("Template directory", Some(DEFAULT_TEMPLATE_DIRECTORY))
+            .text("Template directory", Some(DEFAULT_LOCAL_TEMPLATES_DIR))
             .map_err(|source| CliError::InitPrompt {
                 source,
             })?;
@@ -93,7 +92,7 @@ impl Init {
                 source,
             }
         })?;
-        fs::create_dir(root.join(DEFAULT_TEMPLATE_DIRECTORY)).map_err(
+        fs::create_dir(root.join(DEFAULT_LOCAL_TEMPLATES_DIR)).map_err(
             |source| CliError::InitScaffold {
                 root: root.to_path_buf(),
                 source,

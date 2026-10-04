@@ -10,11 +10,7 @@ use std::{io, path::PathBuf};
 
 use thiserror::Error;
 
-use super::{
-    discovery::DiscoveryScope,
-    file::{LocalConfigFile, Tracked},
-    trust::ConfigTrustStatus,
-};
+use super::{discovery::DiscoveryScope, trust::ConfigTrustStatus};
 use crate::{
     FieldNameError, FilePathTrackerError, TagError, hash::HashError,
     task::TaskError,
@@ -80,35 +76,13 @@ pub(crate) enum DiscoveryError {
 /// Errors raised while building a [`super::Config`] from discovered files.
 #[derive(Debug, Error)]
 pub(crate) enum ConfigBuilderError {
-    /// The builder requires [`DiscoveryScope::Full`] output but received a
-    /// different scope.
-    #[error(
-        "config builder input requires full discovery output, got {actual:?}"
-    )]
-    WrongDiscoveryScope {
-        /// Actual discovery scope received.
-        actual: DiscoveryScope,
-    },
-    /// Full discovery produced no local config candidates.
-    #[error("full discovery output did not contain a local config")]
-    FullDiscoveryWithoutLocal,
-    /// Full discovery produced locals, but none contains the discovery anchor.
-    ///
-    /// This means the anchor directory is not under any discovered local
-    /// config's root.
-    #[error(
-        "full discovery output did not contain a local config for anchor \
-         {anchor}"
-    )]
-    FullDiscoveryWithoutAnchorLocal {
-        /// Discovery anchor path that no local config contained.
-        anchor: PathBuf,
-    },
     /// Config file trust validation halted, requiring user action.
-    #[error("config file is untrusted: {status:?}")]
+    #[error("config file {path} is untrusted: {status:?}")]
     Untrusted {
-        /// The halted config file.
-        file: LocalConfigFile<Tracked>,
+        /// The untrusted workspace root.
+        root: PathBuf,
+        /// The untrusted config file.
+        path: PathBuf,
         /// The trust status that caused the halt.
         status: ConfigTrustStatus,
     },
@@ -145,6 +119,15 @@ pub(crate) enum ConfigFileError {
         /// TOML deserialization error.
         #[source]
         source: Box<toml::de::Error>,
+    },
+    /// The config file could not be read.
+    #[error("failed to read config file {path}")]
+    Io {
+        /// File that failed to read.
+        path: PathBuf,
+        /// Underlying I/O error.
+        #[source]
+        source: std::io::Error,
     },
     /// Trust verification failed before the file could be parsed.
     #[error("failed to check trust for {root}")]

@@ -11,8 +11,17 @@
 //! 4. Parse TOML into [`RawConfig`].
 //! 5. Merge global before local so local values win.
 //!
-//! Trust administration resolves subjects and delegates durable state to
-//! [`super::tracker::ConfigPathTracker`].
+//! Trust administration resolves subjects and persists durable state through
+//! two hash-keyed stores owned by [`ConfigService`].
+//!
+//! # Stores
+//!
+//! - `tracked` records local config paths seen during loading.
+//! - `trusted` records trusted workspace roots and optional config content
+//!   baselines.
+//!
+//! Content baselines let config loading detect stale trust before parsing
+//! changed local TOML.
 
 use std::{
     fs,
@@ -30,7 +39,7 @@ use super::{
     },
     error::{
         ConfigBuilderError, ConfigLoadError, ConfigScaffoldError,
-        ConfigStateError, DiscoveryResult,
+        ConfigStateError, DiscoveryError, DiscoveryResult,
     },
     file::{
         Discovered as FileDiscovered, GlobalConfigFile, LocalConfigFile,
@@ -38,9 +47,52 @@ use super::{
     },
     model::Config,
     raw::{RawConfig, RawTemplateConfig},
-    tracker::ConfigPathTracker,
-    trust::{ConfigTrustStatus, TrustRequest, TrustRequests},
+    trust::{
+        ConfigTrustStatus, TrustRequest, TrustRequests, WorkspaceTrustStatus,
+    },
 };
+use crate::{
+    Blake3FileHash, CleanMode, FilePathTracker, dirs, hash::HashError,
+};
+
+/// Result of checking whether a local config file may be parsed.
+///
+/// Only [`Self::Trusted`] carries already-read content. Keeping content and
+/// status together prevents callers from pairing trusted status with missing
+/// content.
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum ConfigTrustCheck {
+    /// The workspace root is not trusted.
+    Untrusted,
+    /// The workspace root is trusted and a baseline hash exists, but the config
+    /// file's current content no longer matches it.
+    Stale,
+    /// The workspace root is trusted, but no content-hash baseline was ever
+    /// recorded for this config file.
+    MissingBaseline,
+    /// The workspace root is trusted and the config file's content matches its
+    /// baseline hash.
+    ///
+    /// Carries the content read while verifying it, so parsing can reuse the
+    /// same buffer without a second filesystem read.
+    Trusted(String),
+}
+
+impl ConfigTrustCheck {
+    /// Returns the status-only view, discarding any trusted content.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn status(&self) -> ConfigTrustStatus {
+        match self {
+            Self::Untrusted => ConfigTrustStatus::Untrusted,
+            Self::Stale => ConfigTrustStatus::Stale,
+            Self::MissingBaseline => ConfigTrustStatus::MissingBaseline,
+            Self::Trusted(_) => ConfigTrustStatus::Trusted,
+        }
+    }
+}
+
+const COMPANION_SUFFIX: &str = ".hash";
 
 /// Selects the deepest local config containing the discovery anchor, plus the
 /// optional global config merged before it.
@@ -53,30 +105,28 @@ struct ConfigBuilderInput {
 }
 
 impl TryFrom<DiscoveryOutcome> for ConfigBuilderInput {
-    type Error = ConfigBuilderError;
+    type Error = ConfigLoadError;
 
     #[inline]
     fn try_from(outcome: DiscoveryOutcome) -> Result<Self, Self::Error> {
-        let (kind, anchor, discovered_locals, discovered_globals) =
+        let (_kind, anchor, discovered_locals, discovered_globals) =
             outcome.into_parts();
-        if kind != DiscoveryScope::Full {
-            return Err(ConfigBuilderError::WrongDiscoveryScope {
-                actual: kind,
-            });
-        }
+        let anchor_path = anchor.path().to_path_buf();
 
         let discovered_locals = discovered_locals.into_vec();
         if discovered_locals.is_empty() {
-            return Err(ConfigBuilderError::FullDiscoveryWithoutLocal);
+            return Err(DiscoveryError::LocalConfigAbsent {
+                cwd: anchor_path,
+            }
+            .into());
         }
 
-        let anchor_path = anchor.path().to_path_buf();
         let local = discovered_locals
             .into_iter()
             .filter(|file| anchor_path.starts_with(file.root()))
             .max_by_key(|file| file.root().components().count())
-            .ok_or(ConfigBuilderError::FullDiscoveryWithoutAnchorLocal {
-                anchor: anchor_path,
+            .ok_or(DiscoveryError::LocalConfigAbsent {
+                cwd: anchor_path,
             })?;
         let global = discovered_globals.into_iter().next();
         Ok(Self {
@@ -90,9 +140,15 @@ impl TryFrom<DiscoveryOutcome> for ConfigBuilderInput {
 ///
 /// Filesystem discovery (`load`) and `TrustRequest` operations (`trust`,
 /// `untrust`) are separate surfaces on this type.
+///
+/// Durable state lives in two hash-keyed [`FilePathTracker`] stores:
+///
+/// - `tracked` records config files discovery has seen.
+/// - `trusted` records workspace roots and config content baselines.
 #[derive(Clone, Debug)]
 pub struct ConfigService {
-    state: ConfigPathTracker,
+    tracked: FilePathTracker,
+    trusted: FilePathTracker,
 }
 
 impl ConfigService {
@@ -102,7 +158,8 @@ impl ConfigService {
     #[inline]
     pub(crate) fn new() -> Self {
         Self {
-            state: ConfigPathTracker::new(),
+            tracked: FilePathTracker::from(dirs::TRACKED_CONFIGS.clone()),
+            trusted: FilePathTracker::from(dirs::TRUSTED_CONFIGS.clone()),
         }
     }
 
@@ -116,7 +173,8 @@ impl ConfigService {
     #[must_use]
     pub fn at(tracked_root: PathBuf, trusted_root: PathBuf) -> Self {
         Self {
-            state: ConfigPathTracker::at(tracked_root, trusted_root),
+            tracked: FilePathTracker::at(tracked_root),
+            trusted: FilePathTracker::at(trusted_root),
         }
     }
 
@@ -131,7 +189,7 @@ impl ConfigService {
     #[inline]
     pub(crate) fn load(&self, cwd: &Path) -> Result<Config, ConfigLoadError> {
         let discovered = Self::discover(cwd)?;
-        self.build(discovered).map_err(Into::into)
+        self.build(discovered)
     }
 
     /// Discovers config files from `cwd`.
@@ -168,10 +226,9 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// - [`ConfigBuilderError::WrongDiscoveryScope`],
-    ///   [`ConfigBuilderError::FullDiscoveryWithoutLocal`], or
-    ///   [`ConfigBuilderError::FullDiscoveryWithoutAnchorLocal`] when discovery
-    ///   output is not valid builder input.
+    /// - [`super::error::DiscoveryError::LocalConfigAbsent`] when discovery
+    ///   output selected no local config, or none contains the discovery
+    ///   anchor.
     /// - [`ConfigBuilderError::Untrusted`] when the local config's workspace is
     ///   not trusted, is missing its baseline hash, or is stale.
     /// - [`ConfigBuilderError::ConfigFile`] when a selected config file fails
@@ -181,15 +238,21 @@ impl ConfigService {
     fn build(
         &self,
         discovered: DiscoveryOutcome,
-    ) -> Result<Config, ConfigBuilderError> {
+    ) -> Result<Config, ConfigLoadError> {
         let input = ConfigBuilderInput::try_from(discovered)?;
         let (root, trusted_local) = self.verify_trust(input.local)?;
-        let parsed_local = LocalConfigFile::<Parsed>::try_from(trusted_local)?;
+        let parsed_local = LocalConfigFile::<Parsed>::try_from(trusted_local)
+            .map_err(ConfigBuilderError::ConfigFile)?;
         let parsed_global = match input.global {
-            Some(global) => Some(GlobalConfigFile::<Parsed>::try_from(global)?),
+            Some(global) => Some(
+                GlobalConfigFile::<Parsed>::try_from(global)
+                    .map_err(ConfigBuilderError::ConfigFile)?,
+            ),
             None => None,
         };
-        ConfigBuilder::new(root, parsed_local, parsed_global).build()
+        ConfigBuilder::new(root, parsed_local, parsed_global)
+            .build()
+            .map_err(Into::into)
     }
 
     /// Verifies trust for `local`, returning its project root and the trusted
@@ -203,12 +266,13 @@ impl ConfigService {
         &self,
         local: LocalConfigFile<FileDiscovered>,
     ) -> Result<(PathBuf, LocalConfigFile<Trusted>), ConfigBuilderError> {
-        let tracked_local = local.into_tracked(&self.state);
-        let trusted_local = match tracked_local.verify_trust(&self.state)? {
+        let tracked_local = local.into_tracked(self);
+        let trusted_local = match tracked_local.verify_trust(self)? {
             TrustOutcome::Trusted(trusted) => trusted,
             TrustOutcome::Halted(file, status) => {
                 return Err(ConfigBuilderError::Untrusted {
-                    file,
+                    root: file.root().to_path_buf(),
+                    path: file.path().to_path_buf(),
                     status,
                 });
             }
@@ -246,8 +310,9 @@ impl ConfigService {
 
     /// Grants trust for a workspace root.
     ///
-    /// When `subject` carries a config file, also records the file's current
-    /// content hash as the trust baseline.
+    /// When `subject` carries a config file, hashes and records the content
+    /// baseline before granting workspace trust, so a hashing or write failure
+    /// never leaves the workspace trusted without a baseline.
     ///
     /// # Errors
     ///
@@ -258,7 +323,16 @@ impl ConfigService {
         &self,
         subject: &TrustRequest,
     ) -> Result<(), ConfigStateError> {
-        self.state.grant_trust(subject)
+        if let Some(config_file) = subject.config_file() {
+            let digest = Blake3FileHash::from_path(config_file)?;
+            self.trusted.write_companion(
+                subject.root_path(),
+                COMPANION_SUFFIX,
+                digest.to_string(),
+            )?;
+        }
+        self.trusted.record(subject.root_path())?;
+        Ok(())
     }
 
     /// Returns the trust status for `subject`.
@@ -276,17 +350,94 @@ impl ConfigService {
         subject: &TrustRequest,
     ) -> Result<ConfigTrustStatus, ConfigStateError> {
         if subject.config_file().is_some() {
-            self.state.config_trust_status(subject)
+            self.config_trust_status(subject)
         } else {
-            self.state
-                .workspace_trust_status(subject)
-                .map(ConfigTrustStatus::from)
+            self.workspace_trust_status(subject).map(ConfigTrustStatus::from)
+        }
+    }
+
+    /// Returns the workspace-root trust status.
+    ///
+    /// # Errors
+    ///
+    /// - [`ConfigStateError::Tracker`] when the trust store cannot be read.
+    pub(crate) fn workspace_trust_status(
+        &self,
+        subject: &TrustRequest,
+    ) -> Result<WorkspaceTrustStatus, ConfigStateError> {
+        if self.trusted.contains(subject.root_path())? {
+            Ok(WorkspaceTrustStatus::Trusted)
+        } else {
+            Ok(WorkspaceTrustStatus::Untrusted)
+        }
+    }
+
+    /// Returns the config-file trust status.
+    ///
+    /// # Errors
+    ///
+    /// - [`ConfigStateError::Tracker`] when the trust store cannot be read.
+    /// - [`ConfigStateError::Hash`] when the config file cannot be hashed.
+    #[inline]
+    pub(crate) fn config_trust_status(
+        &self,
+        subject: &TrustRequest,
+    ) -> Result<ConfigTrustStatus, ConfigStateError> {
+        let Some(config_file) = subject.config_file() else {
+            return Ok(if self.trusted.contains(subject.root_path())? {
+                ConfigTrustStatus::Trusted
+            } else {
+                ConfigTrustStatus::Untrusted
+            });
+        };
+        self.config_file_trust_check(subject.root_path(), config_file)
+            .map(|check| check.status())
+    }
+
+    /// Checks config-file trust and returns content only when trusted.
+    ///
+    /// Takes `root` and `config_path` directly because a root-only
+    /// [`TrustRequest`] has no config path, while trusted parsing must carry
+    /// content.
+    ///
+    /// Reads the config file once and hashes the buffer in memory, returning
+    /// the same content for parsing to avoid a second filesystem read.
+    ///
+    /// # Errors
+    ///
+    /// - [`ConfigStateError::Tracker`] when the trust store cannot be read.
+    /// - [`ConfigStateError::Hash`] when the config file cannot be read.
+    pub(crate) fn config_file_trust_check(
+        &self,
+        root: &Path,
+        config_path: &Path,
+    ) -> Result<ConfigTrustCheck, ConfigStateError> {
+        if !self.trusted.contains(root)? {
+            return Ok(ConfigTrustCheck::Untrusted);
+        }
+        let Some(recorded) =
+            self.trusted.read_companion(root, COMPANION_SUFFIX)?
+        else {
+            return Ok(ConfigTrustCheck::MissingBaseline);
+        };
+        let content = fs::read_to_string(config_path).map_err(|source| {
+            ConfigStateError::Hash(HashError {
+                path: config_path.to_path_buf(),
+                source,
+            })
+        })?;
+        let current = Blake3FileHash::from(content.as_str());
+        if recorded.trim() == current.to_hex().as_ref() {
+            Ok(ConfigTrustCheck::Trusted(content))
+        } else {
+            Ok(ConfigTrustCheck::Stale)
         }
     }
 
     /// Removes trust for `subject`'s workspace root.
     ///
-    /// Returns the number of root entries removed.
+    /// Removes the workspace and its config-baseline companion. Returns the
+    /// number of root entries removed.
     ///
     /// # Errors
     ///
@@ -297,7 +448,9 @@ impl ConfigService {
         &self,
         subject: &TrustRequest,
     ) -> Result<usize, ConfigStateError> {
-        self.state.revoke_trust(subject)
+        self.trusted
+            .remove_with_companions(subject.root_path(), &[COMPANION_SUFFIX])
+            .map_err(Into::into)
     }
 
     /// Lists the canonical paths of all live tracked configs.
@@ -310,7 +463,7 @@ impl ConfigService {
     pub(crate) fn list_tracked(
         &self,
     ) -> Result<Vec<PathBuf>, ConfigStateError> {
-        self.state.list_tracked_configs()
+        self.tracked.list_all().map_err(Into::into)
     }
 
     /// Removes dangling tracked-config entries.
@@ -325,7 +478,7 @@ impl ConfigService {
     pub(crate) fn clean_tracked_store(
         &self,
     ) -> Result<usize, ConfigStateError> {
-        self.state.clean_tracked_configs()
+        self.tracked.clean(CleanMode::EntriesOnly).map_err(Into::into)
     }
 
     /// Lists the canonical paths of all currently trusted roots.
@@ -338,7 +491,7 @@ impl ConfigService {
     pub(crate) fn list_trusted(
         &self,
     ) -> Result<Vec<PathBuf>, ConfigStateError> {
-        self.state.list_trusted_workspaces()
+        self.trusted.list_all().map_err(Into::into)
     }
 
     /// Removes dangling trust entries and their content-hash companions.
@@ -354,7 +507,27 @@ impl ConfigService {
     pub(crate) fn clean_trusted_store(
         &self,
     ) -> Result<usize, ConfigStateError> {
-        self.state.clean_trusted_workspaces()
+        self.trusted
+            .clean(CleanMode::WithCompanions(&[COMPANION_SUFFIX]))
+            .map_err(Into::into)
+    }
+
+    /// Records that discovery saw a config file.
+    ///
+    /// Best-effort: tracking is bookkeeping, so write failures warn and do not
+    /// fail config loading.
+    #[inline]
+    pub(crate) fn track_seen_config(
+        &self,
+        config: &LocalConfigFile<FileDiscovered>,
+    ) {
+        if let Err(error) = self.tracked.record(config.path()) {
+            tracing::warn!(
+                path = %config.path().display(),
+                error = %error,
+                "failed to record seen config file"
+            );
+        }
     }
 
     /// Serialises `directory`/`output_dir` as the local template config and
@@ -552,7 +725,7 @@ mod tests {
             assert!(result.is_ok());
             let config = result.unwrap();
             assert_eq!(config.root(), root.as_path());
-            assert_eq!(config.output_dir(), Path::new("notes"));
+            assert_eq!(config.output_dir(), root.join("notes"));
         }
 
         #[test]
@@ -668,10 +841,10 @@ mod tests {
             // Assert
             assert!(matches!(
                 result,
-                Err(ConfigBuilderError::Untrusted {
+                Err(ConfigLoadError::Build(ConfigBuilderError::Untrusted {
                     status: ConfigTrustStatus::Untrusted,
                     ..
-                })
+                }))
             ));
         }
 
@@ -691,10 +864,10 @@ mod tests {
             // Assert
             assert!(matches!(
                 result,
-                Err(ConfigBuilderError::Untrusted {
+                Err(ConfigLoadError::Build(ConfigBuilderError::Untrusted {
                     status: ConfigTrustStatus::Stale,
                     ..
-                })
+                }))
             ));
         }
     }
@@ -764,6 +937,76 @@ mod tests {
                 fixture.service.trust_status(&subject).unwrap(),
                 ConfigTrustStatus::Trusted
             );
+        }
+
+        #[test]
+        fn records_workspace_without_companion_when_no_config_present() {
+            // Arrange
+            let fixture = Fixture::new();
+            let root = fixture.target_dir("project");
+            let subject = TrustRequest::from(root.as_path());
+
+            // Act
+            fixture.service.trust(&subject).expect("grant trust");
+
+            // Assert
+            let trusted = fixture.service.list_trusted().expect("list");
+            assert_eq!(trusted, vec![
+                root.canonicalize().expect("canonicalize")
+            ]);
+            let config_path = Fixture::create_config(&root, "a = 1");
+            let config = Fixture::discovered_config(&config_path);
+            let config_subject = TrustRequest::from(&config);
+            assert_eq!(
+                fixture.service.trust_status(&config_subject).expect("status"),
+                ConfigTrustStatus::MissingBaseline
+            );
+        }
+
+        #[test]
+        fn leaves_workspace_untrusted_when_hash_fails() {
+            // Arrange
+            let fixture = Fixture::new();
+            let root = fixture.target_dir("project");
+            let config_path = Fixture::create_config(&root, "a = 1");
+            let config = Fixture::discovered_config(&config_path);
+            let subject = TrustRequest::from(&config);
+            fs::remove_file(&config_path).expect("remove config");
+
+            // Act
+            let result = fixture.service.trust(&subject);
+
+            // Assert
+            assert!(matches!(result, Err(ConfigStateError::Hash(_))));
+            let status = fixture
+                .service
+                .workspace_trust_status(&subject)
+                .expect("workspace status");
+            assert_eq!(status, WorkspaceTrustStatus::Untrusted);
+        }
+    }
+
+    mod track_seen_config {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn records_config_path_in_store() {
+            // Arrange
+            let fixture = Fixture::new();
+            let root = fixture.target_dir("project");
+            let config_path = Fixture::create_config(&root, "");
+            let config = Fixture::discovered_config(&config_path);
+
+            // Act
+            fixture.service.track_seen_config(&config);
+
+            // Assert
+            let tracked = fixture.service.list_tracked().expect("list");
+            assert_eq!(tracked, vec![
+                config_path.canonicalize().expect("canonicalize")
+            ]);
         }
     }
 
@@ -1160,7 +1403,7 @@ mod tests {
             fixture: &Fixture,
             local: LocalConfigFile<FileDiscovered>,
             global: Option<GlobalConfigFile<FileDiscovered>>,
-        ) -> Result<Config, ConfigBuilderError> {
+        ) -> Result<Config, ConfigLoadError> {
             fixture.trust(&local);
             let anchor = local.root().to_path_buf();
             let outcome = DiscoveryOutcome::with_kind(
@@ -1178,34 +1421,12 @@ mod tests {
             use super::*;
 
             #[test]
-            fn rejects_non_full_discovery_output() {
-                let fixture = Fixture::new();
-                let local = fixture.local("project");
-                let outcome = DiscoveryOutcome::with_kind(
-                    DiscoveryScope::NearestLocal,
-                    DiscoveryAnchor::Directory(local.root().to_path_buf()),
-                    vec![local],
-                    Vec::new(),
-                );
-
-                let error = ConfigBuilderInput::try_from(outcome)
-                    .expect_err("wrong kind");
-
-                assert!(matches!(
-                    error,
-                    ConfigBuilderError::WrongDiscoveryScope {
-                        actual: DiscoveryScope::NearestLocal
-                    }
-                ));
-            }
-
-            #[test]
             fn rejects_full_discovery_without_local() {
                 let fixture = Fixture::new();
                 let anchor = fixture.temp.path().join("project");
                 let outcome = DiscoveryOutcome::with_kind(
                     DiscoveryScope::Full,
-                    DiscoveryAnchor::Directory(anchor),
+                    DiscoveryAnchor::Directory(anchor.clone()),
                     Vec::new(), // Empty locals
                     Vec::new(),
                 );
@@ -1215,7 +1436,9 @@ mod tests {
 
                 assert!(matches!(
                     error,
-                    ConfigBuilderError::FullDiscoveryWithoutLocal
+                    ConfigLoadError::Discovery(
+                        DiscoveryError::LocalConfigAbsent { cwd }
+                    ) if cwd == anchor
                 ));
             }
 
@@ -1236,8 +1459,9 @@ mod tests {
 
                 assert!(matches!(
                     error,
-                    ConfigBuilderError::FullDiscoveryWithoutAnchorLocal { anchor: error_anchor }
-                        if error_anchor == anchor
+                    ConfigLoadError::Discovery(
+                        DiscoveryError::LocalConfigAbsent { cwd }
+                    ) if cwd == anchor
                 ));
             }
 
@@ -1305,7 +1529,10 @@ mod tests {
                 let config = build(&fixture, local, None).expect("build");
 
                 // Assert
-                assert_eq!(config.output_dir(), Path::new("local_out"));
+                assert_eq!(
+                    config.output_dir(),
+                    fixture.temp.path().join("project/local_out")
+                );
             }
 
             #[test]
@@ -1410,7 +1637,10 @@ mod tests {
                     build(&fixture, local, Some(global)).expect("build");
 
                 // Assert
-                assert_eq!(config.output_dir(), Path::new("local_out"));
+                assert_eq!(
+                    config.output_dir(),
+                    fixture.temp.path().join("project/local_out")
+                );
             }
 
             #[test]
@@ -1450,8 +1680,10 @@ mod tests {
 
                 assert!(matches!(
                     result,
-                    Err(ConfigBuilderError::ConfigFile(
-                        ConfigFileError::Parse { .. }
+                    Err(ConfigLoadError::Build(
+                        ConfigBuilderError::ConfigFile(
+                            ConfigFileError::Parse { .. }
+                        )
                     ))
                 ));
             }
@@ -1470,8 +1702,10 @@ mod tests {
 
                 assert!(matches!(
                     result,
-                    Err(ConfigBuilderError::ConfigFile(
-                        ConfigFileError::Parse { .. }
+                    Err(ConfigLoadError::Build(
+                        ConfigBuilderError::ConfigFile(
+                            ConfigFileError::Parse { .. }
+                        )
                     ))
                 ));
             }
@@ -1499,7 +1733,10 @@ mod tests {
                     build(&fixture, local, Some(global)).expect("build");
 
                 // Assert
-                assert_eq!(config.output_dir(), Path::new("global_out"));
+                assert_eq!(
+                    config.output_dir(),
+                    fixture.temp.path().join("project/global_out")
+                );
             }
         }
 
@@ -1559,7 +1796,7 @@ mod tests {
                 // Assert
                 assert_eq!(
                     config.schemas().directory(),
-                    Path::new("custom/schemas")
+                    fixture.temp.path().join("project/custom/schemas")
                 );
             }
 
@@ -1578,7 +1815,7 @@ mod tests {
                 // Assert
                 assert_eq!(
                     config.schemas().directory(),
-                    Path::new(".traces/schemas/")
+                    fixture.temp.path().join("project/.traces/schemas")
                 );
             }
 
@@ -1633,7 +1870,7 @@ mod tests {
                 // Assert
                 assert_eq!(
                     config.schemas().directory(),
-                    Path::new("global/schemas")
+                    fixture.temp.path().join("global/global/schemas")
                 );
             }
 
@@ -1654,8 +1891,10 @@ mod tests {
                 // Assert
                 assert!(matches!(
                     result,
-                    Err(ConfigBuilderError::ConfigFile(
-                        ConfigFileError::Parse { .. }
+                    Err(ConfigLoadError::Build(
+                        ConfigBuilderError::ConfigFile(
+                            ConfigFileError::Parse { .. }
+                        )
                     ))
                 ));
             }
@@ -1677,11 +1916,13 @@ mod tests {
                 // Assert
                 assert!(matches!(
                     result,
-                    Err(ConfigBuilderError::ConfigFile(
-                        ConfigFileError::InvalidFieldKey {
-                            table: "schemas",
-                            ..
-                        }
+                    Err(ConfigLoadError::Build(
+                        ConfigBuilderError::ConfigFile(
+                            ConfigFileError::InvalidFieldKey {
+                                table: "schemas",
+                                ..
+                            }
+                        )
                     ))
                 ));
             }
@@ -1703,11 +1944,13 @@ mod tests {
                 // Assert
                 assert!(matches!(
                     result,
-                    Err(ConfigBuilderError::ConfigFile(
-                        ConfigFileError::InvalidFieldKey {
-                            table: "schemas",
-                            ..
-                        }
+                    Err(ConfigLoadError::Build(
+                        ConfigBuilderError::ConfigFile(
+                            ConfigFileError::InvalidFieldKey {
+                                table: "schemas",
+                                ..
+                            }
+                        )
                     ))
                 ));
             }
@@ -1915,8 +2158,10 @@ mod tests {
                 // Assert
                 assert!(matches!(
                     result,
-                    Err(ConfigBuilderError::ConfigFile(
-                        ConfigFileError::Parse { .. }
+                    Err(ConfigLoadError::Build(
+                        ConfigBuilderError::ConfigFile(
+                            ConfigFileError::Parse { .. }
+                        )
                     ))
                 ));
             }
@@ -1938,8 +2183,10 @@ mod tests {
                 // Assert
                 assert!(matches!(
                     result,
-                    Err(ConfigBuilderError::ConfigFile(
-                        ConfigFileError::Parse { .. }
+                    Err(ConfigLoadError::Build(
+                        ConfigBuilderError::ConfigFile(
+                            ConfigFileError::Parse { .. }
+                        )
                     ))
                 ));
             }
@@ -2001,11 +2248,13 @@ mod tests {
                 // Assert
                 assert!(matches!(
                     result,
-                    Err(ConfigBuilderError::ConfigFile(
-                        ConfigFileError::InvalidFieldKey {
-                            table: "frontmatter",
-                            ..
-                        }
+                    Err(ConfigLoadError::Build(
+                        ConfigBuilderError::ConfigFile(
+                            ConfigFileError::InvalidFieldKey {
+                                table: "frontmatter",
+                                ..
+                            }
+                        )
                     ))
                 ));
             }
@@ -2106,11 +2355,13 @@ mod tests {
                 // Assert
                 assert!(matches!(
                     result,
-                    Err(ConfigBuilderError::ConfigFile(
-                        ConfigFileError::InvalidFieldKey {
-                            table: "frontmatter",
-                            ..
-                        }
+                    Err(ConfigLoadError::Build(
+                        ConfigBuilderError::ConfigFile(
+                            ConfigFileError::InvalidFieldKey {
+                                table: "frontmatter",
+                                ..
+                            }
+                        )
                     ))
                 ));
             }
@@ -2132,11 +2383,13 @@ mod tests {
                 // Assert
                 assert!(matches!(
                     result,
-                    Err(ConfigBuilderError::ConfigFile(
-                        ConfigFileError::InvalidFieldKey {
-                            table: "frontmatter",
-                            ..
-                        }
+                    Err(ConfigLoadError::Build(
+                        ConfigBuilderError::ConfigFile(
+                            ConfigFileError::InvalidFieldKey {
+                                table: "frontmatter",
+                                ..
+                            }
+                        )
                     ))
                 ));
             }
@@ -2158,11 +2411,13 @@ mod tests {
                 // Assert
                 assert!(matches!(
                     result,
-                    Err(ConfigBuilderError::ConfigFile(
-                        ConfigFileError::InvalidFieldKey {
-                            table: "frontmatter",
-                            ..
-                        }
+                    Err(ConfigLoadError::Build(
+                        ConfigBuilderError::ConfigFile(
+                            ConfigFileError::InvalidFieldKey {
+                                table: "frontmatter",
+                                ..
+                            }
+                        )
                     ))
                 ));
             }

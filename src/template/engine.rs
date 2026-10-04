@@ -97,8 +97,6 @@ impl TemplateEngine {
     ///
     /// # Errors
     ///
-    /// - [`TemplateError::SchemaDirectory`] if the configured Schema directory
-    ///   is invalid, escapes the project root, or cannot be verified.
     /// - [`TemplateError::SchemaLoad`] if the Schema registry cannot be loaded:
     ///   the registry directory could not be read or listed, a Schema file
     ///   failed to parse, or the `extends` DAG contains a cycle.
@@ -129,8 +127,8 @@ impl TemplateEngine {
         // `query`/`lists`/`tasks` `.from()` and `schema.get()` read the
         // identical, already-resolved `SchemaService` for this engine's whole
         // lifetime: no render-scoped re-resolution or caching.
-        let schema_directory = config.resolved_schema_directory()?;
-        let construction = SchemaService::load_verbose(&schema_directory)?;
+        let schema_directory = config.schemas().directory();
+        let construction = SchemaService::load_verbose(schema_directory)?;
         warn_schema_construction_diagnostics(&construction);
         let service = Arc::new(construction.service);
         let indexer = Arc::new(IndexerService::from(config));

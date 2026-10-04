@@ -293,8 +293,12 @@ fn discovered_requests(
 }
 
 fn trust_anchor(path: &Path) -> DiscoveryAnchor {
-    if path.is_file() || is_local_config_path(path) {
+    if is_local_config_path(path) {
         DiscoveryAnchor::File(path.to_path_buf())
+    } else if path.is_file() {
+        DiscoveryAnchor::Directory(
+            path.parent().map_or_else(|| path.to_path_buf(), Path::to_path_buf),
+        )
     } else {
         DiscoveryAnchor::Directory(path.to_path_buf())
     }
@@ -335,10 +339,20 @@ fn nearest_local(anchor: DiscoveryAnchor) -> DiscoveryResult<DiscoveryOutcome> {
 }
 
 fn local_subtree(anchor: DiscoveryAnchor) -> DiscoveryResult<DiscoveryOutcome> {
-    let nearest = local_from_anchor(&anchor)?;
-    let root = nearest.root().to_path_buf();
-    let mut local = vec![nearest];
-    local.extend(collect_descendant_configs(&root)?);
+    let resolved_file_root;
+    let scan_root: &Path = match &anchor {
+        DiscoveryAnchor::Directory(dir) => dir.as_path(),
+        DiscoveryAnchor::File(path) => {
+            let start = path.parent().unwrap_or(path);
+            resolved_file_root =
+                nearest_local_from_dir(start)?.root().to_path_buf();
+            &resolved_file_root
+        }
+    };
+    let mut local = collect_descendant_configs(scan_root)?;
+    if local.is_empty() {
+        local = vec![local_from_anchor(&anchor)?];
+    }
     local.sort_by(|left, right| left.root().cmp(right.root()));
     local.dedup_by(|left, right| left.root() == right.root());
     Ok(DiscoveryOutcome::with_kind(
@@ -626,6 +640,86 @@ mod tests {
         }
 
         #[test]
+        fn local_subtree_finds_descendants_when_root_has_no_own_config() {
+            // Arrange
+            let fixture = Fixture::new();
+            let root = fixture.create_dir("root");
+            let child_config = fixture.create_config("root/child");
+
+            let ctx = DiscoveryContext::new(
+                DiscoveryScope::LocalSubtree,
+                DiscoveryAnchor::Directory(root),
+            )
+            .unwrap();
+
+            // Act
+            let result = run(ctx);
+
+            // Assert
+            assert!(result.is_ok());
+            let discovered = result.unwrap();
+            assert_eq!(discovered.local().len(), 1);
+            assert_eq!(
+                discovered.local().first().unwrap().path(),
+                child_config.as_path()
+            );
+        }
+
+        #[test]
+        fn local_subtree_excludes_unrelated_sibling_when_anchor_has_no_config()
+        {
+            // Arrange
+            let fixture = Fixture::new();
+            fixture.create_config("ancestor");
+            fixture.create_config("ancestor/sibling");
+            let anchor_dir = fixture.create_dir("ancestor/target");
+
+            let ctx = DiscoveryContext::new(
+                DiscoveryScope::LocalSubtree,
+                DiscoveryAnchor::Directory(anchor_dir),
+            )
+            .unwrap();
+
+            // Act
+            let result = run(ctx);
+
+            // Assert
+            assert!(result.is_ok());
+            let discovered = result.unwrap();
+            assert_eq!(discovered.local().len(), 1);
+            assert_eq!(
+                discovered.local().first().unwrap().root(),
+                fixture.path("ancestor")
+            );
+        }
+
+        #[test]
+        fn local_subtree_resolves_file_anchor_to_its_project() {
+            // Arrange
+            let fixture = Fixture::new();
+            fixture.create_config("project");
+            let note = fixture.create_file("project/notes/todo.md");
+
+            let ctx = DiscoveryContext::new(
+                DiscoveryScope::LocalSubtree,
+                DiscoveryAnchor::File(note),
+            )
+            .unwrap();
+
+            // Act
+            let result = run(ctx);
+
+            // Assert
+            assert!(result.is_ok());
+            let discovered = result.unwrap();
+            assert_eq!(discovered.local().len(), 1);
+            assert_eq!(
+                discovered.local().first().unwrap().root(),
+                fixture.path("project")
+            );
+        }
+
+        #[test]
         fn trust_requests_full_scope_is_unsupported() {
             // Arrange
             let fixture = Fixture::new();
@@ -718,6 +812,20 @@ mod tests {
                 assert!(
                     matches!(anchor, DiscoveryAnchor::Directory(p) if p == path)
                 );
+            }
+
+            #[test]
+            fn returns_directory_anchor_for_non_config_file() {
+                let fixture = Fixture::new();
+                let note = fixture.create_file("project/notes/todo.md");
+                let project_notes = fixture.path("project/notes");
+
+                let anchor = trust_anchor(&note);
+
+                assert!(matches!(
+                    anchor,
+                    DiscoveryAnchor::Directory(p) if p == project_notes
+                ));
             }
         }
 

@@ -175,16 +175,6 @@ pub enum CliError {
         #[source]
         source: IndexError,
     },
-    /// Resolving the configured Schema registry directory for a File Class
-    /// query failed.
-    #[error("failed to resolve Schema registry directory for query in {root}")]
-    SchemaDirectory {
-        /// The project root the query ran against.
-        root: PathBuf,
-        /// Source config-file path validation error.
-        #[source]
-        source: ConfigFileError,
-    },
     /// Loading Schemas needed to resolve a File Class query failed.
     #[error("failed to load Schemas for query in {root}")]
     SchemaQuery {
@@ -315,9 +305,6 @@ impl Diagnostic for CliError {
             Self::Index {
                 ..
             } => "traces::cli::index::failed",
-            Self::SchemaDirectory {
-                ..
-            } => "traces::cli::query::schema_directory_failed",
             Self::SchemaQuery {
                 ..
             } => "traces::cli::query::schema_failed",
@@ -375,13 +362,6 @@ impl Diagnostic for CliError {
                 root,
                 ..
             } => Some(root_help(root, "is readable and writable")),
-            Self::SchemaDirectory {
-                root,
-                ..
-            } => Some(root_help(
-                root,
-                "has a Schema directory inside the project root",
-            )),
             Self::SchemaQuery {
                 root,
                 ..
@@ -486,16 +466,6 @@ fn config_discovery_help(cwd: &Path) -> Box<dyn Display + '_> {
 /// Builds diagnostic help text for a [`ConfigBuilderError`].
 fn config_build_help(source: &ConfigBuilderError) -> Box<dyn Display + '_> {
     match source {
-        ConfigBuilderError::WrongDiscoveryScope {
-            ..
-        }
-        | ConfigBuilderError::FullDiscoveryWithoutLocal
-        | ConfigBuilderError::FullDiscoveryWithoutAnchorLocal {
-            ..
-        } => Box::new(
-            "this is an internal error: config discovery produced output the \
-             builder could not consume; please file a bug report",
-        ),
         ConfigBuilderError::Untrusted {
             ..
         } => Box::new(
@@ -570,15 +540,6 @@ fn query_help(source: &QueryError) -> Box<dyn Display + 'static> {
 const fn config_load_code(source: &ConfigLoadError) -> &'static str {
     match source {
         ConfigLoadError::Discovery(_) => "traces::cli::config_discovery_failed",
-        ConfigLoadError::Build(
-            ConfigBuilderError::WrongDiscoveryScope {
-                ..
-            }
-            | ConfigBuilderError::FullDiscoveryWithoutLocal
-            | ConfigBuilderError::FullDiscoveryWithoutAnchorLocal {
-                ..
-            },
-        ) => "traces::cli::config_build_invariant_failed",
         ConfigLoadError::Build(ConfigBuilderError::Untrusted {
             ..
         }) => "traces::cli::config_build_untrusted",
@@ -627,9 +588,6 @@ fn template_instantiate_code(source: &TemplateError) -> &'static str {
         TemplateError::Write {
             ..
         } => "traces::cli::template::write_failed",
-        TemplateError::SchemaDirectory(_) => {
-            "traces::cli::template::schema_directory_failed"
-        }
         TemplateError::SchemaLoad(_) => {
             "traces::cli::template::schema_load_failed"
         }
@@ -707,10 +665,6 @@ fn template_instantiate_help(source: &TemplateError) -> Box<dyn Display + '_> {
             ..
         } => Box::new(
             "check that the output path and its parent directory are writable",
-        ),
-        TemplateError::SchemaDirectory(_) => Box::new(
-            "check that the configured Schema directory resolves inside the \
-             project",
         ),
         TemplateError::SchemaLoad(_) => Box::new(
             "check that every Schema TOML file under the configured Schema \
@@ -863,35 +817,16 @@ mod tests {
         }
 
         #[test]
-        fn config_load_build_wrong_discovery_scope() {
-            let cwd = PathBuf::from("/some/project");
-            let error = CliError::ConfigLoad {
-                cwd,
-                source: ConfigLoadError::Build(
-                    crate::config::ConfigBuilderError::WrongDiscoveryScope {
-                        actual: crate::config::DiscoveryScope::NearestLocal,
-                    },
-                ),
+        fn untrusted_config_message_names_the_config_path() {
+            let error = crate::config::ConfigBuilderError::Untrusted {
+                root: PathBuf::from("/example/root"),
+                path: PathBuf::from("/example/root/.traces/config.toml"),
+                status: crate::config::ConfigTrustStatus::Untrusted,
             };
 
-            assert_eq!(
-                error.to_string(),
-                "failed to load configuration from /some/project"
+            assert!(
+                error.to_string().contains("/example/root/.traces/config.toml")
             );
-            assert_eq!(
-                error.code().map(|code| code.to_string()),
-                Some("traces::cli::config_build_invariant_failed".to_owned())
-            );
-            assert_eq!(
-                error.help().map(|help| help.to_string()),
-                Some(
-                    "this is an internal error: config discovery produced \
-                     output the builder could not consume; please file a bug \
-                     report"
-                        .to_owned()
-                )
-            );
-            assert!(error.source().is_some());
         }
 
         #[test]

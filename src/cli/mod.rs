@@ -457,15 +457,9 @@ fn run_query_builder_from_store(
 
 fn load_schema_service(config: &Config) -> Result<SchemaService, CliError> {
     let root = config.root();
-    let schema_directory =
-        config.resolved_schema_directory().map_err(|source| {
-            CliError::SchemaDirectory {
-                root: root.to_path_buf(),
-                source,
-            }
-        })?;
+    let schema_directory = config.schemas().directory();
     let construction =
-        SchemaService::load_verbose(&schema_directory).map_err(|error| {
+        SchemaService::load_verbose(schema_directory).map_err(|error| {
             CliError::SchemaQuery {
                 root: root.to_path_buf(),
                 source: error,

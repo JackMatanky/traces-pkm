@@ -141,7 +141,7 @@ impl FilePathTracker {
             let node = node.map_err(store_error)?;
             let entry = node.path().to_path_buf();
             if let Some(target) = recorded_target(&entry)
-                && target.exists()
+                && target.try_exists().unwrap_or(true)
             {
                 targets.push(target);
             }
@@ -167,7 +167,7 @@ impl FilePathTracker {
         &self,
         mode: CleanMode<'_>,
     ) -> Result<usize, FilePathTrackerError> {
-        let removed = self.clean_reporting()?;
+        let removed = self.clean_reporting(mode.companion_suffixes())?;
         let CleanMode::WithCompanions(suffixes) = mode else {
             return Ok(removed.len());
         };
@@ -200,6 +200,7 @@ impl FilePathTracker {
     ///
     /// - [`FilePathTrackerError::Canonicalize`] if `target` cannot be
     ///   canonicalized
+    /// - [`FilePathTrackerError::StoreIo`] if the store root cannot be created
     /// - [`FilePathTrackerError::CompanionWrite`] if the companion cannot be
     ///   written
     #[inline]
@@ -212,6 +213,12 @@ impl FilePathTracker {
         let entry = StoreEntry::from_target(target)?;
         let entry_path = entry.path_in(&self.root);
         let companion = companion_path(&entry_path, suffix);
+        fs::create_dir_all(&self.root).map_err(|source| {
+            FilePathTrackerError::StoreIo {
+                path: self.root.to_path_buf(),
+                source,
+            }
+        })?;
         fs::write(&companion, contents).map_err(|source| {
             FilePathTrackerError::CompanionWrite {
                 path: companion,
@@ -303,11 +310,18 @@ impl FilePathTracker {
 
     /// Removes stale entries and returns each removed root entry path.
     ///
+    /// `companion_suffixes` lists the suffixes `clean` also removes for each
+    /// stale entry; entries whose own path ends with one of those suffixes are
+    /// skipped, since they are companion files, not hash entries.
+    ///
     /// # Errors
     ///
     /// - [`FilePathTrackerError`] if the store root cannot be read or a stale
     ///   entry cannot be removed.
-    fn clean_reporting(&self) -> Result<Vec<PathBuf>, FilePathTrackerError> {
+    fn clean_reporting(
+        &self,
+        companion_suffixes: &[&str],
+    ) -> Result<Vec<PathBuf>, FilePathTrackerError> {
         if !self.root.is_dir() {
             return Ok(Vec::new());
         }
@@ -315,10 +329,15 @@ impl FilePathTracker {
         for node in DirTree::children(&self.root) {
             let node = node.map_err(store_error)?;
             let entry = node.path().to_path_buf();
+            if companion_suffixes.iter().any(|suffix| {
+                entry.as_os_str().to_string_lossy().ends_with(suffix)
+            }) {
+                continue;
+            }
             let Some(target) = recorded_target(&entry) else {
                 continue;
             };
-            if target.exists() {
+            if target.try_exists().unwrap_or(true) {
                 continue;
             }
             match fs::remove_file(&entry) {
@@ -354,6 +373,16 @@ pub(crate) enum CleanMode<'a> {
     /// A suffix is appended to the hash entry path, such as `.hash` producing
     /// `<entry>.hash`.
     WithCompanions(&'a [&'a str]),
+}
+
+impl CleanMode<'_> {
+    /// Returns the companion suffixes this mode's cleanup also removes.
+    fn companion_suffixes(&self) -> &[&str] {
+        match self {
+            Self::EntriesOnly => &[],
+            Self::WithCompanions(suffixes) => suffixes,
+        }
+    }
 }
 
 struct StoreEntry {
@@ -891,6 +920,30 @@ mod tests {
             );
             assert_eq!(result.unwrap(), 1);
         }
+
+        #[test]
+        fn skips_companion_files_regardless_of_suffix_content() {
+            // Arrange
+            let fixture = Fixture::new();
+            let target = fixture.target("target");
+            fixture.store.record(&target).expect("record");
+            fixture
+                .store
+                .write_companion(&target, ".hash", "deadbeef")
+                .expect("write companion");
+
+            // Act
+            let result =
+                fixture.store.clean(CleanMode::WithCompanions(&[".hash"]));
+
+            // Assert
+            assert_eq!(result.unwrap(), 0);
+            assert_eq!(fixture.store.contains(&target).unwrap(), true);
+            assert_eq!(
+                fixture.store.read_companion(&target, ".hash").unwrap(),
+                Some("deadbeef".to_owned())
+            );
+        }
     }
 
     mod remove {
@@ -1004,7 +1057,7 @@ mod tests {
         }
 
         #[test]
-        fn write_errors_when_store_root_absent() {
+        fn write_creates_store_root_when_absent() {
             // Arrange
             let fixture = Fixture::new();
             let target = fixture.target("target");
@@ -1015,10 +1068,10 @@ mod tests {
                 fixture.store.write_companion(&target, ".hash", "content");
 
             // Assert
-            assert!(matches!(
-                result,
-                Err(FilePathTrackerError::CompanionWrite { .. })
-            ));
+            assert!(result.is_ok());
+            let companion =
+                companion_path(&fixture.entry_path_for(&target), ".hash");
+            assert_eq!(fs::read_to_string(companion).unwrap(), "content");
         }
 
         #[test]

@@ -22,7 +22,7 @@ use super::trust::TrustRequest;
 use super::{
     error::ConfigFileError,
     raw::RawConfig,
-    tracker::{ConfigPathTracker, ConfigTrustCheck},
+    service::{ConfigService, ConfigTrustCheck},
     trust::ConfigTrustStatus,
 };
 
@@ -65,14 +65,14 @@ impl Parsed {
     ///
     /// # Errors
     ///
-    /// - [`ConfigFileError::Parse`] when `path` cannot be read or its content
-    ///   cannot be parsed as TOML.
+    /// - [`ConfigFileError::Io`] when `path` cannot be read.
+    /// - [`ConfigFileError::Parse`] when `path`'s content cannot be parsed as
+    ///   TOML.
     fn read(path: &Path) -> Result<Self, ConfigFileError> {
         let content = std::fs::read_to_string(path).map_err(|source| {
-            use serde::de::Error as _;
-            ConfigFileError::Parse {
+            ConfigFileError::Io {
                 path: path.to_path_buf(),
-                source: Box::new(toml::de::Error::custom(source)),
+                source,
             }
         })?;
         Self::from_content(path, &content)
@@ -197,7 +197,7 @@ impl LocalConfigFile<Discovered> {
     #[inline]
     pub(crate) fn into_tracked(
         self,
-        store: &ConfigPathTracker,
+        store: &ConfigService,
     ) -> LocalConfigFile<Tracked> {
         store.track_seen_config(&self);
         self.transition_to(Tracked)
@@ -251,7 +251,7 @@ impl LocalConfigFile<Tracked> {
     ///   fails.
     pub(crate) fn verify_trust(
         self,
-        state: &ConfigPathTracker,
+        state: &ConfigService,
     ) -> Result<TrustOutcome, ConfigFileError> {
         let root = self.root().to_path_buf();
         let path = self.path().to_path_buf();
@@ -400,7 +400,7 @@ mod tests {
         #[test]
         fn transitions_to_tracked_state() {
             let temp = tempfile::tempdir().expect("temp");
-            let state = ConfigPathTracker::at(
+            let state = ConfigService::at(
                 temp.path().join("tracked"),
                 temp.path().join("trust"),
             );
@@ -420,7 +420,7 @@ mod tests {
         #[test]
         fn records_seen_config_in_store() {
             let temp = tempfile::tempdir().expect("temp");
-            let state = ConfigPathTracker::at(
+            let state = ConfigService::at(
                 temp.path().join("tracked"),
                 temp.path().join("trust"),
             );
@@ -459,13 +459,13 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(&path, "").unwrap();
 
-            let state = ConfigPathTracker::at(
+            let state = ConfigService::at(
                 temp.path().join("tracked"),
                 temp.path().join("trust"),
             );
             let file = LocalConfigFile::<Discovered>::try_new(path).unwrap();
             let tracked = file.into_tracked(&state);
-            state.grant_trust(&TrustRequest::from(&tracked)).unwrap();
+            state.trust(&TrustRequest::from(&tracked)).unwrap();
 
             let result = tracked.verify_trust(&state);
             assert!(matches!(result, Ok(TrustOutcome::Trusted(_))));
@@ -479,7 +479,7 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(&path, "").unwrap();
 
-            let state = ConfigPathTracker::at(
+            let state = ConfigService::at(
                 temp.path().join("tracked"),
                 temp.path().join("trust"),
             );
@@ -502,7 +502,7 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(&path, "").unwrap();
 
-            let state = ConfigPathTracker::at(
+            let state = ConfigService::at(
                 temp.path().join("tracked"),
                 temp.path().join("trust"),
             );
@@ -511,7 +511,7 @@ mod tests {
 
             // Grant trust to the WORKSPACE, which creates no baseline config
             // hash.
-            state.grant_trust(&TrustRequest::from(root.as_path())).unwrap();
+            state.trust(&TrustRequest::from(root.as_path())).unwrap();
 
             let result = tracked.verify_trust(&state);
             assert!(matches!(
@@ -528,7 +528,7 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(&path, "old").unwrap();
 
-            let state = ConfigPathTracker::at(
+            let state = ConfigService::at(
                 temp.path().join("tracked"),
                 temp.path().join("trust"),
             );
@@ -536,7 +536,7 @@ mod tests {
                 LocalConfigFile::<Discovered>::try_new(path.clone()).unwrap();
             let tracked = file.into_tracked(&state);
 
-            state.grant_trust(&TrustRequest::from(&tracked)).unwrap();
+            state.trust(&TrustRequest::from(&tracked)).unwrap();
 
             // Modify file after trust
             std::fs::write(&path, "new").unwrap();
@@ -556,7 +556,7 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(&path, "").unwrap();
 
-            let state = ConfigPathTracker::at(
+            let state = ConfigService::at(
                 temp.path().join("tracked"),
                 temp.path().join("trust"),
             );
@@ -565,7 +565,7 @@ mod tests {
             let tracked = file.into_tracked(&state);
 
             // Grant trust so the companion file exists.
-            state.grant_trust(&TrustRequest::from(&tracked)).unwrap();
+            state.trust(&TrustRequest::from(&tracked)).unwrap();
 
             // Delete the config file so hashing it fails with an I/O error.
             std::fs::remove_file(&path).unwrap();
@@ -615,13 +615,13 @@ mod tests {
         }
 
         #[test]
-        fn returns_parse_error_on_missing_file() {
+        fn read_reports_io_error_not_parse_error_for_unreadable_path() {
             let temp = tempfile::tempdir().unwrap();
-            let path = temp.path().join("missing.toml");
+            let path = temp.path().join("missing_parent/config.toml");
 
             let result = Parsed::read(&path);
 
-            assert!(matches!(result, Err(ConfigFileError::Parse { .. })));
+            assert!(matches!(result, Err(ConfigFileError::Io { .. })));
         }
     }
 
