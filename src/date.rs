@@ -44,246 +44,6 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::duration::{DurationUnit, DurationValue};
 
-/// [`DateValue`]'s canonical output format: `2026-07-29`.
-pub(crate) const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%d";
-
-/// [`DateTimeValue`]'s canonical output format: `2026-07-29T14:30:00`.
-pub(crate) const DEFAULT_DATETIME_FORMAT: &str = "%Y-%m-%dT%H:%M:%S";
-
-/// Recognized date input format shapes tried in order by
-/// [`DateValue::parse_iso`].
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) enum DateFormat {
-    /// Full ISO date: `2026-07-29`.
-    Full,
-    /// Year-month reduced precision: `2026-07`. Day defaults to 1.
-    YearMonth,
-}
-
-impl DateFormat {
-    /// Formats tried in order by [`DateValue::parse_iso`].
-    pub(crate) const ALL: [Self; 2] = [Self::Full, Self::YearMonth];
-
-    /// Returns the strftime pattern for this format, or `None` for
-    /// [`Self::YearMonth`] which parses year and month components directly.
-    #[must_use]
-    pub(crate) const fn pattern(self) -> Option<&'static str> {
-        match self {
-            Self::Full => Some(DEFAULT_DATE_FORMAT),
-            Self::YearMonth => None,
-        }
-    }
-
-    /// Attempts to parse `s` according to this format.
-    ///
-    /// [`Self::YearMonth`] splits `"YYYY-MM"` itself (chrono's bare `%Y-%m`
-    /// needs a day, so it fails with `NotEnough`) and consults that pattern
-    /// only to obtain a [`chrono::ParseError`] for rejected input such as
-    /// `"2026-13"` or `"2026-7"`.
-    ///
-    /// # Errors
-    ///
-    /// - [`chrono::ParseError`] if `s` does not match this format's expected
-    ///   shape.
-    pub(crate) fn parse(
-        self,
-        s: &str,
-    ) -> Result<NaiveDate, chrono::ParseError> {
-        match self.pattern() {
-            Some(pat) => NaiveDate::parse_from_str(s, pat),
-            None => Self::parse_year_month(s)
-                .map_or_else(|| NaiveDate::parse_from_str(s, "%Y-%m"), Ok),
-        }
-    }
-
-    /// Parses `"YYYY-MM"`, defaulting the day to 1.
-    ///
-    /// Splits and parses both components directly, requiring exactly 4 year
-    /// digits and exactly 2 month digits (chrono's bare `%Y-%m` fails with
-    /// `NotEnough`).
-    fn parse_year_month(s: &str) -> Option<NaiveDate> {
-        let (year_str, month_str) = s.split_once('-')?;
-        if year_str.len() != 4 || month_str.len() != 2 {
-            return None;
-        }
-        let year: i32 = year_str.parse().ok()?;
-        let month: u32 = month_str.parse().ok()?;
-        NaiveDate::from_ymd_opt(year, month, 1)
-    }
-}
-
-/// Recognized date-time input format shapes tried in order by
-/// [`DateTimeValue::parse_iso`].
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) enum DateTimeFormat {
-    /// RFC 3339 format with offset: `2026-07-29T14:30:00Z`.
-    Rfc3339,
-    /// `T`-separated with fractional seconds: `2026-07-29T14:30:00.123`.
-    IsoTFractional,
-    /// `T`-separated with whole seconds: `2026-07-29T14:30:00`.
-    IsoTSeconds,
-    /// `T`-separated minute-only precision: `2026-07-29T14:30`.
-    IsoTMinute,
-    /// Space-separated with whole seconds: `2026-07-29 14:30:00`.
-    IsoSpaceSeconds,
-    /// Space-separated minute-only precision: `2026-07-29 14:30`.
-    IsoSpaceMinute,
-}
-
-impl DateTimeFormat {
-    /// Formats tried in order by [`DateTimeValue::parse_iso`] (most
-    /// specific/unambiguous first).
-    pub(crate) const ALL: [Self; 6] = [
-        Self::Rfc3339,
-        Self::IsoTFractional,
-        Self::IsoTSeconds,
-        Self::IsoTMinute,
-        Self::IsoSpaceSeconds,
-        Self::IsoSpaceMinute,
-    ];
-
-    /// Returns the strftime pattern for this format, or `None` for
-    /// [`Self::Rfc3339`] which uses dedicated RFC 3339 parsing.
-    #[must_use]
-    pub(crate) const fn pattern(self) -> Option<&'static str> {
-        match self {
-            Self::Rfc3339 => None,
-            Self::IsoTFractional => Some("%Y-%m-%dT%H:%M:%S%.f"),
-            Self::IsoTSeconds => Some("%Y-%m-%dT%H:%M:%S"),
-            Self::IsoTMinute => Some("%Y-%m-%dT%H:%M"),
-            Self::IsoSpaceSeconds => Some("%Y-%m-%d %H:%M:%S"),
-            Self::IsoSpaceMinute => Some("%Y-%m-%d %H:%M"),
-        }
-    }
-
-    /// Attempts to parse `s` according to this format's shape.
-    ///
-    /// Shape matching only: a naive input carries a UTC placeholder that
-    /// [`DateTimeValue::parse_iso`] resolves through [`local_naive_to_utc`]
-    /// after the cascade. The local zone is never consulted here.
-    ///
-    /// # Errors
-    ///
-    /// - [`chrono::ParseError`] if `s` does not match this format's expected
-    ///   shape.
-    pub(crate) fn parse(
-        self,
-        s: &str,
-    ) -> Result<DateTime<Utc>, chrono::ParseError> {
-        match self.pattern() {
-            None => {
-                DateTime::parse_from_rfc3339(s).map(|dt| dt.with_timezone(&Utc))
-            }
-            Some(pat) => NaiveDateTime::parse_from_str(s, pat)
-                .map(|naive| naive.and_utc()),
-        }
-    }
-}
-
-/// Resolves a naive local wall-clock datetime to a UTC instant under the
-/// crate's DST doctrine.
-///
-/// A wall-clock time written without a zone is read in the process's local
-/// zone and stored as UTC. Resolution never fails on a DST boundary:
-///
-/// - Ambiguous fall-back times resolve to their earliest occurrence;
-/// - Spring-forward gaps shift forward by the gap, matching Temporal's
-///   `'compatible'` disambiguation and jiff's [`Disambiguation::Compatible`].
-///
-/// Only a broken tz-data/OS lookup or an offset application outside
-/// `NaiveDateTime`'s range errors. On the `WebAssembly` target, chrono's
-/// `Local` reports every local time as unambiguous ([chrono#1701]), so the
-/// ambiguous arm is unreachable there.
-///
-/// # Errors
-///
-/// - [`DateError::LocalZoneLookup`] if the lookup finds no offset for `wall` or
-///   a probe (a broken tz-data/OS environment rather than a DST boundary), or
-///   if applying the resolved offset would leave `NaiveDateTime`'s range.
-///
-/// [`Disambiguation::Compatible`]:
-///     https://docs.rs/jiff/latest/jiff/tz/enum.Disambiguation.html
-/// [chrono#1701]: https://github.com/chronotope/chrono/issues/1701
-fn local_naive_to_utc(wall: NaiveDateTime) -> Result<DateTime<Utc>, DateError> {
-    let zone_lookup = || DateError::LocalZoneLookup {
-        input: wall.to_string().into(),
-    };
-    // The checked forms return `None` instead of panicking when the instant
-    // leaves `NaiveDateTime`'s range (impossible for the parsers' 4-digit-year
-    // inputs).
-    match Local.offset_from_local_datetime(&wall) {
-        MappedLocalTime::Single(offset) => {
-            let instant =
-                wall.checked_sub_offset(offset).ok_or_else(zone_lookup)?;
-            Ok(instant.and_utc())
-        }
-        MappedLocalTime::Ambiguous(a, b) => {
-            // `chrono` orders an ambiguous pair by offset (tzfile data) or
-            // transition side (POSIX rules); the earliest occurrence has the
-            // larger offset, since instant = wall - offset.
-            let earliest = if a.local_minus_utc() >= b.local_minus_utc() {
-                a
-            } else {
-                b
-            };
-            let instant =
-                wall.checked_sub_offset(earliest).ok_or_else(zone_lookup)?;
-            Ok(instant.and_utc())
-        }
-        MappedLocalTime::None => {
-            // A gap resolves `None` across the whole skipped span, so no
-            // probe inside it resolves; the pre-transition offset shifts the
-            // gap time forward by exactly the gap.
-            let offset = resolve_gap_offset(wall, &zone_lookup)?;
-            let instant =
-                wall.checked_sub_offset(offset).ok_or_else(zone_lookup)?;
-            Ok(instant.and_utc())
-        }
-    }
-}
-
-/// Finds the offset in effect just before a DST gap by stepping back one hour
-/// at a time from `wall` (the widest recorded gap is 24 hours).
-///
-/// # Errors
-///
-/// - [`DateError::LocalZoneLookup`] if no nearby local time resolves within the
-///   25-hour backward search (a broken tz-data/OS lookup rather than a gap), or
-///   if stepping the probe back would leave `NaiveDateTime`'s range.
-fn resolve_gap_offset(
-    wall: NaiveDateTime,
-    zone_lookup: &impl Fn() -> DateError,
-) -> Result<FixedOffset, DateError> {
-    let hour = TimeDelta::try_hours(1).ok_or_else(zone_lookup)?;
-    let mut probe = wall;
-    for _ in 0..25 {
-        probe = probe.checked_sub_signed(hour).ok_or_else(zone_lookup)?;
-        if let MappedLocalTime::Single(offset)
-        | MappedLocalTime::Ambiguous(offset, _) =
-            Local.offset_from_local_datetime(&probe)
-        {
-            return Ok(offset);
-        }
-    }
-    Err(zone_lookup())
-}
-
-/// Builds a [`TimeDelta`] from `part_secs`, splitting whole seconds from
-/// nanoseconds (the fraction rounded to the nearest nanosecond) and rejecting
-/// overflow of either component. The single whole/sub-second split for
-/// [`DateValue::apply_part`] and [`DateTimeValue::apply_part`].
-fn seconds_delta(part_secs: f64) -> Result<TimeDelta, DateError> {
-    let whole_secs = part_secs.trunc().to_i64().ok_or(DateError::OutOfRange)?;
-    let subsec_nanos = (part_secs.fract() * 1e9)
-        .round()
-        .to_i64()
-        .ok_or(DateError::OutOfRange)?;
-    TimeDelta::try_seconds(whole_secs)
-        .ok_or(DateError::OutOfRange)?
-        .checked_add(&TimeDelta::nanoseconds(subsec_nanos))
-        .ok_or(DateError::OutOfRange)
-}
-
 /// Parsed calendar date with no time-of-day component.
 ///
 /// Wraps [`NaiveDate`] as a newtype, enforcing ISO-8601 recognition. All
@@ -306,37 +66,6 @@ fn seconds_delta(part_secs: f64) -> Result<TimeDelta, DateError> {
 pub struct DateValue(NaiveDate);
 
 impl DateValue {
-    /// Returns `true` if `s`'s first four bytes are ASCII digits.
-    ///
-    /// Guards chrono's lenient `%Y`, which silently accepts a short year
-    /// (`"26-08-22"` parses as year 26 CE). What follows the digits is
-    /// deliberately unchecked: `"2026/08/22"` must reach the cascade and fail
-    /// as [`DateError::Unparseable`], not as [`DateError::InvalidYearDigits`].
-    #[must_use]
-    pub(crate) fn has_four_digit_year(s: &str) -> bool {
-        let bytes = s.as_bytes();
-        bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-    }
-
-    /// Returns `true` if `s`'s first 10 bytes have the shape `YYYY-MM-DD`
-    /// (digits and hyphens in the right positions).
-    ///
-    /// Non-allocating pre-check for note-parser call sites; it does not
-    /// validate calendar values (`"9999-99-99"` passes but fails the real
-    /// parse). [`DateValue::parse_iso`] is always authoritative.
-    #[must_use]
-    pub(crate) fn is_iso_shape(s: &str) -> bool {
-        let bytes = s.as_bytes();
-        bytes.len() >= 10
-            && bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-            && bytes.get(4) == Some(&b'-')
-            && bytes.get(5..7).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-            && bytes.get(7) == Some(&b'-')
-            && bytes
-                .get(8..10)
-                .is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-    }
-
     /// Parses an ISO-8601 date string (`YYYY-MM-DD` or `YYYY-MM`) using
     /// [`DateFormat::ALL`].
     ///
@@ -368,6 +97,37 @@ impl DateValue {
             input: trimmed.into(),
             source,
         })
+    }
+
+    /// Returns `true` if `s`'s first four bytes are ASCII digits.
+    ///
+    /// Guards chrono's lenient `%Y`, which silently accepts a short year
+    /// (`"26-08-22"` parses as year 26 CE). What follows the digits is
+    /// deliberately unchecked: `"2026/08/22"` must reach the cascade and fail
+    /// as [`DateError::Unparseable`], not as [`DateError::InvalidYearDigits`].
+    #[must_use]
+    pub(crate) fn has_four_digit_year(s: &str) -> bool {
+        let bytes = s.as_bytes();
+        bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+    }
+
+    /// Returns `true` if `s`'s first 10 bytes have the shape `YYYY-MM-DD`
+    /// (digits and hyphens in the right positions).
+    ///
+    /// Non-allocating pre-check for note-parser call sites; it does not
+    /// validate calendar values (`"9999-99-99"` passes but fails the real
+    /// parse). [`DateValue::parse_iso`] is always authoritative.
+    #[must_use]
+    pub(crate) fn is_iso_shape(s: &str) -> bool {
+        let bytes = s.as_bytes();
+        bytes.len() >= 10
+            && bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+            && bytes.get(4) == Some(&b'-')
+            && bytes.get(5..7).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+            && bytes.get(7) == Some(&b'-')
+            && bytes
+                .get(8..10)
+                .is_some_and(|b| b.iter().all(u8::is_ascii_digit))
     }
 
     /// Formats this date as `YYYY-MM-DD`.
@@ -532,6 +292,15 @@ impl From<NaiveDate> for DateValue {
     #[inline]
     fn from(date: NaiveDate) -> Self {
         Self(date)
+    }
+}
+
+impl From<SystemTime> for DateValue {
+    #[inline]
+    fn from(time: SystemTime) -> Self {
+        // A file's calendar date means the reader's local day (the same
+        // doctrine as `DateTimeValue::date`), not the UTC calendar day.
+        DateTimeValue::from(time).date()
     }
 }
 
@@ -942,15 +711,6 @@ impl From<SystemTime> for DateTimeValue {
     }
 }
 
-impl From<SystemTime> for DateValue {
-    #[inline]
-    fn from(time: SystemTime) -> Self {
-        // A file's calendar date means the reader's local day (the same
-        // doctrine as `DateTimeValue::date`), not the UTC calendar day.
-        DateTimeValue::from(time).date()
-    }
-}
-
 impl From<DateTime<Utc>> for DateTimeValue {
     #[inline]
     fn from(dt: DateTime<Utc>) -> Self {
@@ -1020,77 +780,140 @@ impl<'de> Deserialize<'de> for DateTimeValue {
     }
 }
 
-/// Error type for date/date-time parsing, local-zone resolution, and calendar
-/// arithmetic failures.
-///
-/// Raised by the crate-internal `parse_iso` parsers on [`DateValue`] and
-/// [`DateTimeValue`] and by the calendar owner's `shift`, `apply`, and `diff`
-/// operations; the template engine translates the arithmetic failures into
-/// render errors.
-///
-/// # Examples
-///
-/// ```rust
-/// use traces_pkm::{DateError, DateValue};
-///
-/// let err = "26-08-22".parse::<DateValue>().expect_err("short year");
-/// assert!(matches!(err, DateError::InvalidYearDigits { .. }));
-/// ```
-#[derive(Debug, Clone, Eq, PartialEq, thiserror::Error)]
-#[non_exhaustive]
-pub enum DateError {
-    /// No accepted date/time shape matched `input` (e.g., `"2026/08/22"`).
-    ///
-    /// Wraps the last-attempted format's [`chrono::ParseError`].
-    #[error("`{input}` is not a recognized date/time: {source}")]
-    Unparseable {
-        /// The raw input that failed to parse.
-        input: Box<str>,
-        /// The last-attempted format's underlying parse failure.
-        #[source]
-        source: chrono::ParseError,
-    },
-    /// `input` does not begin with 4 ASCII digits (e.g., `"26-08-22"`).
-    ///
-    /// The `chrono` `%Y` specifier accepts fewer digits, silently misreading
-    /// the year.
-    #[error("`{input}` does not have a 4-digit year")]
-    InvalidYearDigits {
-        /// The raw input that failed to parse.
-        input: Box<str>,
-    },
-    /// `pattern` is not a valid strftime specifier.
-    ///
-    /// No crate code path currently constructs this variant: date-format
-    /// rendering failures surface as template render errors instead.
-    #[error("`{pattern}` is not a valid format pattern")]
-    InvalidPattern {
-        /// The pattern that failed to render.
-        pattern: Box<str>,
-    },
-    /// The process's local timezone could not resolve a naive input, or the
-    /// resolved offset would push it outside `NaiveDateTime`'s range.
-    ///
-    /// DST ambiguities and gaps never produce this error; they resolve
-    /// deterministically.
-    #[error("local timezone lookup failed for `{input}`")]
-    LocalZoneLookup {
-        /// The naive wall-clock input that could not be resolved.
-        input: Box<str>,
-    },
-    /// A date/time arithmetic operation overflowed or exceeded the
-    /// representable range.
-    #[error("date/time value is out of range")]
-    OutOfRange,
+/// [`DateValue`]'s canonical output format: `2026-07-29`.
+pub(crate) const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%d";
+
+/// [`DateTimeValue`]'s canonical output format: `2026-07-29T14:30:00`.
+pub(crate) const DEFAULT_DATETIME_FORMAT: &str = "%Y-%m-%dT%H:%M:%S";
+
+/// Recognized date input format shapes tried in order by
+/// [`DateValue::parse_iso`].
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum DateFormat {
+    /// Full ISO date: `2026-07-29`.
+    Full,
+    /// Year-month reduced precision: `2026-07`. Day defaults to 1.
+    YearMonth,
 }
 
-/// Result of measuring the difference between two date/time points.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub(crate) enum DateDiff {
-    /// Whole units elapsed.
-    Whole(i64),
-    /// Exact fractional units elapsed.
-    Exact(f64),
+impl DateFormat {
+    /// Formats tried in order by [`DateValue::parse_iso`].
+    pub(crate) const ALL: [Self; 2] = [Self::Full, Self::YearMonth];
+
+    /// Returns the strftime pattern for this format, or `None` for
+    /// [`Self::YearMonth`] which parses year and month components directly.
+    #[must_use]
+    pub(crate) const fn pattern(self) -> Option<&'static str> {
+        match self {
+            Self::Full => Some(DEFAULT_DATE_FORMAT),
+            Self::YearMonth => None,
+        }
+    }
+
+    /// Attempts to parse `s` according to this format.
+    ///
+    /// [`Self::YearMonth`] splits `"YYYY-MM"` itself (chrono's bare `%Y-%m`
+    /// needs a day, so it fails with `NotEnough`) and consults that pattern
+    /// only to obtain a [`chrono::ParseError`] for rejected input such as
+    /// `"2026-13"` or `"2026-7"`.
+    ///
+    /// # Errors
+    ///
+    /// - [`chrono::ParseError`] if `s` does not match this format's expected
+    ///   shape.
+    pub(crate) fn parse(
+        self,
+        s: &str,
+    ) -> Result<NaiveDate, chrono::ParseError> {
+        match self.pattern() {
+            Some(pat) => NaiveDate::parse_from_str(s, pat),
+            None => Self::parse_year_month(s)
+                .map_or_else(|| NaiveDate::parse_from_str(s, "%Y-%m"), Ok),
+        }
+    }
+
+    /// Parses `"YYYY-MM"`, defaulting the day to 1.
+    ///
+    /// Splits and parses both components directly, requiring exactly 4 year
+    /// digits and exactly 2 month digits (chrono's bare `%Y-%m` fails with
+    /// `NotEnough`).
+    fn parse_year_month(s: &str) -> Option<NaiveDate> {
+        let (year_str, month_str) = s.split_once('-')?;
+        if year_str.len() != 4 || month_str.len() != 2 {
+            return None;
+        }
+        let year: i32 = year_str.parse().ok()?;
+        let month: u32 = month_str.parse().ok()?;
+        NaiveDate::from_ymd_opt(year, month, 1)
+    }
+}
+
+/// Recognized date-time input format shapes tried in order by
+/// [`DateTimeValue::parse_iso`].
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum DateTimeFormat {
+    /// RFC 3339 format with offset: `2026-07-29T14:30:00Z`.
+    Rfc3339,
+    /// `T`-separated with fractional seconds: `2026-07-29T14:30:00.123`.
+    IsoTFractional,
+    /// `T`-separated with whole seconds: `2026-07-29T14:30:00`.
+    IsoTSeconds,
+    /// `T`-separated minute-only precision: `2026-07-29T14:30`.
+    IsoTMinute,
+    /// Space-separated with whole seconds: `2026-07-29 14:30:00`.
+    IsoSpaceSeconds,
+    /// Space-separated minute-only precision: `2026-07-29 14:30`.
+    IsoSpaceMinute,
+}
+
+impl DateTimeFormat {
+    /// Formats tried in order by [`DateTimeValue::parse_iso`] (most
+    /// specific/unambiguous first).
+    pub(crate) const ALL: [Self; 6] = [
+        Self::Rfc3339,
+        Self::IsoTFractional,
+        Self::IsoTSeconds,
+        Self::IsoTMinute,
+        Self::IsoSpaceSeconds,
+        Self::IsoSpaceMinute,
+    ];
+
+    /// Returns the strftime pattern for this format, or `None` for
+    /// [`Self::Rfc3339`] which uses dedicated RFC 3339 parsing.
+    #[must_use]
+    pub(crate) const fn pattern(self) -> Option<&'static str> {
+        match self {
+            Self::Rfc3339 => None,
+            Self::IsoTFractional => Some("%Y-%m-%dT%H:%M:%S%.f"),
+            Self::IsoTSeconds => Some("%Y-%m-%dT%H:%M:%S"),
+            Self::IsoTMinute => Some("%Y-%m-%dT%H:%M"),
+            Self::IsoSpaceSeconds => Some("%Y-%m-%d %H:%M:%S"),
+            Self::IsoSpaceMinute => Some("%Y-%m-%d %H:%M"),
+        }
+    }
+
+    /// Attempts to parse `s` according to this format's shape.
+    ///
+    /// Shape matching only: a naive input carries a UTC placeholder that
+    /// [`DateTimeValue::parse_iso`] resolves through [`local_naive_to_utc`]
+    /// after the cascade. The local zone is never consulted here.
+    ///
+    /// # Errors
+    ///
+    /// - [`chrono::ParseError`] if `s` does not match this format's expected
+    ///   shape.
+    pub(crate) fn parse(
+        self,
+        s: &str,
+    ) -> Result<DateTime<Utc>, chrono::ParseError> {
+        match self.pattern() {
+            None => {
+                DateTime::parse_from_rfc3339(s).map(|dt| dt.with_timezone(&Utc))
+            }
+            Some(pat) => NaiveDateTime::parse_from_str(s, pat)
+                .map(|naive| naive.and_utc()),
+        }
+    }
 }
 
 /// A point in time carrying both civil wall clock and UTC instant, plus whether
@@ -1190,6 +1013,119 @@ impl DatePoint {
             }
         }
     }
+}
+
+/// Result of measuring the difference between two date/time points.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub(crate) enum DateDiff {
+    /// Whole units elapsed.
+    Whole(i64),
+    /// Exact fractional units elapsed.
+    Exact(f64),
+}
+
+/// Resolves a naive local wall-clock datetime to a UTC instant under the
+/// crate's DST doctrine.
+///
+/// A wall-clock time written without a zone is read in the process's local
+/// zone and stored as UTC. Resolution never fails on a DST boundary:
+///
+/// - Ambiguous fall-back times resolve to their earliest occurrence;
+/// - Spring-forward gaps shift forward by the gap, matching Temporal's
+///   `'compatible'` disambiguation and jiff's [`Disambiguation::Compatible`].
+///
+/// Only a broken tz-data/OS lookup or an offset application outside
+/// `NaiveDateTime`'s range errors. On the `WebAssembly` target, chrono's
+/// `Local` reports every local time as unambiguous ([chrono#1701]), so the
+/// ambiguous arm is unreachable there.
+///
+/// # Errors
+///
+/// - [`DateError::LocalZoneLookup`] if the lookup finds no offset for `wall` or
+///   a probe (a broken tz-data/OS environment rather than a DST boundary), or
+///   if applying the resolved offset would leave `NaiveDateTime`'s range.
+///
+/// [`Disambiguation::Compatible`]:
+///     https://docs.rs/jiff/latest/jiff/tz/enum.Disambiguation.html
+/// [chrono#1701]: https://github.com/chronotope/chrono/issues/1701
+fn local_naive_to_utc(wall: NaiveDateTime) -> Result<DateTime<Utc>, DateError> {
+    let zone_lookup = || DateError::LocalZoneLookup {
+        input: wall.to_string().into(),
+    };
+    // The checked forms return `None` instead of panicking when the instant
+    // leaves `NaiveDateTime`'s range (impossible for the parsers' 4-digit-year
+    // inputs).
+    match Local.offset_from_local_datetime(&wall) {
+        MappedLocalTime::Single(offset) => {
+            let instant =
+                wall.checked_sub_offset(offset).ok_or_else(zone_lookup)?;
+            Ok(instant.and_utc())
+        }
+        MappedLocalTime::Ambiguous(a, b) => {
+            // `chrono` orders an ambiguous pair by offset (tzfile data) or
+            // transition side (POSIX rules); the earliest occurrence has the
+            // larger offset, since instant = wall - offset.
+            let earliest = if a.local_minus_utc() >= b.local_minus_utc() {
+                a
+            } else {
+                b
+            };
+            let instant =
+                wall.checked_sub_offset(earliest).ok_or_else(zone_lookup)?;
+            Ok(instant.and_utc())
+        }
+        MappedLocalTime::None => {
+            // A gap resolves `None` across the whole skipped span, so no
+            // probe inside it resolves; the pre-transition offset shifts the
+            // gap time forward by exactly the gap.
+            let offset = resolve_gap_offset(wall, &zone_lookup)?;
+            let instant =
+                wall.checked_sub_offset(offset).ok_or_else(zone_lookup)?;
+            Ok(instant.and_utc())
+        }
+    }
+}
+
+/// Finds the offset in effect just before a DST gap by stepping back one hour
+/// at a time from `wall` (the widest recorded gap is 24 hours).
+///
+/// # Errors
+///
+/// - [`DateError::LocalZoneLookup`] if no nearby local time resolves within the
+///   25-hour backward search (a broken tz-data/OS lookup rather than a gap), or
+///   if stepping the probe back would leave `NaiveDateTime`'s range.
+fn resolve_gap_offset(
+    wall: NaiveDateTime,
+    zone_lookup: &impl Fn() -> DateError,
+) -> Result<FixedOffset, DateError> {
+    let hour = TimeDelta::try_hours(1).ok_or_else(zone_lookup)?;
+    let mut probe = wall;
+    for _ in 0..25 {
+        probe = probe.checked_sub_signed(hour).ok_or_else(zone_lookup)?;
+        if let MappedLocalTime::Single(offset)
+        | MappedLocalTime::Ambiguous(offset, _) =
+            Local.offset_from_local_datetime(&probe)
+        {
+            return Ok(offset);
+        }
+    }
+    Err(zone_lookup())
+}
+
+/// Builds a [`TimeDelta`] from `part_secs`, splitting whole seconds from
+/// nanoseconds (the fraction rounded to the nearest nanosecond) and rejecting
+/// overflow of either component. The single whole/sub-second split for
+/// [`DateValue::apply_part`] and [`DateTimeValue::apply_part`].
+fn seconds_delta(part_secs: f64) -> Result<TimeDelta, DateError> {
+    let whole_secs = part_secs.trunc().to_i64().ok_or(DateError::OutOfRange)?;
+    let subsec_nanos = (part_secs.fract() * 1e9)
+        .round()
+        .to_i64()
+        .ok_or(DateError::OutOfRange)?;
+    TimeDelta::try_seconds(whole_secs)
+        .ok_or(DateError::OutOfRange)?
+        .checked_add(&TimeDelta::nanoseconds(subsec_nanos))
+        .ok_or(DateError::OutOfRange)
 }
 
 /// Shifts a civil wall-clock datetime by `n` `unit`s.
@@ -1329,6 +1265,70 @@ fn signed_months_since(from: NaiveDate, to: NaiveDate) -> i64 {
             - i64::from(earlier.month())
             - i64::from(later.day() < earlier.day()));
     result
+}
+
+/// Error type for date/date-time parsing, local-zone resolution, and calendar
+/// arithmetic failures.
+///
+/// Raised by the crate-internal `parse_iso` parsers on [`DateValue`] and
+/// [`DateTimeValue`] and by the calendar owner's `shift`, `apply`, and `diff`
+/// operations; the template engine translates the arithmetic failures into
+/// render errors.
+///
+/// # Examples
+///
+/// ```rust
+/// use traces_pkm::{DateError, DateValue};
+///
+/// let err = "26-08-22".parse::<DateValue>().expect_err("short year");
+/// assert!(matches!(err, DateError::InvalidYearDigits { .. }));
+/// ```
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[non_exhaustive]
+pub enum DateError {
+    /// No accepted date/time shape matched `input` (e.g., `"2026/08/22"`).
+    ///
+    /// Wraps the last-attempted format's [`chrono::ParseError`].
+    #[error("`{input}` is not a recognized date/time: {source}")]
+    Unparseable {
+        /// The raw input that failed to parse.
+        input: Box<str>,
+        /// The last-attempted format's underlying parse failure.
+        #[source]
+        source: chrono::ParseError,
+    },
+    /// `input` does not begin with 4 ASCII digits (e.g., `"26-08-22"`).
+    ///
+    /// The `chrono` `%Y` specifier accepts fewer digits, silently misreading
+    /// the year.
+    #[error("`{input}` does not have a 4-digit year")]
+    InvalidYearDigits {
+        /// The raw input that failed to parse.
+        input: Box<str>,
+    },
+    /// `pattern` is not a valid strftime specifier.
+    ///
+    /// No crate code path currently constructs this variant: date-format
+    /// rendering failures surface as template render errors instead.
+    #[error("`{pattern}` is not a valid format pattern")]
+    InvalidPattern {
+        /// The pattern that failed to render.
+        pattern: Box<str>,
+    },
+    /// The process's local timezone could not resolve a naive input, or the
+    /// resolved offset would push it outside `NaiveDateTime`'s range.
+    ///
+    /// DST ambiguities and gaps never produce this error; they resolve
+    /// deterministically.
+    #[error("local timezone lookup failed for `{input}`")]
+    LocalZoneLookup {
+        /// The naive wall-clock input that could not be resolved.
+        input: Box<str>,
+    },
+    /// A date/time arithmetic operation overflowed or exceeded the
+    /// representable range.
+    #[error("date/time value is out of range")]
+    OutOfRange,
 }
 
 #[cfg(test)]

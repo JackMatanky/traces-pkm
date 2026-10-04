@@ -6,11 +6,11 @@
 //!
 //! # Key types
 //!
-//! - [`DurationUnit`] - Unit registry (parsing and seconds conversion). Single
-//!   source of truth; callers should not maintain their own registries.
 //! - [`DurationValue`] - A parsed duration carrying its total seconds, its
 //!   original spelling, and its retained written parts (which witness the
 //!   calendar-versus-fixed regime).
+//! - [`DurationUnit`] - Unit registry (parsing and seconds conversion). Single
+//!   source of truth; callers should not maintain their own registries.
 //! - [`DurationSeconds`] - An `f64` newtype that is finite on construction,
 //!   with [`Ord`], [`Add`], [`Sub`], and [`Mul`].
 //! - [`DurationError`] - Error type for parse and conversion failures.
@@ -27,9 +27,6 @@ use std::{
 use chrono::TimeDelta;
 use num_traits::ToPrimitive as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-/// Retained duration components in written left-to-right order.
-type DurationParts = Box<[(f64, DurationUnit)]>;
 
 /// A validated duration expression with its total seconds and original source
 /// spelling.
@@ -78,39 +75,6 @@ impl DurationValue {
         (DurationUnit::Second, "s"),
         (DurationUnit::Millisecond, "ms"),
     ];
-
-    /// Scans one `<number><unit>` part starting at `pos`, returning the
-    /// magnitude, unit, and end offset.
-    ///
-    /// Shared per-part mechanism of [`Self::parse`] and [`Self::parse_prefix`];
-    /// the loops keep their own continuation, sign, and termination policies.
-    fn scan_part(
-        bytes: &[u8],
-        pos: usize,
-        input: &str,
-    ) -> Result<(f64, DurationUnit, usize), DurationError> {
-        let (number, after_number) = Self::parse_number(bytes, pos, input)?;
-        let mut cursor = after_number;
-        Self::skip_whitespace(bytes, &mut cursor);
-        let (unit, after_unit) = Self::parse_unit(bytes, cursor, input)?;
-        Ok((number, unit, after_unit))
-    }
-
-    /// Negates every magnitude in `parts` when `is_negative` is `true`.
-    ///
-    /// Both parse loops end with this fold: only the first part's sign
-    /// applies, so the retained magnitudes are non-negative until this point
-    /// (a later part may repeat a redundant `+` but never an explicit `-`).
-    fn apply_sign(parts: &mut [(f64, DurationUnit)], is_negative: bool) {
-        let sign = if is_negative {
-            -1.0
-        } else {
-            1.0
-        };
-        for (mag, _) in parts {
-            *mag *= sign;
-        }
-    }
 
     /// Parses a duration spelling (e.g., `"1h 30m"`, `"4 hrs"`).
     ///
@@ -265,6 +229,53 @@ impl DurationValue {
         ))
     }
 
+    /// Scans one `<number><unit>` part starting at `pos`, returning the
+    /// magnitude, unit, and end offset.
+    ///
+    /// Shared per-part mechanism of [`Self::parse`] and [`Self::parse_prefix`];
+    /// the loops keep their own continuation, sign, and termination policies.
+    fn scan_part(
+        bytes: &[u8],
+        pos: usize,
+        input: &str,
+    ) -> Result<(f64, DurationUnit, usize), DurationError> {
+        let (number, after_number) = Self::parse_number(bytes, pos, input)?;
+        let mut cursor = after_number;
+        Self::skip_whitespace(bytes, &mut cursor);
+        let (unit, after_unit) = Self::parse_unit(bytes, cursor, input)?;
+        Ok((number, unit, after_unit))
+    }
+
+    /// Negates every magnitude in `parts` when `is_negative` is `true`.
+    ///
+    /// Both parse loops end with this fold: only the first part's sign
+    /// applies, so the retained magnitudes are non-negative until this point
+    /// (a later part may repeat a redundant `+` but never an explicit `-`).
+    fn apply_sign(parts: &mut [(f64, DurationUnit)], is_negative: bool) {
+        let sign = if is_negative {
+            -1.0
+        } else {
+            1.0
+        };
+        for (mag, _) in parts {
+            *mag *= sign;
+        }
+    }
+
+    /// Folds duration parts in left-to-right order to compute total seconds.
+    #[inline]
+    #[expect(
+        clippy::suboptimal_flops,
+        reason = "mul_add fuses to a single rounding step and would silently \
+                  change user-visible Duration floats that tests pin with \
+                  exact equality; not a hot path"
+    )]
+    fn fold_parts(parts: &[(f64, DurationUnit)]) -> f64 {
+        parts.iter().fold(0.0f64, |acc, &(magnitude, unit)| {
+            acc + magnitude * unit.fixed_seconds()
+        })
+    }
+
     /// Synthesizes a canonical [`DurationValue`] from a [`DurationSeconds`]
     /// value.
     ///
@@ -399,20 +410,6 @@ impl DurationValue {
                 | DurationUnit::Minute
                 | DurationUnit::Hour => false,
             })
-        })
-    }
-
-    /// Folds duration parts in left-to-right order to compute total seconds.
-    #[inline]
-    #[expect(
-        clippy::suboptimal_flops,
-        reason = "mul_add fuses to a single rounding step and would silently \
-                  change user-visible Duration floats that tests pin with \
-                  exact equality; not a hot path"
-    )]
-    fn fold_parts(parts: &[(f64, DurationUnit)]) -> f64 {
-        parts.iter().fold(0.0f64, |acc, &(magnitude, unit)| {
-            acc + magnitude * unit.fixed_seconds()
         })
     }
 
@@ -643,6 +640,55 @@ impl DurationValue {
         })?;
         Ok((kind, end))
     }
+
+    /// Combines `rhs` with `self`, negating `rhs`'s parts (and seconds, in the
+    /// fixed regime) when `negate_rhs` is `true`; the single implementation
+    /// behind [`Add`] and [`Sub`].
+    ///
+    /// - Both operands [`Some`]: parts concatenate left-to-right and one fold
+    ///   over the combined parts preserves the bit-exact Σ invariant by
+    ///   construction.
+    /// - Either operand [`None`]: seconds add or subtract directly and the
+    ///   result carries `None` (fixed regime).
+    ///
+    /// Negative zero normalizes to positive zero.
+    fn combine(self, rhs: Self, negate_rhs: bool) -> Self {
+        if let (Some(lhs_parts), Some(rhs_parts)) = (self.parts, rhs.parts) {
+            let mut combined = Vec::with_capacity(
+                lhs_parts.len().saturating_add(rhs_parts.len()),
+            );
+            combined.extend_from_slice(&lhs_parts);
+            if negate_rhs {
+                combined
+                    .extend(rhs_parts.iter().map(|&(mag, unit)| (-mag, unit)));
+            } else {
+                combined.extend_from_slice(&rhs_parts);
+            }
+            let fold_total = Self::fold_parts(&combined);
+            let seconds = DurationSeconds::normalized(fold_total);
+            Self {
+                raw: Self::canonical_raw(seconds),
+                seconds,
+                parts: Some(combined.into_boxed_slice()),
+            }
+        } else {
+            #[expect(
+                clippy::arithmetic_side_effects,
+                reason = "duration arithmetic preserves total_cmp ordering \
+                          and handles overflow without panicking"
+            )]
+            let seconds = if negate_rhs {
+                self.seconds - rhs.seconds
+            } else {
+                self.seconds + rhs.seconds
+            };
+            Self {
+                raw: Self::canonical_raw(seconds),
+                seconds,
+                parts: None,
+            }
+        }
+    }
 }
 
 impl FromStr for DurationValue {
@@ -728,57 +774,6 @@ impl Sub for DurationValue {
     }
 }
 
-impl DurationValue {
-    /// Combines `rhs` with `self`, negating `rhs`'s parts (and seconds, in the
-    /// fixed regime) when `negate_rhs` is `true`; the single implementation
-    /// behind [`Add`] and [`Sub`].
-    ///
-    /// - Both operands [`Some`]: parts concatenate left-to-right and one fold
-    ///   over the combined parts preserves the bit-exact Σ invariant by
-    ///   construction.
-    /// - Either operand [`None`]: seconds add or subtract directly and the
-    ///   result carries `None` (fixed regime).
-    ///
-    /// Negative zero normalizes to positive zero.
-    fn combine(self, rhs: Self, negate_rhs: bool) -> Self {
-        if let (Some(lhs_parts), Some(rhs_parts)) = (self.parts, rhs.parts) {
-            let mut combined = Vec::with_capacity(
-                lhs_parts.len().saturating_add(rhs_parts.len()),
-            );
-            combined.extend_from_slice(&lhs_parts);
-            if negate_rhs {
-                combined
-                    .extend(rhs_parts.iter().map(|&(mag, unit)| (-mag, unit)));
-            } else {
-                combined.extend_from_slice(&rhs_parts);
-            }
-            let fold_total = Self::fold_parts(&combined);
-            let seconds = DurationSeconds::normalized(fold_total);
-            Self {
-                raw: Self::canonical_raw(seconds),
-                seconds,
-                parts: Some(combined.into_boxed_slice()),
-            }
-        } else {
-            #[expect(
-                clippy::arithmetic_side_effects,
-                reason = "duration arithmetic preserves total_cmp ordering \
-                          and handles overflow without panicking"
-            )]
-            let seconds = if negate_rhs {
-                self.seconds - rhs.seconds
-            } else {
-                self.seconds + rhs.seconds
-            };
-            Self {
-                raw: Self::canonical_raw(seconds),
-                seconds,
-                parts: None,
-            }
-        }
-    }
-}
-
 /// Scales a duration by a scalar factor.
 ///
 /// With retained parts ([`Some`]), each part's magnitude scales by `rhs` and
@@ -854,12 +849,15 @@ impl<'de> Deserialize<'de> for DurationValue {
     }
 }
 
+/// Retained duration components in written left-to-right order.
+type DurationParts = Box<[(f64, DurationUnit)]>;
+
 /// A recognized duration unit.
 ///
 /// Single source of truth for unit parsing and seconds conversion. Match on
 /// [`DurationUnit`] directly for type-safe dispatch rather than converting to
 /// strings.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum DurationUnit {
     /// Thousandths of a second (`"ms"`, `"millisecond(s)"`).
     Millisecond,
@@ -1008,14 +1006,6 @@ static UNIT_MAP: phf::Map<&'static str, DurationUnit> = phf::phf_map! {
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct DurationSeconds(pub(crate) f64);
 
-/// At or above this magnitude, [`DurationSeconds`]'s [`Display`](fmt::Display)
-/// switches to scientific notation.
-const DISPLAY_EXPONENT_UPPER: f64 = 1e15;
-
-/// Below this magnitude (excluding exact zero), [`DurationSeconds`]'s
-/// [`Display`](fmt::Display) switches to scientific notation.
-const DISPLAY_EXPONENT_LOWER: f64 = 1e-6;
-
 impl DurationSeconds {
     /// Constructs from a raw `f64`, normalizing a signed zero to positive zero
     /// so the type's invariant (see the type docs) holds everywhere, not just
@@ -1089,6 +1079,14 @@ impl Ord for DurationSeconds {
         self.0.total_cmp(&other.0)
     }
 }
+
+/// At or above this magnitude, [`DurationSeconds`]'s [`Display`](fmt::Display)
+/// switches to scientific notation.
+const DISPLAY_EXPONENT_UPPER: f64 = 1e15;
+
+/// Below this magnitude (excluding exact zero), [`DurationSeconds`]'s
+/// [`Display`](fmt::Display) switches to scientific notation.
+const DISPLAY_EXPONENT_LOWER: f64 = 1e-6;
 
 /// Renders in scientific notation once the magnitude reaches or clears
 /// [`DISPLAY_EXPONENT_UPPER`] or falls below [`DISPLAY_EXPONENT_LOWER`] (exact
@@ -1170,7 +1168,7 @@ impl Mul<DurationSeconds> for f64 {
 /// let err = "".parse::<DurationValue>().expect_err("empty input");
 /// assert!(matches!(err, DurationError::Empty));
 /// ```
-#[derive(Debug, Clone, thiserror::Error)]
+#[derive(Clone, Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum DurationError {
     /// Input is empty or contains only separators.
