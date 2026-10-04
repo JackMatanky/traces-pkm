@@ -469,3 +469,77 @@ Measurement gaps registered: no LSP handler bench exists anywhere; criterion giv
 - **Triggers**: structural `[` (seam 24) + Invoked fallback + `TriggerForIncompleteCompletions` re-requests; **no space trigger — strongly supported** (LSP #1413 "bad idea… a LOT of pointless requests", Sublime #3001, volar #114); no server polling per keystroke (Neovim #32266); avoid `completionItem/resolve` storms (Godot #69914).
 
 **ALIGNED Round-1 positions** (confirmed): no unmarked/removal item in completion (Org picker precedent → 27 code action); status changes stay commands; structural gating never bare `[`; `sort_text` = config order (product requirement); preselect top; token-based suppression; don't build recurrence/ids.
+
+---
+
+## XIV. Adversarial stress-test consolidation (four independent passes)
+
+Four subagents stress-tested the pending Round-2 recommendations against source, criterion data, the tracker, and peers. No whole recommendation falls; the set is **REVISE before lock**. Verdict legend: STANDS / STRENGTHEN / REVISE / FALL (as worded).
+
+### XIV.1 Symbols (R-S1 outline, R-S2 picker)
+
+**R-S1 documentSymbol S3 → REVISE** (shape right; 4 of 6 factual claims wrong as written):
+
+- **C-1 blocking: filter-to-Task-then-depth mis-nests.** `descendants_of` is `take_while(depth > parent_depth)` (`src/note/lists.rs:643`); with fixture `- [ ] T1` / `- Group` (Plain) / `  - [x] T2`, task-filtering attaches T2 to T1 (real ancestor is Group). Real fixture exists: `lists.rs:649`. **Required:** single pass over `note.lists()` with an ancestor stack; each Task attaches to nearest *Task* ancestor else root; Plain intermediates traversed, not emitted. Never `Note::tasks()` + depth.
+- **C-2 blocking wording: no end-line field exists** (`ListItem` struct `lists.rs:40-49`); `raw_text` newline-counting is unsound (block children spliced: `parser.rs:995-1000`). **Required ranges:** leaf `(line,0)..(line+1,0)`; parent `(parent.line,0)..(last_descendant.line+1,0)` — last descendant **start** line + 1; half-open; assert `selection_range ⊆ range` per node; equal-line degenerate (`- - foo`) yields duplicate identical symbols — pin with a test.
+- **C-3 blocking: rollup is a `bool`, not counts** (`fully_complete: bool`, `lists.rs:347-352`; `SubTaskCompletion::{AllComplete,HasIncomplete}`, `parser/task.rs:242-248`). **`3/5` not precomputed.** detail v1 = status name + priority + complete/incomplete + single due ISO; counts = v2 priced as one reverse pass (never per-symbol `Note::descendants` = O(n·depth)).
+- **C-4 blocking wording: "nearest due" doesn't exist** — fixed 6-slot struct, one Due slot, first-wins (`src/task.rs:468-495`). Reword to "the single `Due` slot, ISO".
+- **C-5 blocking factual: SymbolKind numbers wrong** — `STRING=15, NUMBER=16, ARRAY=18` (lsp-types 0.97 `lib.rs:1140-1142`); guaranteed floor is kinds 1–18 (`:1158-1166`) so Array(18) is safe at the floor. Correct rationale: headings must be String(15) (rumdl precedent) so tasks=Array keeps them **independently hideable** via `outline.showArrays` (default true, language-overridable). Records a 23↔27 kind dependency. Also: VS Code renders `detail` unconditionally, no off-switch — 64ch cap is self-imposed.
+- **C-6: `detail` lost entirely on flat `SymbolInformation` fallback** (no detail field, `document_symbols.rs:110-121`) — 29's minimum-viable-client degradation, must be stated.
+- **C-7 blocking wording: name must come from `clean_text()`** (raw includes emoji metadata); empty-clean reachable (`- [ ] 📅 2025-01-15`) → `"(untitled)"`-family fallback (rumdl precedent `:71526`).
+- **C-8: no per-file node cap** — specify 1,000 soft / 5,000 hard + post-cap behavior (33's cap is 10,000 *lines*, not nodes).
+- **C-9 blocking: serving source must be 14's `ContentResolver` + request-start `Arc<WorkspaceIndex>` snapshot** — raw `WorkspaceIndex` read violates `map.md:22` (unsaved buffers). Staleness = 14's 150ms debounce.
+- **C-10: selectionRange** char 0→1 is one UTF-16 unit — astral first char mid-surrogate; state explicitly, accept clamping.
+- **C-11 structural: ownership grab** — range-precision policy is 11/41's; provider coexistence (VS Code group-per-provider → Marksman's IsVSCode suppression) owned by nobody → assign 27/29 *before* any symbol shape locks; 27:10/27:12 collide with 23's claim → surface in grilling.
+
+**R-S2 workspace/symbol picker → STRENGTHEN** (conditions correct, under-claimed):
+
+- Conditions verified: (a) 33's resident tier omits tasks (`issues/33:81`); ASTs → 256-entry LRU (`:79`). Precision: today's `assemble` keeps all ASTs resident — (a) guards a *future* plan. 33 resolved → needs `Amends 33`. (b) the ~10ms row is **unsourced** — no workspace/symbol row exists in 33; the 0.665/1.77/18.08ms figures cite benches that measure the *query layer* (`benches/query_execution.rs:121,288`), which R-S2 proposes not to use → relabel **"proposed row, number unfilled"**, derive + state mean→p95 factor. (c) cap+ranking → 27/29.
+- Query-layer rejection strengthened: `matched_file_rows` linear scan (`query/service.rs:305-316`; map citation `:132-139` is **stale**), `QueryRow` carries `Arc<WorkspaceIndex>` per row; decisive — **reuse sentence must appear verbatim**: walk reads `note.lists()`/`Note::tasks()`/`is_task()`/`clean_text()`; bypasses QueryService only to avoid row materialization, not to build a parallel model.
+- **S-3 blocking: `resolveSupport` client capability unverified** (only server-side Marksman registration in corpus); specify **full-`Location` fallback** when absent → input to 29, not 23's decision.
+- **S-4 blocking: 128 cap is shared in reality** (tags 16 + headings 27 + tasks 23 in one response); 16's own SymbolKind unresolved (`issues/16:57`); containerName/naming conventions are 16's → agree one kind policy + one container convention across 16/23/27.
+- **S-5 strongest support: no cancellation exists** — `concurrency_level(1)` disables `$/cancelRequest` (`issues/12:30`), no cooperative cancel (`:36-38`), no `$/progress` (`:48-59`) → walk cannot be stopped; cap 128 + resident precondition are **hard requirements**, rust-analyzer 50s incident as tail risk.
+- S-6: snapshot + overlay via 14's ContentResolver (map.md:22).
+- S-7: real symbol is `IndexerService::load()` (`src/index/service.rs:316`), not `WorkspaceIndex__load`.
+- No `detail` on `WorkspaceSymbol` — R-S1 detail work doesn't transfer to quick pick.
+
+### XIV.2 Diagnostics (R-D1 set, R-D2 delivery)
+
+**Overall: neither falls — two load-bearing existence claims verified** (invalid-date glyph survives in raw `task.rs:451,1247-1256`; rejected markers flush verbatim `marker.rs:369-386`, `task.rs:628-637`) — but paths/scopes need rewrites:
+
+- **Code spans are not on the AST** — `ItemBuffers.code_spans` parse-local; naive raw scan false-positives on `` `📅 …` ``. **Specify code exclusion** (re-derive backticks on raw, or source-line path via 14). Vault calibration: 0 hits in `docs/vault` — doesn't justify default-off, just must be written.
+- **D1/D2 path re-scoping:** only Plain items, first line of raw; rejected markers never stripped (hypothesis fails); link exclusion is *vacuous on raw path* (brackets never reach raw) but *mandatory on source-line path* — declare which path; markup FP (`**[] foo**` → raw `"[] foo"`) needs markup awareness or source-line.
+- **B3 revise: conflicting-duplicates only** (equal belt-and-braces harmless under first-wins); detectable from raw or `fields[key].len()>1`, not TaskListItem; **add B1-suppresses-B3 precedence** (same glyph pair fires both, `task.rs:1247`).
+- **B4 DROP** — its definition (R9 bundle) is unrecoverable in-repo; every reading collides with B1/B2/B6 or is intentional → re-route to hover.
+- **C1/C2: `DateValue::today()` does not exist** (`date.rs:556-559` only `DateTimeValue::now`) → register as input to 18/src/date.rs; local-vs-UTC undecided; **exclude Done AND Cancelled** (`completed()` maps Cancelled→None, `task.rs:303-321` — spurious fires).
+- **C6 revise:** Done parents only; Checkbox/Plain children invisible (`fully_complete` counts descendant *tasks* only) — document; never `Note::descendants` in trigger (O(subtree), `model.rs:189`).
+- **B6 default-off now data-backed:** 9/9 vault hits are intentional `✅` checkmark bullets; split wording "priority stripped-and-inert" vs "date visible-but-inert".
+- **Tag-filter downgrade "hover-explained" FALLS** — Checkbox stores no symbol (`lists.rs:237`); hover can't name it without line re-scan → rewrite or drop.
+- **B5 no double-fire with 19** (19 is structure-only, `issues/19:92`); precision: `as_date().is_none()` (accepts 10-byte ISO prefix) + `from_str` priority + Normal exception.
+- **Severity framework STANDS** but every severity reads "**23 proposes; 25 decides**" (25 has no Answer yet); Hint=4 verified (zk digest); client survival → 29. Per-source override: cite 20:Q14 as precedent, generalize in 25.
+- **Delivery R-D2 voice wrong, routing right:** delete per-file push (settled by 14 `:25,:31`); pull/`resultId` = "23 recommends, 25 decides" + mark `workspace/diagnostic`/`resultId` provenance-unverified (lsp_spec.md is include-lines); workspace-scope default → 25; toggles/`[tasks.diagnostics]` → 31 (`deny_unknown_fields` confirmed `raw.rs:15`; tension: zk per-kind project config vs 20:Q14 — record for 31).
+- Noise estimation: vault measured (385 md, 1032 items, 10 tasks, 0 rejected shapes) — state "task-density unquantifiable for daily-notes vaults"; overdue accumulation risk is reasoning not measurement → keep Warning default with status-exclusion conditions.
+
+### XIV.3 Hover & completion (R-H1, R-C1, R-C2)
+
+**No cluster falls.** Verdicts: hover **REVISE** (mechanism wording), mid-typing `- [` completion **STANDS** (+4 addenda), `[due:: `/`📅 ` date-value completion **STRENGTHEN**, emoji/date-slot completion **REVISE** (3 exact edits).
+
+- **Hover mechanism replacement (§2.4):** Exclude-mode lexer makes plain-bullet glyphs `Filter::Skip` (`lexer.rs:238-240`) — re-lexing with Exclude returns nothing; Include still skips non-ISO (`:241-262`). Required: `text_of` for source line (14) + one `tokenize_item_text(line, Include)` pass + marker-state read + **raw substring scan** for lexer-skipped glyphs. Gate = marker state (S2) which *includes* filtered Checkboxes (fields populated pre-classification, `list.rs:399`). Research's "glyph stripped on plain bullets" claim wrong — visible + inert, citation beyond EOF. Hidden deps: `today` (H2), Heading absent (H6), markup kind = 26, `isTrusted` client-side only.
+- **Mid-typing completion STANDS:** states verified (`Incomplete/Rejected/Complete`, `marker.rs:70-77,92-113`); offer iff Incomplete; edit range after-`[`..cursor; Rejected falls to 19. Addenda: trigger claims are proposals into **open 24** (no Answer); `scan_marker_prefix` is module-**private** not `pub(super)` (research `:128` wrong); `TaskScan` `pub(super)` too; empty-response safety verified (VS Code merge `suggest.ts:291-319`, LSP null `:183,416`); rumdl doesn't register `[`; item count config-derived (no `TaskStatusMap::iter()` — H4).
+- **Date-value completion STRENGTHEN:** gap real (19 keys-only, 20 frontmatter-only). Three missing clauses: **seam split** (19 = position predicate, 23 = candidates+content both spellings, 24 = dispatch); **candidate-source fix** (18's generator design-only, no code in `src/`, hybrid w/ on-disk matching excluded for task lines); **surfacing mechanism named** (post-`[due:: ` rides the `[` session's `isIncomplete`; post-`📅 ` via `command: triggerSuggest` fallback word-char request).
+- **Emoji completion 3 edits:** (1) candidates = obsidian generic 12 as parity set + `maxItems:20`, ±7 ISO needs `today`, 18 NL v1 phrases as labels — "candidates from 18" overstated; (2) suppression key = **slot across both spellings** (duality `lexer.rs:30`, first-wins emoji precedence `task.rs:62-79`) + accept edit must *span* existing invalid occurrence via raw scan + `byte_to_utf16_cu` (doesn't exist — H1, prereq `issues/19:12`); (3) stage-2 value list surfacing specified.
+- **Gate semantics:** completion gates on **S2 (marked)** not S3 — filtered Checkboxes have emoji fields; hover must handle Checkbox case distinctly.
+- **12 hidden deps H1–H12 + 8 collisions C1–C8** logged; load-bearing: `byte_to_utf16_cu` (H1), `today` (H2), open 24/26 ownership (H7/H8), 19/23 seam (C2). Also 15 wrong research citations fixed inline (enum names, S1/S2/S3 sites, EOF-exceeding test refs, `pub(super)` claim, LSP #1413 quote unverified) + 2 wrong ticket-23 grounding claims (`ListItemPosition`, NonTask→synthetic Todo).
+
+### XIV.4 Perf & map coherence (P1–P6)
+
+**Verdicts:** P1 REVISE · P2 REVISE (a FALL as worded → corrected claim STANDS; b STRENGTHEN) · P3 REVISE · P4 REVISE · P5 STRENGTHEN · P6 REVISE. Key corrections:
+
+- **P2(a) FALL as worded:** the 18.6ms bench is **line-length at fixed 51,200 bytes** (`note_parsing.rs:60,480`) — param 4000 ≈ 13 lines of 4,000 chars, not a 4,000-line file. Corrected claim: ≥50KB files with ≥2,000-char lines exceed 33's <10ms; realistic 4,000-line note ≈2–6ms (under target). Bench self-flags the anomaly (`:470-476`) → root-cause is an **implementation-spec follow-up** (planning-only, `map.md:9`).
+- **P2(b) STRENGTHEN:** load floor 15.7–19.6ms baseline, **worse now: 21.9–28.9ms**; "request-time reload impossible" reframed — `IndexerService::load` is `dead_code` outside tests; floor binds *vault-wide refill*; per-note refill cheap. "Flag for 33" mechanically invalid (33 resolved) → **tension paragraph in 23's Answer + `Amends 33`** (precedent map.md:86).
+- **P3:** tasks-query numbers STANDS (0.665/1.77/18.08ms, resident-only caveat); **drop documentSymbol from residency condition** (FALL — open docs only, buffer-authoritative); workspace/symbol residency STANDS.
+- **P4:** debounce STANDS; 0.2/200–500ms pull numbers external + precondition-bound (residency, N=1 stall) → label; delivery ranking must carry "23 recommends, 25/29 decide" sentence.
+- **P5 STRENGTHEN:** add persist (36.4/39.6/60.1ms) → totals ≈**47.7/90.1/466ms** @1K/5K/20K; explicit non-amendment of 13; detection sweep 15–50ms.
+- **16ns/item = clone floor misattributed** (`memory_footprint.rs` clone, not symbol build); label unmeasured. Diagnostics ≪1ms = labeled estimate (no lint bench exists).
+- **P6 REVISE — F1 High:** prose does not order the frontier; all of 24/25/26/27's blockers resolved → race is live. **Add `Blocked by: 23` to 24, 25, 26, 27** (optionally 29/31). A7 recipient list extend to 26/31/29.
+- **SC collisions SC1–SC8** + findings F1–F7 logged; draft map "Decisions so far" entry and per-ticket deferral wording (→24/25/26/27/29/31/32/33/34) drafted for reuse at resolution.
