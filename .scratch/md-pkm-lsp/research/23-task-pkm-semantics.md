@@ -414,3 +414,58 @@ All prior settled items stand; the gap-fill adds:
 **Still open (enlarged by the gap-fill, unchanged in kind):** form of unknown-symbol surfacing (now three options: diagnostic / editing-only cue / config-adjacent report); invalid-date diagnostic (now known first-of-kind); cycle symbols-vs-kinds question (belongs to 27); offer "unmarked/remove marker" item (Org's cycle includes unmarked; no completion precedent).
 
 **Could-not-verify register (R6+R7):** Roam primary docs 404; Taskwarrior `unknown` status not in current docs (set is the five listed); Org invalid-fast-key warnings unverified (silent in source); Logseq "no warning" is inferred not documented; Notion in-app validation inferred; universal negatives bounded by survey scope.
+
+---
+
+## Part XIII — R8–R11: richness & performance deep-dive (grill pushback)
+
+Four supplementary bundles commissioned after the human judged Round 1's recommendations "too minimal and restricted": R8 symbols depth, R9 diagnostics breadth, R10 hover/completion richness, R11 performance budgets. This part supersedes the *recommendations* in IX/XII where they conflict; the facts in earlier parts stand.
+
+### XIII.1 Performance headline (R11)
+
+**Richness is nearly free for everything on the resident/line-local path.** Checkbox completion (µs string scan + O(1) map), emoji completion/hover (one logos re-lex of one line, sub-µs), all candidate diagnostics (typical file ≪1ms on top of a parse that already happens), documentSymbol (~16ns/item measured — 50K items = 0.81ms) — all rated **(i) ignore-the-budget**. Ticket 33's targets are at the aggressive end of the ecosystem (completion <20ms vs gopls 100ms soft; hover <10ms vs community <50ms). The grill's *perf-relevant* decisions are not "which features" but:
+
+1. **Residency**: 33's plan puts task rows/AST bodies in a 256-entry LRU, not the always-resident tier. Under eviction, `WorkspaceIndex__load` has a **15–20ms fixed floor** — unusable inside any request. documentSymbol and workspace/symbol both rate (iii)/(iv) until 33 decides task-row residency. Measured: tasks query 0.665ms @ 20K files/60K rows, 1.77ms @ 100K, **18.08ms @ 1M**; realistic PKM density (~100–200K tasks) ≈ 2–4ms.
+2. **Two measured conflicts with 33's own targets**: (a) 4000-line file reparse = **18.6ms** vs 33's "single-file reparse <10ms"; (b) request-time reload impossible (floor above). Both flagged for 33.
+3. **Pathological files eat the diagnostics budget**: parse dominates (18.6 of 20ms at 4000 lines) — diagnostics must be debounced-not-per-keystroke and tolerate degradation.
+4. `[tasks]` config change = full reparse: 11.3ms@1K, 50.6ms@5K, **406ms@20K** + Arc swap — off request path, UX-visible.
+5. N=1 sequential dispatch (ticket 12): budgets are handler-time; client adds ~70–100ms (VS Code #161622).
+
+Peer mechanisms that suffice without salsa: tsserver minimum-work-per-query + per-file split; rumdl 100ms debounce; MS markdown-ls two-tier cache (the always-resident/evictable split 33 proposes); laziness-over-incrementality (salsa); spec-sanctioned `partialResultToken` + `workspaceSymbol/resolve`.
+
+Measurement gaps registered: no LSP handler bench exists anywhere; criterion gives means but budgets are p95; UTF-16 conversion unmeasured; minimum bench plan = handler benches + diagnostics distribution tail + config-swap.
+
+### XIII.2 Symbols (R8) — menu S0–S7
+
+- **Binding client constraint**: VS Code **silently drops children** whose range isn't contained in the parent's (SO 55846146) — parent range must extend to last-descendant line+1. One server = one tree; **Quick Outline is always flat** (vscode#165583); per-kind hiding via `outline.showArrays` is the supported task-only lever; anything richer (sort/toggle/collapse-completed) = custom TreeView, outside LSP (and exactly what every VS Code task extension ships instead).
+- **`detail` renders unconditionally on every row with no off-switch** (`documentSymbolsTree.ts:230`); no Markdown peer populates it; code servers use it for signatures. If used: ≤64 chars, only status/priority/due/rollup content.
+- **workspace/symbol**: VS Code sends **no partialResultToken** (one bounded array) but advertises `workspaceSymbol/resolve` with `location.range` (since **3.17**, not 3.18) → return uri-only + lazy ranges. Cap results: rust-analyzer default **128**, clangd floor 100 (clients re-query per keystroke); rust-analyzer's unbounded-query incident = 50s (rust-analyzer#14743). Traces measured cost at realistic density ≈ 2–4ms *if resident*. **33 has no workspace/symbol row — gap.**
+- **Client caps**: JSON LS 5000 symbols + resultLimitReached notification; VS Code historic 7500 hard refuse; ≥250K nodes = 4–30s freeze; 25K entries = 5.3s fixed-per-node-config-lookup incident. Budget: ≤1,000 nodes/file comfortable, 5,000 hard cap with notification.
+- **Headings do not exist in the parser** (ticket 11 decided `Heading` node, unimplemented) → heading-section nesting (S4) and heading rollup `☑ n/m` detail (S5) are blocked on 11/27 — prose cross-ref, not edge.
+- Shape menu: S0 omit (all peers) · S1 flat tasks · **S2 + depth nesting** · **S3 + detail** (all three implementable today, zero parser change) · S4/S5 heading-mixed (blocked on 11) · S6 workspace picker (needs 33 residency+target) · S7 custom TreeView (out of LSP scope).
+
+### XIII.3 Diagnostics (R9) — full inventory & the "useful" bar
+
+**~25 candidates inventoried** (Groups A–E in the bundle report): vocabulary (unknown symbol, tag-filter downgrade, NonTask+dates hover-trap), silent-data-loss (invalid date, emoji-without-date `📅 today`, duplicate-slot first-wins, unread task-family emoji, unparseable `[due:: soon]`, shorthand-stripped-but-inert on plain lines), **time-relative (overdue, due-today, done-date-missing, status/date mismatch, date-ordering, stale subtask)**, marker-shape (missing-space `- [x]task`, rejected `[]`/`[xx]`, empty text, VS16 — with mid-line `[x]` and `[X]`-case explicitly rejected), and routing rows (config health → CLI report; NonTask doc fix).
+
+**The bar the lead missed**: **time-awareness is the flagship** — the one thing every surveyed vendor markets (taskpaper-ls: overdue=Warning/due-today=Info *and a workspace-wide panel*; Todoist red overdue; Chevron Lists; Org agenda `org-deadline-warning-days`; md2do). Omitting it makes Traces' diagnostics a syntax linter with no time awareness — below the peer floor. Also missed: four exact cheap silent-loss findings the market validated via obsidian-tasks *query blocks* (B2/B3/B4/B6), and md2do's Warning-tier marker-shape rules (D1/D2 — "linters avoid this" holds for markdownlint/remark, not task tools).
+
+**Severity framework**: Error = **none** (parse infallible; config errors fail Config load) · Warning = "note says something other than what Traces will do" (B1,B2,B3,B5,D1,D2,**C1 overdue**) · Information = likely-mistake/belief-surprise (C2,C4,C5,C6,B4,B6; A2 & C3 **default-off**) · Hint = vocabulary footnotes (**A1 unknown symbol**, D3 idle-gated, D5 default-off) · Not-diagnostic = A3 hover-explained, D4/D6/spacing rejected. Conventions: single source `traces-tasks` + per-rule codes; per-source severity override in editor (20's Q14); never `MD…`; toggles ride a future `[tasks.diagnostics]` → 31.
+
+**Delivery ranking**: (1) push for open docs, debounced (33's <20ms/file); (2) hover for explanatory states (free); (3) **pull `workspace/diagnostic` with `resultId`/`unchanged` caching** for the cross-file panel — VS Code polls every 2s, cached answers ~0.2ms vs 200–500ms cold (angular#66700); (4) CLI on-demand report for vocabulary; (5) startup push-all only if client lacks pull (serialize behind `$/progress`); (6) never mix push+pull for the same set without `identifier` (rust-analyzer #18709). Inlay hints (countdowns) = **unowned gap** → 27/29. Decorations/status-bar/CodeLens (where the market lives) = not LSP-reachable, record only.
+
+**Lessons** (10): jump-or-it-didn't-happen (Problems panel with click-to-line); time-awareness is the paid feature; silent-ignore > syntax as harm class; correctness default-on / completeness default-off; split time severity (past=Warning, today=Info); the workspace panel *is* the feature; config-adjacent for vocabulary; suppress transient states; preserve rumdl non-overlap; severity overridable (Todoist users beg for less red).
+
+**Verdict on Round-1 minimal set**: right floor on A1 form + B1 severity + config-time + no-style-diagnostics; **too conservative** by ~2/3 — credible v1 = minimal + C1/C2 + B1/B2/B3/B6 (+ D1/D2 defensible), A1 stays Hint+report, defaults-off group behind a 31-owned toggle. Open: day-rollover re-evaluation mechanism (25's design item — no peer documents one); overdue default-on vs off (no Traces vault data).
+
+### XIII.4 Hover & completion (R10)
+
+**obsidian-tasks parity matrix (19 rows)**: v1-plausible = structural gate, emoji token items, two-stage dates via 18's candidates, token-based suppression, priority dedupe, caps ≤20, client-side filtering, config-order sort. **Never build** (even the gold standard omits): done/cancelled dates, `when done`, recurrence, on-completion — no Traces semantics. Later: `⛔ depends-on` vault search, `🆔 id`. **Annoyance trail = design constraints**: match-gating, no over-eager triggers (#1509/#1718/#2824/#3806), config order (#1505/#2121).
+
+**BEYOND Round-1 positions, with evidence**:
+- **Hover on glyph-bearing plain bullets + filtered Checkboxes** (trap resolution, Trilium "(missing definition)" pattern) — R10 calls "no hover on plain bullets" the weakest minimal position; content gate, not blanket silence; demand evidence Dataview #1143. Rich hover = content + docs links (gopls/JDTLS/alint); `command:` action links possible behind `markdown.isTrusted` opt-in; cap ~500 chars (TS `maximumHoverLength`); 300ms client hover delay bounds cost.
+- **Mid-typing insertion**: position-gated completion + client filtering is the ecosystem default (obsidian-tasks `minMatch:0`; VS Code `quickSuggestionsDelay:10`) — not deferred polish.
+- **Date-value completion claimed by 23 for `📅 ` AND `[due:: `** (same `NoteFieldValue::Date`; closes the unowned gap), candidates from 18.
+- **Triggers**: structural `[` (seam 24) + Invoked fallback + `TriggerForIncompleteCompletions` re-requests; **no space trigger — strongly supported** (LSP #1413 "bad idea… a LOT of pointless requests", Sublime #3001, volar #114); no server polling per keystroke (Neovim #32266); avoid `completionItem/resolve` storms (Godot #69914).
+
+**ALIGNED Round-1 positions** (confirmed): no unmarked/removal item in completion (Org picker precedent → 27 code action); status changes stay commands; structural gating never bare `[`; `sort_text` = config order (product requirement); preselect top; token-based suppression; don't build recurrence/ids.
