@@ -9,8 +9,8 @@ and task list processing.
 
 #### Note
 
-The indexed form of a Markdown note: parsed frontmatter, inline fields, tags,
-lists, tasks, and outgoing links.
+The indexed form of a Markdown note: parsed frontmatter, headings, inline
+fields, tags, lists, tasks, and outgoing links.
 *Avoid*: note document, document, page, markdown file, output file
 
 ### Metadata & Fields
@@ -34,6 +34,13 @@ date, link, list, or nested object.
 *Avoid*: dynamic value, field payload
 
 ### Content Elements
+
+#### Heading
+
+A Markdown section label with a level from 1 to 6, markup-stripped display
+text, and its source line. Headings follow document order; level determines
+their hierarchy.
+*Avoid*: header, section node, outline item
 
 #### Wikilink
 

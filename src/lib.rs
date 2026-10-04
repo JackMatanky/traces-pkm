@@ -124,7 +124,7 @@ pub(crate) use lexer::{
 };
 pub(crate) use note::NoteFieldType;
 pub use note::{
-    ListItem, ListItemType, ListText, MarkdownParserInput, Note,
+    Heading, ListItem, ListItemType, ListText, MarkdownParserInput, Note,
     NoteFieldValue, NoteFieldValueRef, TaskListItem, parse_markdown,
 };
 #[cfg(any(test, feature = "test-utils"))]

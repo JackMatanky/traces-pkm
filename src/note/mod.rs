@@ -1,8 +1,8 @@
 //! Parse Obsidian-style Markdown notes into structured records.
 //!
 //! [`parse_markdown`] walks a `pulldown-cmark` event stream once, building a
-//! [`Note`] that holds YAML frontmatter, lists, outgoing links, inline fields,
-//! and tags.
+//! [`Note`] that holds YAML frontmatter, headings, lists, outgoing links,
+//! inline fields, and tags.
 //!
 //! # Architecture and Parsing Pipeline
 //!
@@ -20,6 +20,7 @@
 //!
 //! # Key Types
 //!
+//! - [`Heading`]: Markup-stripped heading text, level, and source line.
 //! - [`Note`]: Parsed record for one Markdown file.
 //! - [`ListItem`], [`ListItemType`], [`TaskListItem`]: Ordered and unordered
 //!   list items, including classified task items and checkboxes.
@@ -36,6 +37,7 @@
 
 mod cursor;
 mod field;
+mod heading;
 mod links;
 mod lists;
 mod metadata;
@@ -44,6 +46,7 @@ mod parser;
 
 pub(crate) use field::NoteFieldType;
 pub use field::{NoteFieldValue, NoteFieldValueRef};
+pub use heading::Heading;
 pub use links::{Link, LinkTarget, LinkType};
 pub use lists::{ListItem, ListItemType, ListText, TaskListItem};
 pub use metadata::Frontmatter;

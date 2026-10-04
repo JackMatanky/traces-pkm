@@ -67,3 +67,14 @@
 - `byte_to_utf16_cu` (ticket 11 §4: LSP-adapter concern, deferred to `src/position.rs`'s home)
 - Any consumer-facing feature: heading-reference resolution, symbol outlines, hover — this ticket only lands the data
 - Changing the unified `Note::tags()` list's contents, ordering, or provenance semantics — that's ticket 03's completed scope
+
+## Implementation notes (heading-node worktree)
+
+Implemented in `73800a01`; follow-up refactors in `6139973d` and `89a879d6`. The checklist and Agent Brief above record the original request; the implementation now lives in these files:
+
+- `src/note/heading.rs`: `Heading` has private `level: u8`, `text: String`, and `line: SourceLine` fields, with public read-only `level() -> u8`, `text() -> &str`, and `line() -> SourceLine` accessors. It derives `Clone`, `Debug`, `Eq`, `PartialEq`, `Deserialize`, and `Serialize`. Construction and text accumulation are crate-private parser operations. The type remains publicly re-exported through `src/note/mod.rs` and `src/lib.rs`.
+- `src/note/model.rs`: `Note` stores `Box<[Heading]>` and exposes `headings() -> &[Heading]`; the collection is the seventh component of the internal `Note::new` constructor. The existing populated postcard round-trip test includes a heading and checks the decoded note against the original. Existing serialized note indexes must be rebuilt after this pre-release layout change; no format migration was introduced.
+- `src/note/parser.rs`: metadata uses its existing event stream, while a second traversal collects headings with math parsing enabled. On heading start, map the pulldown level to 1–6 and resolve the start line with `LineIndex`; accumulate text/code event display payloads and spaces for soft/hard breaks; append the completed heading on heading end. Link and wikilink display text is retained without source markup, while markup-only headings still produce empty-text nodes. The separate traversal preserves outlinks inside math-like text, and footnote source spelling remains available to metadata/list scanning without entering heading display text.
+- Parser tests cover ATX levels 1–6 and order, multiline Setext text and first source line, inline markup and link/wikilink display text, empty headings (including math, HTML, and footnotes), and nested blockquote/list headings with metadata. Regression tests cover math/footnote text in list items and outlinks within math-delimited heading text.
+
+Verification after the private-field follow-up: `mise run verify` passed (3,135 tests across four binaries and 71 doctests); `mise run doc -- --all-features` passed. The module-split follow-up also passed `mise run modules:orphans` (no orphans). A public-API smoke example exercised parsing and `Note::headings()` before the private-field follow-up; the parser tests exercise the current accessor API.
