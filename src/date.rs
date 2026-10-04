@@ -1,16 +1,17 @@
 //! ISO-8601 and RFC-3339 date and date-time parsing, formatting, and
 //! arithmetic.
 //!
-//! Single owner of date/time recognition, parsing, and formatting across the
-//! crate. Every date-shaped string funnels through [`DateValue::parse_iso`];
-//! every date-time-shaped string through [`DateTimeValue::parse_iso`].
+//! Single owner of date/time recognition, parsing, and canonical formatting
+//! across the crate. Every date-shaped string funnels through
+//! [`DateValue::parse_iso`]; every date-time-shaped string through
+//! [`DateTimeValue::parse_iso`].
 //!
 //! # Clock doctrine
 //!
-//! A naive datetime means what a human means: it is interpreted in the
-//! process's local zone and stored as UTC (see [`local_naive_to_utc`]), while a
-//! date-only value stays a zone-free civil date. Instants render as the local
-//! wall clock for humans and travel as UTC for storage and comparison.
+//! A naive datetime means what a human means: it is read in the process's
+//! local zone and stored as UTC (see [`local_naive_to_utc`]); a date-only
+//! value stays a zone-free civil date. Instants render as the local wall
+//! clock and travel as UTC for storage and comparison.
 //!
 //! # Key types
 //!
@@ -20,16 +21,16 @@
 //! - [`DateTimeFormat`] - Format grammar for date-time recognition.
 //! - [`DatePoint`] - Wall-clock/instant pair measured by the calendar owner.
 //! - [`DateDiff`] - Result of a calendar-owner difference measurement.
-//! - [`DateError`] - Error type for parsing, formatting, and arithmetic
-//!   failures.
+//! - [`DateError`] - Error type for parsing, local-zone resolution, and
+//!   calendar arithmetic failures.
 //!
 //! # Calendar owner
 //!
-//! This module owns date arithmetic for the crate (spec D12/D13):
-//! [`DateValue::shift`], [`DateValue::apply`], [`DateTimeValue::shift`], and
-//! [`DateTimeValue::apply`] apply calendar or fixed-duration semantics in
-//! exactly one place, and the template engine delegates to them through
-//! [`shift_wall`] and [`DatePoint::diff`].
+//! This module owns date arithmetic for the crate: [`DateValue::shift`],
+//! [`DateValue::apply`], [`DateTimeValue::shift`], and [`DateTimeValue::apply`]
+//! apply calendar or fixed-duration semantics in exactly one place, and the
+//! template engine reaches this module through `DateTimeValue::parse_iso`,
+//! [`shift_wall`], [`DateTimeValue::shift`], and [`DatePoint::diff`].
 
 use std::{borrow::Cow, fmt, str::FromStr, time::SystemTime};
 
@@ -75,6 +76,11 @@ impl DateFormat {
 
     /// Attempts to parse `s` according to this format.
     ///
+    /// [`Self::YearMonth`] splits `"YYYY-MM"` itself (chrono's bare `%Y-%m`
+    /// needs a day, so it fails with `NotEnough`) and consults that pattern
+    /// only to obtain a [`chrono::ParseError`] for rejected input such as
+    /// `"2026-13"` or `"2026-7"`.
+    ///
     /// # Errors
     ///
     /// - [`chrono::ParseError`] if `s` does not match this format's expected
@@ -90,10 +96,11 @@ impl DateFormat {
         }
     }
 
-    /// Parses `"YYYY-MM"`, defaulting day to 1.
+    /// Parses `"YYYY-MM"`, defaulting the day to 1.
     ///
-    /// chrono's `%Y-%m` format string alone fails with `NotEnough`, so this
-    /// splits and parses the year and month integers directly.
+    /// Splits and parses both components directly, requiring exactly 4 year
+    /// digits and exactly 2 month digits (chrono's bare `%Y-%m` fails with
+    /// `NotEnough`).
     fn parse_year_month(s: &str) -> Option<NaiveDate> {
         let (year_str, month_str) = s.split_once('-')?;
         if year_str.len() != 4 || month_str.len() != 2 {
@@ -151,9 +158,9 @@ impl DateTimeFormat {
 
     /// Attempts to parse `s` according to this format's shape.
     ///
-    /// A naive input attaches UTC as a placeholder; shape matching never
-    /// consults the local zone. [`DateTimeValue::parse_iso`] resolves the
-    /// matched naive value through [`local_naive_to_utc`] after the cascade.
+    /// Shape matching only: a naive input carries a UTC placeholder that
+    /// [`DateTimeValue::parse_iso`] resolves through [`local_naive_to_utc`]
+    /// after the cascade. The local zone is never consulted here.
     ///
     /// # Errors
     ///
@@ -176,24 +183,23 @@ impl DateTimeFormat {
 /// Resolves a naive local wall-clock datetime to a UTC instant under the
 /// crate's DST doctrine.
 ///
-/// A wall-clock time written without a zone means what a human means: it is
-/// interpreted in the process's local zone and stored as UTC. Ambiguous
-/// fall-back times resolve to their earliest occurrence and nonexistent
-/// spring-forward gap times shift forward by the gap, the convention Temporal's
-/// `'compatible'` disambiguation (RFC 5545) and jiff's
-/// [`Disambiguation::Compatible`] implement; an ambiguity or a gap never fails
-/// to parse. Only a local timezone lookup failure (a broken tz-data or OS
-/// environment) surfaces as an error.
+/// A wall-clock time written without a zone is read in the process's local
+/// zone and stored as UTC. Resolution never fails on a DST boundary:
 ///
-/// On wasm, chrono's `Local` reports every local time as unambiguous
-/// ([chrono#1701]), so the ambiguous arm is unreachable there; that target is
-/// out of scope.
+/// - Ambiguous fall-back times resolve to their earliest occurrence;
+/// - Spring-forward gaps shift forward by the gap, matching Temporal's
+///   `'compatible'` disambiguation and jiff's [`Disambiguation::Compatible`].
+///
+/// Only a broken tz-data/OS lookup or an offset application outside
+/// `NaiveDateTime`'s range errors. On the `WebAssembly` target, chrono's
+/// `Local` reports every local time as unambiguous ([chrono#1701]), so the
+/// ambiguous arm is unreachable there.
 ///
 /// # Errors
 ///
-/// - [`DateError::LocalZoneLookup`] if no local time within the 25-hour
-///   backward search (nor `wall` itself) resolves, which indicates a tz-data/OS
-///   lookup failure rather than a DST boundary.
+/// - [`DateError::LocalZoneLookup`] if the lookup finds no offset for `wall` or
+///   a probe (a broken tz-data/OS environment rather than a DST boundary), or
+///   if applying the resolved offset would leave `NaiveDateTime`'s range.
 ///
 /// [`Disambiguation::Compatible`]:
 ///     https://docs.rs/jiff/latest/jiff/tz/enum.Disambiguation.html
@@ -202,9 +208,9 @@ fn local_naive_to_utc(wall: NaiveDateTime) -> Result<DateTime<Utc>, DateError> {
     let zone_lookup = || DateError::LocalZoneLookup {
         input: wall.to_string().into(),
     };
-    // Offset application goes through the checked forms: they return `None`
-    // instead of panicking if the instant lands outside `NaiveDateTime`'s range
-    // (unreachable for the 4-digit-year inputs the parsers accept).
+    // The checked forms return `None` instead of panicking when the instant
+    // leaves `NaiveDateTime`'s range (impossible for the parsers' 4-digit-year
+    // inputs).
     match Local.offset_from_local_datetime(&wall) {
         MappedLocalTime::Single(offset) => {
             let instant =
@@ -212,9 +218,9 @@ fn local_naive_to_utc(wall: NaiveDateTime) -> Result<DateTime<Utc>, DateError> {
             Ok(instant.and_utc())
         }
         MappedLocalTime::Ambiguous(a, b) => {
-            // chrono orders the pair by offset value (tzfile data) or by
-            // transition side (POSIX rules); the earliest occurrence is always
-            // the one with the larger offset, since instant = wall - offset.
+            // `chrono` orders an ambiguous pair by offset (tzfile data) or
+            // transition side (POSIX rules); the earliest occurrence has the
+            // larger offset, since instant = wall - offset.
             let earliest = if a.local_minus_utc() >= b.local_minus_utc() {
                 a
             } else {
@@ -225,10 +231,9 @@ fn local_naive_to_utc(wall: NaiveDateTime) -> Result<DateTime<Utc>, DateError> {
             Ok(instant.and_utc())
         }
         MappedLocalTime::None => {
-            // A DST gap resolves `None` across the whole skipped span, so a
-            // one-second probe would still land inside it. The gap resolver
-            // finds the pre-transition offset; interpreting the wall clock with
-            // it shifts the gap time forward by exactly the gap.
+            // A gap resolves `None` across the whole skipped span, so no
+            // probe inside it resolves; the pre-transition offset shifts the
+            // gap time forward by exactly the gap.
             let offset = resolve_gap_offset(wall, &zone_lookup)?;
             let instant =
                 wall.checked_sub_offset(offset).ok_or_else(zone_lookup)?;
@@ -243,8 +248,8 @@ fn local_naive_to_utc(wall: NaiveDateTime) -> Result<DateTime<Utc>, DateError> {
 /// # Errors
 ///
 /// - [`DateError::LocalZoneLookup`] if no nearby local time resolves within the
-///   25-hour backward search, indicating a broken tz-data/OS lookup rather than
-///   a gap; never a silent shift.
+///   25-hour backward search (a broken tz-data/OS lookup rather than a gap), or
+///   if stepping the probe back would leave `NaiveDateTime`'s range.
 fn resolve_gap_offset(
     wall: NaiveDateTime,
     zone_lookup: &impl Fn() -> DateError,
@@ -263,10 +268,9 @@ fn resolve_gap_offset(
     Err(zone_lookup())
 }
 
-/// Builds an exact [`TimeDelta`] from fractional `part_secs`, rejecting
-/// overflow of either the whole-seconds or the nanoseconds component.
-///
-/// Single owner of the whole/sub-second split shared by
+/// Builds a [`TimeDelta`] from `part_secs`, splitting whole seconds from
+/// nanoseconds (the fraction rounded to the nearest nanosecond) and rejecting
+/// overflow of either component. The single whole/sub-second split for
 /// [`DateValue::apply_part`] and [`DateTimeValue::apply_part`].
 fn seconds_delta(part_secs: f64) -> Result<TimeDelta, DateError> {
     let whole_secs = part_secs.trunc().to_i64().ok_or(DateError::OutOfRange)?;
@@ -285,19 +289,29 @@ fn seconds_delta(part_secs: f64) -> Result<TimeDelta, DateError> {
 /// Wraps [`NaiveDate`] as a newtype, enforcing ISO-8601 recognition. All
 /// four-digit years are accepted; two-digit years are rejected to prevent
 /// chrono's silent century misinterpretation.
+///
+/// # Examples
+///
+/// ```rust
+/// use traces_pkm::DateValue;
+///
+/// let date: DateValue = "2026-07-29".parse().expect("valid ISO-8601 date");
+/// assert_eq!(date.to_string(), "2026-07-29");
+///
+/// let year_month: DateValue = "2026-07".parse().expect("reduced precision");
+/// assert_eq!(year_month.to_string(), "2026-07-01");
+/// ```
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct DateValue(NaiveDate);
 
 impl DateValue {
-    /// Returns `true` if `s` begins with exactly 4 ASCII digits.
+    /// Returns `true` if `s`'s first four bytes are ASCII digits.
     ///
-    /// Guards against chrono's lenient `%Y` specifier silently accepting a
-    /// short year (`"26-08-22"` parses as year 26 CE, not rejected).
-    /// Deliberately does not check what follows the digits: a well-formed
-    /// 4-digit year with an unrecognized separator (`"2026/08/22"`) should
-    /// reach the format cascade and fail as [`DateError::Unparseable`], not be
-    /// misclassified as [`DateError::InvalidYearDigits`].
+    /// Guards chrono's lenient `%Y`, which silently accepts a short year
+    /// (`"26-08-22"` parses as year 26 CE). What follows the digits is
+    /// deliberately unchecked: `"2026/08/22"` must reach the cascade and fail
+    /// as [`DateError::Unparseable`], not as [`DateError::InvalidYearDigits`].
     #[must_use]
     pub(crate) fn has_four_digit_year(s: &str) -> bool {
         let bytes = s.as_bytes();
@@ -305,12 +319,11 @@ impl DateValue {
     }
 
     /// Returns `true` if `s`'s first 10 bytes have the shape `YYYY-MM-DD`
-    /// (ASCII digits and hyphens in the right positions).
+    /// (digits and hyphens in the right positions).
     ///
-    /// Fast non-allocating pre-check for note-parser call sites before
-    /// committing to [`DateValue::parse_iso`]. Does not validate calendar
-    /// values (`"9999-99-99"` passes this check but fails the real parse); the
-    /// real parse is always the authoritative decision.
+    /// Non-allocating pre-check for note-parser call sites; it does not
+    /// validate calendar values (`"9999-99-99"` passes but fails the real
+    /// parse). [`DateValue::parse_iso`] is always authoritative.
     #[must_use]
     pub(crate) fn is_iso_shape(s: &str) -> bool {
         let bytes = s.as_bytes();
@@ -327,10 +340,14 @@ impl DateValue {
     /// Parses an ISO-8601 date string (`YYYY-MM-DD` or `YYYY-MM`) using
     /// [`DateFormat::ALL`].
     ///
+    /// Surrounding whitespace is ignored. The year guard runs before the format
+    /// cascade, so a short year fails as [`DateError::InvalidYearDigits`]
+    /// rather than as a shape mismatch.
+    ///
     /// # Errors
     ///
-    /// - [`DateError::InvalidYearDigits`] if the year segment is not exactly 4
-    ///   ASCII digits.
+    /// - [`DateError::InvalidYearDigits`] if `s` does not begin with 4 ASCII
+    ///   digits.
     /// - [`DateError::Unparseable`] if no accepted shape matches.
     pub(crate) fn parse_iso(s: &str) -> Result<Self, DateError> {
         let trimmed = s.trim();
@@ -369,9 +386,8 @@ impl DateValue {
     /// Shifts this civil date by `n` `unit`s.
     ///
     /// Pure civil arithmetic: zone-free dates never touch the DST resolver.
-    /// Delegates to [`shift_wall`] on midnight of this date and keeps the
-    /// resulting calendar day, so the owner defines the per-unit semantics in
-    /// exactly one place.
+    /// Delegates to [`shift_wall`] at midnight and keeps the resulting
+    /// calendar day, so per-unit semantics live in exactly one place.
     ///
     /// # Errors
     ///
@@ -396,7 +412,9 @@ impl DateValue {
 
     /// Applies `duration` to this civil date.
     ///
-    /// Pure civil arithmetic: zone-free dates never touch the DST resolver.
+    /// Pure civil arithmetic. Retained written parts apply in written
+    /// left-to-right order; a fixed magnitude applies as exact seconds on the
+    /// civil wall clock.
     ///
     /// # Errors
     ///
@@ -421,9 +439,8 @@ impl DateValue {
             }
             Ok(current)
         } else {
-            // Fixed magnitude without a written shape: applied as exact seconds
-            // on the civil wall clock; non-finite input is rejected by the
-            // `TimeDelta` conversion.
+            // Fixed magnitude: exact seconds on the civil wall clock; the
+            // `TimeDelta` conversion rejects non-finite input.
             let wall =
                 self.0.and_hms_opt(0, 0, 0).ok_or(DateError::OutOfRange)?;
             let delta = TimeDelta::try_from(duration.to_seconds())
@@ -434,6 +451,19 @@ impl DateValue {
         }
     }
 
+    /// Applies one written `(magnitude, unit)` part to this civil date.
+    ///
+    /// Calendar units ([`DurationUnit::Year`], [`DurationUnit::Month`],
+    /// [`DurationUnit::Week`], [`DurationUnit::Day`]) truncate to a whole count
+    /// for [`Self::shift`] and apply the fractional remainder as exact seconds
+    /// on the resulting midnight. Sub-day units apply as exact seconds on
+    /// midnight directly, so a sub-day magnitude of 24 hours or more still
+    /// advances the civil date.
+    ///
+    /// # Errors
+    ///
+    /// - [`DateError::OutOfRange`] if the magnitude is non-finite or the
+    ///   arithmetic overflows.
     fn apply_part(
         self,
         mag: f64,
@@ -484,6 +514,7 @@ impl DateValue {
     }
 }
 
+/// Renders as the canonical `YYYY-MM-DD` string.
 impl fmt::Display for DateValue {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -543,7 +574,25 @@ impl<'de> Deserialize<'de> for DateValue {
 ///
 /// Wraps [`DateTime<Utc>`] as a newtype, enforcing ISO-8601/RFC-3339
 /// recognition through its crate-internal `parse_iso` parser. All values are
-/// UTC-normalized; offset-bearing input is converted to UTC at parse time.
+/// UTC-normalized; offset-bearing input is converted to UTC at parse time,
+/// while naive input resolves in the process's local zone.
+///
+/// # Examples
+///
+/// ```rust
+/// use traces_pkm::DateTimeValue;
+///
+/// let utc: DateTimeValue =
+///     "2026-07-29T14:30:00Z".parse().expect("valid RFC 3339");
+/// let offset: DateTimeValue =
+///     "2026-07-29T14:30:00+00:00".parse().expect("equivalent offset");
+/// assert_eq!(utc, offset);
+///
+/// // The local wall clock this value renders re-parses to the same instant.
+/// let round_trip: DateTimeValue =
+///     utc.to_string().parse().expect("rendered spelling re-parses");
+/// assert_eq!(utc, round_trip);
+/// ```
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct DateTimeValue(DateTime<Utc>);
@@ -557,18 +606,19 @@ impl DateTimeValue {
         Self(Utc::now())
     }
 
-    /// Parses an RFC-3339 or ISO-8601 date-time string using
+    /// Parses an RFC 3339 or ISO-8601 date-time string using
     /// [`DateTimeFormat::ALL`].
     ///
-    /// The cascade matches shapes only; after a shape matches, a naive input
-    /// resolves through [`local_naive_to_utc`] (an explicit-offset input
-    /// already is the instant). Resolution failures must not be retried against
-    /// later formats, so the cascade separates shape matching from resolution.
+    /// Surrounding whitespace is ignored. The cascade matches shapes only: a
+    /// matched naive input then resolves through [`local_naive_to_utc`] (an
+    /// explicit-offset input already is the instant). Resolution runs once
+    /// after the cascade, because a resolution failure must not retry later
+    /// formats.
     ///
     /// # Errors
     ///
-    /// - [`DateError::InvalidYearDigits`] if the year segment is not exactly 4
-    ///   ASCII digits.
+    /// - [`DateError::InvalidYearDigits`] if `s` does not begin with 4 ASCII
+    ///   digits.
     /// - [`DateError::Unparseable`] if no accepted shape matches.
     /// - [`DateError::LocalZoneLookup`] if the local timezone lookup fails
     ///   while resolving a naive input.
@@ -603,10 +653,9 @@ impl DateTimeValue {
         Ok(Self(instant))
     }
 
-    /// Formats this date-time without a UTC offset, including fractional
-    /// seconds only when this value carries a nonzero nanosecond component
-    /// (round-trips [`DateTimeFormat::IsoTFractional`] input instead of
-    /// silently truncating it).
+    /// Formats this date-time exactly as [`Display`](fmt::Display) does: the
+    /// local wall clock without a UTC offset, carrying fractional seconds only
+    /// when the value has a nonzero nanosecond component.
     #[inline]
     #[must_use]
     pub(crate) fn to_datetime_string(self) -> String {
@@ -615,13 +664,11 @@ impl DateTimeValue {
 
     /// Returns the local wall-clock rendering of this instant.
     ///
-    /// A date or time component means the reader's calendar day and clock, so
-    /// every human-facing rendering goes through this conversion. It follows
-    /// the offset-based checked form:
-    /// [`Local::offset_from_utc_datetime`] supplies the zone's offset for the
-    /// instant and [`NaiveDateTime::checked_add_offset`] applies it, returning
-    /// [`None`] instead of panicking when the local time would overflow
-    /// [`NaiveDateTime`]'s range (`.naive_local()` would panic there).
+    /// Every human-facing rendering goes through this conversion: the offset
+    /// comes from [`Local::offset_from_utc_datetime`] and is applied with
+    /// [`NaiveDateTime::checked_add_offset`], which returns [`None`] instead
+    /// of panicking at `NaiveDateTime`'s range edge (`.naive_local()` would
+    /// panic there).
     #[inline]
     #[must_use]
     pub(crate) fn local_wall(self) -> Option<NaiveDateTime> {
@@ -652,8 +699,8 @@ impl DateTimeValue {
     ///
     /// Calendar units ([`DurationUnit::Year`], [`DurationUnit::Month`],
     /// [`DurationUnit::Week`], [`DurationUnit::Day`]) shift the local wall
-    /// clock, preserving the wall-clock time across DST transitions per spec
-    /// D12/D13. Sub-day units shift the stored instant exactly.
+    /// clock, preserving the wall-clock time across DST transitions. Sub-day
+    /// units shift the stored instant exactly.
     ///
     /// # Errors
     ///
@@ -704,6 +751,15 @@ impl DateTimeValue {
         }
     }
 
+    /// Shifts the local wall clock by `months` calendar months, then resolves
+    /// the result back to an instant through the local zone.
+    ///
+    /// # Errors
+    ///
+    /// - [`DateError::OutOfRange`] if the local wall clock is unavailable or
+    ///   the month arithmetic overflows.
+    /// - [`DateError::LocalZoneLookup`] if the shifted wall clock cannot be
+    ///   resolved in the local zone.
     fn shift_calendar_months(self, months: i64) -> Result<Self, DateError> {
         let wall = self.local_wall().ok_or(DateError::OutOfRange)?;
         let new_wall = shift_months(wall, months)?;
@@ -711,6 +767,15 @@ impl DateTimeValue {
         Ok(Self(instant))
     }
 
+    /// Shifts the local wall clock by `days` calendar days, then resolves the
+    /// result back to an instant through the local zone.
+    ///
+    /// # Errors
+    ///
+    /// - [`DateError::OutOfRange`] if the local wall clock is unavailable or
+    ///   the day arithmetic overflows.
+    /// - [`DateError::LocalZoneLookup`] if the shifted wall clock cannot be
+    ///   resolved in the local zone.
     fn shift_calendar_days(self, days: i64) -> Result<Self, DateError> {
         let wall = self.local_wall().ok_or(DateError::OutOfRange)?;
         let days_u64 = days.unsigned_abs();
@@ -726,16 +791,12 @@ impl DateTimeValue {
 
     /// Applies `duration` to this date-time.
     ///
-    /// If `duration` has retained written parts ([`DurationValue::parts`] is
-    /// [`Some`]), they are applied in written left-to-right order. Calendar
-    /// units ([`DurationUnit::Day`], [`DurationUnit::Week`],
-    /// [`DurationUnit::Month`], [`DurationUnit::Year`]) shift the local wall
-    /// clock, preserving the wall time across DST transitions per spec D12/D13.
-    /// Sub-day units shift the stored instant exactly.
-    ///
-    /// If `duration` has no retained parts ([`DurationValue::parts`] is
-    /// [`None`]), the duration represents a fixed magnitude and is applied
-    /// directly to the stored instant as exact seconds.
+    /// - Retained written parts ([`DurationValue::parts`] is [`Some`]) apply in
+    ///   written left-to-right order: calendar units shift the local wall clock
+    ///   (wall time survives DST), sub-day units shift the stored instant
+    ///   exactly.
+    /// - A fixed magnitude ([`DurationValue::parts`] is [`None`]) applies as
+    ///   exact seconds to the stored instant.
     ///
     /// # Errors
     ///
@@ -762,9 +823,8 @@ impl DateTimeValue {
             }
             Ok(current)
         } else {
-            // Fixed magnitude without a written shape: applied as exact seconds
-            // on the stored instant; non-finite input is rejected by the
-            // `TimeDelta` conversion.
+            // Fixed magnitude: exact seconds on the stored instant; the
+            // `TimeDelta` conversion rejects non-finite input.
             let delta = TimeDelta::try_from(duration.to_seconds())
                 .map_err(|_| DateError::OutOfRange)?;
             let instant = self
@@ -775,6 +835,21 @@ impl DateTimeValue {
         }
     }
 
+    /// Applies one written `(magnitude, unit)` part to this date-time.
+    ///
+    /// Calendar units ([`DurationUnit::Year`], [`DurationUnit::Month`],
+    /// [`DurationUnit::Week`], [`DurationUnit::Day`]) truncate to a whole
+    /// count for [`Self::shift`]; the fractional remainder is still calendar
+    /// time, so it advances the local wall clock and re-resolves through the
+    /// local zone rather than landing as exact seconds on the instant. Sub-day
+    /// units shift the instant exactly.
+    ///
+    /// # Errors
+    ///
+    /// - [`DateError::OutOfRange`] if the magnitude is non-finite or the
+    ///   arithmetic overflows.
+    /// - [`DateError::LocalZoneLookup`] if the shifted wall clock cannot be
+    ///   resolved in the local zone.
     fn apply_part(
         self,
         mag: f64,
@@ -798,11 +873,9 @@ impl DateTimeValue {
                 let rem_secs = mag.fract() * unit.fixed_seconds();
                 if rem_secs != 0.0 {
                     let delta = seconds_delta(rem_secs)?;
-                    // The whole part keeps the local wall clock via `shift`;
-                    // the fractional remainder is still part of a calendar
-                    // unit, so it round-trips through the local zone too (spec
-                    // D12) instead of landing as exact seconds on the stored
-                    // instant.
+                    // The remainder is still a calendar unit: it round-trips
+                    // through the local zone instead of landing as exact
+                    // seconds on the instant.
                     let wall =
                         current.local_wall().ok_or(DateError::OutOfRange)?;
                     let shifted_wall = wall
@@ -841,13 +914,17 @@ impl DateTimeValue {
     }
 }
 
+/// Renders the local wall clock without a UTC offset, so a date or time
+/// component reads as the reader's own clock.
+///
+/// Fractional seconds appear only for a nonzero nanosecond component, so
+/// `DateTimeFormat::IsoTFractional` input keeps its full sub-second precision.
+/// When the local offset cannot be applied, the UTC wall clock renders
+/// instead of panicking (see `DateTimeValue::local_wall`).
 impl fmt::Display for DateTimeValue {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use chrono::Timelike as _;
-        // The everyday human spelling is the local wall clock (see
-        // `local_wall`); when the local offset cannot be applied, the UTC wall
-        // clock renders instead of panicking.
         let wall = self.wall_or_utc();
         let format = if wall.nanosecond() == 0 {
             DEFAULT_DATETIME_FORMAT
@@ -890,11 +967,11 @@ impl From<DateTimeValue> for DateTime<Utc> {
 
 /// Promotes a [`DateValue`] to a [`DateTimeValue`] at midnight in the local
 /// zone: a zone-free civil date has no instant until a reader's zone supplies
-/// one, so the promotion resolves through the crate's local-zone DST resolver.
+/// one.
 ///
-/// A local timezone lookup failure falls back to UTC midnight (matching
-/// chrono's own silent fallback for a broken zone); strict callers resolve
-/// through `local_naive_to_utc` directly to surface that failure.
+/// A lookup failure falls back to UTC midnight (chrono does the same for a
+/// broken zone); the crate's fallible entry points surface it as
+/// [`DateError::LocalZoneLookup`] instead.
 impl From<DateValue> for DateTimeValue {
     #[inline]
     fn from(date: DateValue) -> Self {
@@ -943,15 +1020,26 @@ impl<'de> Deserialize<'de> for DateTimeValue {
     }
 }
 
-/// Error type for date/date-time parsing, formatting, and arithmetic failures.
+/// Error type for date/date-time parsing, local-zone resolution, and calendar
+/// arithmetic failures.
 ///
-/// Returned by [`DateValue`]'s and [`DateTimeValue`]'s crate-internal
-/// `parse_iso` and `format_with` methods, by the calendar owner's
-/// `shift`/`apply`/`diff` operations, and by the [`From<DateValue>`] promotion.
+/// Raised by the crate-internal `parse_iso` parsers on [`DateValue`] and
+/// [`DateTimeValue`] and by the calendar owner's `shift`, `apply`, and `diff`
+/// operations; the template engine translates the arithmetic failures into
+/// render errors.
+///
+/// # Examples
+///
+/// ```rust
+/// use traces_pkm::{DateError, DateValue};
+///
+/// let err = "26-08-22".parse::<DateValue>().expect_err("short year");
+/// assert!(matches!(err, DateError::InvalidYearDigits { .. }));
+/// ```
 #[derive(Debug, Clone, Eq, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum DateError {
-    /// No accepted date/time shape matched `input`.
+    /// No accepted date/time shape matched `input` (e.g., `"2026/08/22"`).
     ///
     /// Wraps the last-attempted format's [`chrono::ParseError`].
     #[error("`{input}` is not a recognized date/time: {source}")]
@@ -962,24 +1050,29 @@ pub enum DateError {
         #[source]
         source: chrono::ParseError,
     },
-    /// `input`'s year segment is not exactly 4 ASCII digits.
+    /// `input` does not begin with 4 ASCII digits (e.g., `"26-08-22"`).
     ///
-    /// chrono's `%Y` accepts fewer digits, silently misreading the year.
+    /// The `chrono` `%Y` specifier accepts fewer digits, silently misreading
+    /// the year.
     #[error("`{input}` does not have a 4-digit year")]
     InvalidYearDigits {
         /// The raw input that failed to parse.
         input: Box<str>,
     },
     /// `pattern` is not a valid strftime specifier.
+    ///
+    /// No crate code path currently constructs this variant: date-format
+    /// rendering failures surface as template render errors instead.
     #[error("`{pattern}` is not a valid format pattern")]
     InvalidPattern {
         /// The pattern that failed to render.
         pattern: Box<str>,
     },
-    /// The process's local timezone could not resolve a naive input.
+    /// The process's local timezone could not resolve a naive input, or the
+    /// resolved offset would push it outside `NaiveDateTime`'s range.
     ///
-    /// DST ambiguities and gaps never produce this error (they resolve
-    /// deterministically); it is reserved for a broken tz-data/OS lookup.
+    /// DST ambiguities and gaps never produce this error; they resolve
+    /// deterministically.
     #[error("local timezone lookup failed for `{input}`")]
     LocalZoneLookup {
         /// The naive wall-clock input that could not be resolved.
@@ -1044,7 +1137,8 @@ impl DatePoint {
     /// # Errors
     ///
     /// - [`DateError::OutOfRange`] if the difference overflows representable
-    ///   bounds.
+    ///   bounds. Defensive only: every conversion on this path is total, so no
+    ///   input currently produces it.
     pub(crate) fn diff(
         self,
         to: Self,
@@ -1098,14 +1192,14 @@ impl DatePoint {
     }
 }
 
-/// Shifts a civil wall-clock datetime by `n` `unit`s, preserving the
-/// time-of-day component.
+/// Shifts a civil wall-clock datetime by `n` `unit`s.
 ///
-/// Calendar units ([`DurationUnit::Year`], [`DurationUnit::Month`],
-/// [`DurationUnit::Week`], [`DurationUnit::Day`]) shift calendar days with
-/// month clamping per chrono's documented behavior; sub-day units shift the
-/// time exactly. No zone is ever consulted: callers wanting DST-aware
-/// local-wall semantics route through [`DateTimeValue::shift`] instead.
+/// - Calendar units shift calendar days; Month and Year clamp to the last day
+///   of the target month (chrono's documented behavior).
+/// - Sub-day units shift the time exactly.
+///
+/// No zone is consulted: callers wanting DST-aware local-wall semantics route
+/// through [`DateTimeValue::shift`] instead.
 ///
 /// # Errors
 ///
@@ -1158,7 +1252,7 @@ pub(crate) fn shift_wall(
     }
 }
 
-/// Shifts `wall` by `months` calendar months, positive or negative.
+/// Shifts `wall` by `months` calendar months (positive or negative).
 ///
 /// Clamps to the last day of the target month per chrono's documented behavior.
 ///
@@ -1214,8 +1308,8 @@ fn signed_years_since(from: NaiveDate, to: NaiveDate) -> i64 {
 ///
 /// Chrono has no `months_since` equivalent, so this mirrors
 /// [`NaiveDate::years_since`]'s algorithm at month granularity: total calendar
-/// months between the dates, decremented by one when the day-of-month has not
-/// yet been reached.
+/// months between the dates, minus one when the day-of-month has not yet been
+/// reached.
 fn signed_months_since(from: NaiveDate, to: NaiveDate) -> i64 {
     let (earlier, later, sign) = if to >= from {
         (from, to, 1)
@@ -1491,9 +1585,10 @@ mod tests {
 
         #[test]
         fn accepts_a_five_digit_year_prefix_as_having_four_digits() {
-            // has_four_digit_year only checks the first 4 bytes; a longer
-            // numeric prefix still passes this guard and is rejected later, by
-            // the format cascade, as Unparseable rather than InvalidYearDigits.
+            // The `has_four_digit_year` guard only checks the first 4 bytes;
+            // a longer numeric prefix still passes this guard and is rejected
+            // later, by the format cascade, as Unparseable rather than
+            // InvalidYearDigits.
             assert!(DateValue::has_four_digit_year("20265-01-01"));
             assert!(matches!(
                 DateValue::parse_iso("20265-01-01"),
@@ -1627,15 +1722,14 @@ mod tests {
             // Saturday March 7, 2026 at 12:00 EST (UTC 17:00:00)
             let base = DateTimeValue::parse_iso("2026-03-07 12:00:00").unwrap();
 
-            // 1 day via `shift` keeps 12:00 on the wall clock across the gap.
+            // A one-day `shift` keeps 12:00 on the wall clock across the gap.
             let shifted_day = base.shift(1, DurationUnit::Day).unwrap();
             assert_eq!(
                 shifted_day.local_wall().unwrap().to_string(),
                 "2026-03-08 12:00:00"
             );
 
-            // `shift` routes week and 7-day units through the same calendar
-            // path, so they shift identically and keep 12:00.
+            // Week and 7 days share the calendar path, so both keep 12:00.
             let shifted_week = base.shift(1, DurationUnit::Week).unwrap();
             let shifted_7d = base.shift(7, DurationUnit::Day).unwrap();
             assert_eq!(shifted_week, shifted_7d);
@@ -1652,15 +1746,14 @@ mod tests {
                 "2026-03-14 13:00:00"
             );
 
-            // `shift` and `apply` agree for the same calendar unit: the
-            // calendar owner owns the semantics in exactly one place.
+            // `shift` and `apply` agree for the same calendar unit.
             let applied_week =
                 base.apply(&DurationValue::parse("1w").unwrap()).unwrap();
             assert_eq!(shifted_week, applied_week);
         }
 
         #[test]
-        fn a2_prime_equal_duration_values_shift_dates_differently() {
+        fn equal_duration_values_shift_dates_differently() {
             // "1 month" == "30 days" as duration values (fixed ratios)
             let one_month = DurationValue::parse("1 month").unwrap();
             let thirty_days = DurationValue::parse("30 days").unwrap();
@@ -1686,10 +1779,9 @@ mod tests {
 
         #[test]
         fn month_clamping_matches_chrono_documented_behavior() {
-            // Chrono's [`NaiveDate::checked_add_months`] clamps the day of the
-            // month to the last valid day of the target month when the target
-            // day doesn't exist (its documented behavior); the calendar owner
-            // delegates month shifts to it, so the clamp is pinned here.
+            // Chrono's `checked_add_months` clamps to the target month's last
+            // day; the calendar owner delegates to it, so the clamp is pinned
+            // here.
             let jan_31_non_leap = DateValue::parse_iso("2023-01-31").unwrap();
             let feb_clamped =
                 jan_31_non_leap.shift(1, DurationUnit::Month).unwrap();
@@ -1766,14 +1858,14 @@ mod tests {
             let shifted_7d = base.apply(&seven_days).unwrap();
             let shifted_168h = base.apply(&hours_168).unwrap();
 
-            // 1w and 7d shift identically
+            // The `1w` and `7d` forms shift identically.
             assert_eq!(shifted_week, shifted_7d);
             assert_eq!(
                 shifted_week.local_wall().unwrap().to_string(),
                 "2026-03-14 12:00:00"
             );
 
-            // 1w and 168h differ across DST transition
+            // The `1w` and `168h` forms differ across the DST transition.
             assert_ne!(shifted_week, shifted_168h);
             assert_eq!(
                 shifted_168h.local_wall().unwrap().to_string(),
@@ -1794,10 +1886,10 @@ mod tests {
             // Values are equal in duration seconds
             assert_eq!(d_1d_1h, d_1h_1d);
 
-            // L->R application:
-            // "1d 1h": 1d lands in spring-forward gap (Sunday 02:30 -> shifted
-            // forward to 03:30 EDT = 07:30 UTC), then 1h advances
-            // instant by 3600s -> 08:30 UTC (04:30 EDT).
+            // Left-to-right application:
+            // "1d 1h": 1d lands in the spring-forward gap (Sunday 02:30 shifts
+            // to 03:30 EDT = 07:30 UTC), then 1h advances the instant to
+            // 08:30 UTC (04:30 EDT).
             let res_1d_1h = base.apply(&d_1d_1h).unwrap();
             assert_eq!(
                 res_1d_1h,
@@ -1808,9 +1900,9 @@ mod tests {
                 "2026-03-08 04:30:00"
             );
 
-            // "1h 1d": 1h advances Saturday instant by 3600s -> Saturday 03:30
-            // EST (08:30 UTC), then 1d shifts wall clock to Sunday
-            // 03:30 EDT (07:30 UTC).
+            // "1h 1d": 1h advances the Saturday instant to 03:30 EST
+            // (08:30 UTC), then 1d shifts the wall clock to Sunday 03:30 EDT
+            // (07:30 UTC).
             let res_1h_1d = base.apply(&d_1h_1d).unwrap();
             assert_eq!(
                 res_1h_1d,
@@ -1839,8 +1931,8 @@ mod tests {
             assert_eq!(one_and_half_days, thirty_six_hours);
             assert_eq!(one_and_half_days, written_order);
 
-            // The fractional day is a calendar-unit remainder, so it keeps the
-            // local wall clock (spec D12): 1d lands Sunday 06:00 EDT, then the
+            // The fractional day is a calendar-unit remainder, so it keeps
+            // the local wall clock: 1d lands Sunday 06:00 EDT, then the
             // 0.5-day remainder adds 12 wall hours to Sunday 18:00 EDT.
             let shifted_fractional = base.apply(&one_and_half_days).unwrap();
             assert_eq!(
@@ -1856,9 +1948,10 @@ mod tests {
             // equivalent "1d 12h".
             assert_eq!(shifted_fractional, base.apply(&written_order).unwrap());
 
-            // 36h shifts the stored instant exactly and lands an hour later on
-            // the wall clock across the 2026-03-08 gap: equal values, different
-            // shifts (the declared A2′ incoherence, spec line 87).
+            // 36h shifts the stored instant exactly and lands an hour later
+            // on the wall clock across the 2026-03-08 gap: equal duration
+            // values need not shift a date-time identically across a DST
+            // boundary.
             let shifted_exact = base.apply(&thirty_six_hours).unwrap();
             assert_ne!(shifted_fractional, shifted_exact);
             assert_eq!(
@@ -1933,9 +2026,9 @@ mod tests {
          {
             TzGuard::set("America/New_York");
 
-            // Saturday March 7, 2026 at 12:00 EST: month and year shifts are
-            // wall-clock preserving (spec D12), re-resolving through the
-            // local zone after the chrono arithmetic.
+            // Saturday March 7, 2026 at 12:00 EST: month and year shifts
+            // preserve the wall clock, re-resolving through the local zone
+            // after the chrono arithmetic.
             let base = DateTimeValue::parse_iso("2026-03-07 12:00:00").unwrap();
             let shifted_month = base.shift(1, DurationUnit::Month).unwrap();
             assert_eq!(
@@ -2255,10 +2348,9 @@ mod tests {
             let note = noyalib::from_str::<HostileNote>(&yaml)
                 .expect("hostile note deserializes without panicking");
 
-            // Extreme-magnitude duration: a value synthesized back from its
-            // parsed seconds (as arithmetic/formatting code does, having no
-            // original spelling to echo) renders honestly in scientific
-            // notation, never a silently truncated "0s".
+            // A value rebuilt from its parsed seconds (no original
+            // spelling to echo) renders in scientific notation, never a
+            // silent "0s".
             let synthesized =
                 DurationValue::from_seconds(note.duration_extreme.to_seconds());
             let rendered_extreme = synthesized.to_string();
@@ -2279,9 +2371,9 @@ mod tests {
                 DateValue::parse_iso("2026-07-01").expect("valid date")
             );
 
-            // "…Z" datetime: parses to the same instant as the equivalent
-            // explicit-offset spelling (a naive spelling would mean the local
-            // zone) and re-serializes with the same spelling.
+            // "…Z" datetime: parses to the same instant as the explicit-offset
+            // spelling (naive would mean the local zone) and re-serializes
+            // with the same spelling.
             assert_eq!(
                 note.datetime,
                 DateTimeValue::parse_iso("2026-07-29T14:30:00+00:00")

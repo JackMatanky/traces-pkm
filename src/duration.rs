@@ -1,18 +1,19 @@
 //! Duration parsing, validation, and arithmetic.
 //!
 //! Accepts human-readable duration strings like `"1h 30m"` or `"4 yrs, 6 wks"`
-//! and converts them to a total seconds value. Parts are `<number><unit>` pairs
-//! separated by whitespace or commas.
+//! and converts them to a total seconds value. Parts are `<number><unit>`
+//! pairs, optionally separated by whitespace or commas.
 //!
 //! # Key types
 //!
-//! - [`DurationUnit`]: unit registry (parsing, seconds conversion, naming).
-//!   Single source of truth; callers should not maintain their own registries.
-//! - [`DurationValue`]: a parsed duration carrying its total seconds, its
-//!   original spelling, and its retained written parts (the regime witness).
-//! - [`DurationSeconds`]: a finite `f64` newtype with [`Ord`], [`Add`],
-//!   [`Sub`], and [`Mul`].
-//! - [`DurationError`]: error type for parse and conversion failures.
+//! - [`DurationUnit`] - Unit registry (parsing and seconds conversion). Single
+//!   source of truth; callers should not maintain their own registries.
+//! - [`DurationValue`] - A parsed duration carrying its total seconds, its
+//!   original spelling, and its retained written parts (which witness the
+//!   calendar-versus-fixed regime).
+//! - [`DurationSeconds`] - An `f64` newtype that is finite on construction,
+//!   with [`Ord`], [`Add`], [`Sub`], and [`Mul`].
+//! - [`DurationError`] - Error type for parse and conversion failures.
 
 use std::{
     borrow::Cow,
@@ -33,11 +34,28 @@ type DurationParts = Box<[(f64, DurationUnit)]>;
 /// A validated duration expression with its total seconds and original source
 /// spelling.
 ///
-/// Constructed exclusively via its crate-internal `parse`, `parse_prefix`,
-/// and `from_seconds` constructors, or the [`FromStr`] implementation. The
-/// stored seconds value is always finite when constructed through those paths;
-/// duration arithmetic operations such as [`Mul`] may produce non-finite values
-/// that are subsequently rejected by consuming conversions.
+/// Fresh values come from the crate-internal `parse`, `parse_prefix`, and
+/// `from_seconds` constructors or the [`FromStr`] implementation; `Add`,
+/// `Sub`, and `Mul` derive new values from those. Parsing guarantees a finite
+/// seconds value; arithmetic such as [`Mul`] may produce non-finite values,
+/// which consuming conversions reject.
+///
+/// # Examples
+///
+/// ```rust
+/// use traces_pkm::DurationValue;
+///
+/// let written: DurationValue = "1h 30m".parse().expect("valid duration");
+/// assert_eq!(written.to_string(), "1h 30m");
+///
+/// // Equality compares total seconds, not spelling.
+/// assert_eq!(written, "90m".parse().expect("same elapsed time"));
+///
+/// let err = "not a duration"
+///     .parse::<DurationValue>()
+///     .expect_err("unparseable input");
+/// assert!(err.to_string().contains("no number before unit"));
+/// ```
 #[derive(Clone, Debug)]
 pub struct DurationValue {
     raw: Box<str>,
@@ -50,8 +68,8 @@ impl DurationValue {
     /// in [`DurationValue::from_seconds`].
     ///
     /// Month and Year are intentionally omitted from magnitude-derived
-    /// conversion (N18, N2): their lengths are calendar-dependent and
-    /// cannot be soundly synthesized from a raw magnitude.
+    /// conversion: their lengths are calendar-dependent and cannot be soundly
+    /// synthesized from a raw magnitude.
     const SUB_YEAR_DECOMPOSITION_UNITS: [(DurationUnit, &str); 6] = [
         (DurationUnit::Week, "w"),
         (DurationUnit::Day, "d"),
@@ -64,9 +82,8 @@ impl DurationValue {
     /// Scans one `<number><unit>` part starting at `pos`, returning the
     /// magnitude, unit, and end offset.
     ///
-    /// Shared per-part mechanism of [`Self::parse`] and
-    /// [`Self::parse_prefix`]; the loops keep their own continuation,
-    /// sign, and termination policies.
+    /// Shared per-part mechanism of [`Self::parse`] and [`Self::parse_prefix`];
+    /// the loops keep their own continuation, sign, and termination policies.
     fn scan_part(
         bytes: &[u8],
         pos: usize,
@@ -81,9 +98,9 @@ impl DurationValue {
 
     /// Negates every magnitude in `parts` when `is_negative` is `true`.
     ///
-    /// Both parse loops end with this fold: only the first part may carry
-    /// the explicit sign, so the retained magnitudes are non-negative
-    /// until this point.
+    /// Both parse loops end with this fold: only the first part's sign
+    /// applies, so the retained magnitudes are non-negative until this point
+    /// (a later part may repeat a redundant `+` but never an explicit `-`).
     fn apply_sign(parts: &mut [(f64, DurationUnit)], is_negative: bool) {
         let sign = if is_negative {
             -1.0
@@ -97,12 +114,11 @@ impl DurationValue {
 
     /// Parses a duration spelling (e.g., `"1h 30m"`, `"4 hrs"`).
     ///
-    /// Accepts one or more `<number><unit>` parts separated by whitespace or
-    /// commas. A leading `+` or `-` on the first part sets the sign of the
+    /// Accepts one or more `<number><unit>` parts, optionally separated by
+    /// whitespace or commas; whitespace may also sit between a number and its
+    /// unit. A `+` or `-` at the start of the first part sets the sign of the
     /// whole duration. A part after the first may repeat a redundant `+` but
     /// never an explicit `-`.
-    ///
-    /// Returns a specific error for each failure mode.
     ///
     /// # Errors
     ///
@@ -182,9 +198,14 @@ impl DurationValue {
     ///
     /// Recognizes the same `<number><unit>` grammar as [`Self::parse`],
     /// including the leading-sign rule: only the first part may carry an
-    /// explicit `-`; a redundant `+` is accepted anywhere. Returns `None` if
-    /// `input` does not start with a valid duration segment, if no parts could
-    /// be parsed, or if a part after the first carries an explicit `-` sign.
+    /// explicit `-`; a redundant `+` is accepted anywhere. Returns `None` if:
+    ///
+    /// - The input does not start with a valid duration segment, or no parts
+    ///   could be parsed.
+    /// - A part after the first carries an explicit `-` or fails to parse; the
+    ///   loop bails on the first error rather than returning the prefix parsed
+    ///   so far.
+    /// - The folded total is not finite.
     pub(crate) fn parse_prefix(input: &str) -> Option<(Self, usize)> {
         let bytes = input.as_bytes();
         let len = bytes.len();
@@ -247,15 +268,13 @@ impl DurationValue {
     /// Synthesizes a canonical [`DurationValue`] from a [`DurationSeconds`]
     /// value.
     ///
-    /// Greedily decomposes `seconds.0.abs()` into Weeks, Days, Hours, Minutes,
-    /// Seconds, and Milliseconds using ratios derived from
-    /// [`DurationUnit::fixed_seconds`]. Month and Year are intentionally
-    /// omitted (N18, N2): their lengths are calendar-dependent and cannot be
-    /// soundly synthesized from a raw magnitude. If `seconds.0 == 0.0`,
-    /// produces `"0s"`. Negative durations have a leading `"-"`. When the
-    /// millisecond decomposition can't represent a nonzero magnitude
-    /// (rounds a sub-millisecond remainder to zero, or overflows `u64` at
-    /// the other extreme), falls back to [`DurationSeconds`]'s own
+    /// Greedily decomposes `seconds.0.abs()` into Weeks, Days, Hours,
+    /// Minutes, Seconds, and Milliseconds (ratios from
+    /// [`DurationUnit::fixed_seconds`]); Month and Year are omitted because
+    /// their lengths are calendar-dependent. Zero yields `"0s"`; a negative
+    /// duration starts with `"-"`. When the decomposition cannot represent a
+    /// nonzero magnitude (a sub-millisecond remainder rounds to zero, or `u64`
+    /// overflows at the other extreme), falls back to [`DurationSeconds`]'s
     /// [`Display`](fmt::Display) so the result never lies as `"0s"`.
     #[cfg_attr(
         not(test),
@@ -274,14 +293,14 @@ impl DurationValue {
         }
     }
 
-    /// Synthesizes the canonical raw spelling for a fixed-magnitude
-    /// duration: the greedy sub-year decomposition of
+    /// Synthesizes the canonical raw spelling for a fixed-magnitude duration:
+    /// the greedy sub-year decomposition of
     /// [`Self::SUB_YEAR_DECOMPOSITION_UNITS`], or [`DurationSeconds`]'s
-    /// [`Display`](fmt::Display) dialect when the decomposition can't
-    /// represent the magnitude (see [`Self::from_seconds`]).
+    /// [`Display`](fmt::Display) dialect when the decomposition can't represent
+    /// the magnitude (see [`Self::from_seconds`]).
     ///
-    /// Accumulates into one `String`: decomposition emits at most six
-    /// integer counts, so no per-part intermediate strings are needed.
+    /// Accumulates into one `String`: decomposition emits at most six integer
+    /// counts, so no per-part intermediate strings are needed.
     #[expect(
         clippy::arithmetic_side_effects,
         reason = "unit_ms is non-zero (>= 1) and total_ms >= unit_ms, so \
@@ -316,12 +335,11 @@ impl DurationValue {
             }
         }
 
-        // Millisecond decomposition can't represent every magnitude: it
-        // rounds a sub-millisecond remainder to zero, and overflows `u64`
-        // for a large enough magnitude (silently read back as 0 above).
-        // Either way nothing was written for a nonzero `total_secs` here;
-        // fall back to the honest `DurationSeconds` dialect (which carries
-        // its own sign) instead of lying with `"0s"`.
+        // The decomposition can't represent every magnitude: a sub-millisecond
+        // remainder rounds to zero, and a huge magnitude overflows `u64` in
+        // the milliseconds conversion above (read back as 0). Either way
+        // nothing was written for a nonzero `total_secs`; fall back to the
+        // honest `DurationSeconds` dialect instead of lying with `"0s"`.
         if decomposed {
             raw.into_boxed_str()
         } else {
@@ -331,12 +349,14 @@ impl DurationValue {
 
     /// Returns the parsed duration parts, if retained.
     ///
-    /// Values parsed from text retain their written parts and serve as a
-    /// regime witness: [`Some`] containing [`DurationUnit::Day`],
-    /// [`DurationUnit::Week`], [`DurationUnit::Month`], or
-    /// [`DurationUnit::Year`] indicates calendar application semantics, while
-    /// [`Some`] with only sub-day units or [`None`] (synthesized from seconds)
-    /// indicates fixed-magnitude semantics.
+    /// Values parsed from text retain their written parts and witness the
+    /// regime:
+    ///
+    /// - [`Some`] containing a calendar unit ([`DurationUnit::Day`],
+    ///   [`DurationUnit::Week`], [`DurationUnit::Month`],
+    ///   [`DurationUnit::Year`]): calendar application semantics.
+    /// - [`Some`] with only sub-day units, or [`None`] (synthesized from
+    ///   seconds): fixed-magnitude semantics.
     #[cfg_attr(
         not(test),
         expect(
@@ -355,8 +375,8 @@ impl DurationValue {
     /// ([`DurationUnit::Day`], [`DurationUnit::Week`], [`DurationUnit::Month`],
     /// or [`DurationUnit::Year`]).
     ///
-    /// Matches every [`DurationUnit`] variant exhaustively without wildcards
-    /// per `pat-exhaustive-enum`.
+    /// Enumerates every [`DurationUnit`] variant without a wildcard arm, so
+    /// adding a unit forces a calendar-versus-fixed decision here.
     #[cfg_attr(
         not(test),
         expect(
@@ -410,13 +430,14 @@ impl DurationValue {
         self.seconds
     }
 
-    /// Returns `true` if `s` can begin a duration segment (a digit, or a
-    /// `+`/`-`/`.` immediately followed by one).
+    /// Returns `true` if `s` can begin a duration segment: a digit, a `.`
+    /// followed by a digit, or a `+`/`-` followed by a digit or by `.` and a
+    /// digit.
     ///
-    /// `O(1)`: inspects at most the first three bytes. Lets callers skip
-    /// [`Self::parse`]'s allocating error path for text that plainly can't
-    /// be a duration, without duplicating the character-set rule it shares
-    /// with [`Self::parse`] and [`Self::parse_prefix`].
+    /// `O(1)`: inspects at most the first three bytes, letting callers skip
+    /// [`Self::parse`]'s allocating error path for text that plainly can't be
+    /// a duration. The character-set rule is shared with [`Self::parse`] and
+    /// [`Self::parse_prefix`].
     #[must_use]
     pub(crate) fn can_start(s: &str) -> bool {
         Self::can_start_duration_segment(s.as_bytes(), 0)
@@ -524,9 +545,9 @@ impl DurationValue {
                 break;
             }
         }
-        // An exponent may follow a digit-bearing mantissa. A truncated
-        // exponent (`"1e"`, `"1e+"`) is not consumed: the `e` falls to the
-        // unit scanner and is reported as an unknown unit, as before.
+        // An exponent may follow a digit-bearing mantissa. A truncated exponent
+        // (`"1e"`, `"1e+"`) is not consumed: the `e` falls to the unit scanner
+        // and is reported as an unknown unit.
         if has_digit && matches!(bytes.get(pos), Some(b'e' | b'E')) {
             let mut exp_pos = pos.saturating_add(1);
             if matches!(bytes.get(exp_pos), Some(b'+' | b'-')) {
@@ -553,9 +574,9 @@ impl DurationValue {
                 input: input.to_owned(),
             });
         }
-        // `start`/`end` are byte offsets produced by scanning only
-        // single-byte ASCII (`+`/`-`/`.`/digit/`e`/`E`), so they always land
-        // on char boundaries within `input`: a direct `str` slice can't fail.
+        // `start`/`end` are byte offsets produced by scanning only single-byte
+        // ASCII (`+`/`-`/`.`/digit/`e`/`E`), so they always land on char
+        // boundaries within `input`: a direct `str` slice can't fail.
         let Some(text) = input.get(start..end) else {
             return Err(DurationError::MissingNumber {
                 input: input.to_owned(),
@@ -637,13 +658,16 @@ impl TryFrom<DurationValue> for TimeDelta {
     type Error = DurationError;
 
     /// Converts to a [`TimeDelta`] via the duration's total seconds, returning
-    /// a `NonFiniteSeconds` error on arithmetic overflow.
+    /// a `NonFiniteSeconds` error when the seconds value is non-finite or
+    /// outside `TimeDelta`'s representable range.
     #[inline]
     fn try_from(duration: DurationValue) -> Result<Self, Self::Error> {
         Self::try_from(duration.to_seconds())
     }
 }
 
+/// Renders the value's raw spelling: the original text for parsed values, the
+/// canonical sub-year decomposition for synthesized or computed ones.
 impl fmt::Display for DurationValue {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -662,8 +686,7 @@ impl PartialEq for DurationValue {
 
 impl Eq for DurationValue {}
 
-/// Orders by parsed seconds, not raw spelling, consistent with
-/// [`PartialEq`].
+/// Orders by parsed seconds, not raw spelling, consistent with [`PartialEq`].
 impl PartialOrd for DurationValue {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
@@ -706,17 +729,17 @@ impl Sub for DurationValue {
 }
 
 impl DurationValue {
-    /// Combines `rhs` with `self`, negating `rhs`'s parts (and seconds,
-    /// in the fixed regime) when `negate_rhs` is `true` — the single
-    /// implementation behind [`Add`] and [`Sub`].
+    /// Combines `rhs` with `self`, negating `rhs`'s parts (and seconds, in the
+    /// fixed regime) when `negate_rhs` is `true`; the single implementation
+    /// behind [`Add`] and [`Sub`].
     ///
-    /// When both operands have retained parts ([`Some`]), the parts are
-    /// concatenated in left-to-right order and the total seconds are
-    /// computed via a single fold over the combined parts, preserving the
-    /// bit-exact Σ invariant by construction. When either operand has no
-    /// retained parts ([`None`]), seconds are added or subtracted directly
-    /// and the result carries `None` (fixed regime). Negative zero is
-    /// normalized to positive zero.
+    /// - Both operands [`Some`]: parts concatenate left-to-right and one fold
+    ///   over the combined parts preserves the bit-exact Σ invariant by
+    ///   construction.
+    /// - Either operand [`None`]: seconds add or subtract directly and the
+    ///   result carries `None` (fixed regime).
+    ///
+    /// Negative zero normalizes to positive zero.
     fn combine(self, rhs: Self, negate_rhs: bool) -> Self {
         if let (Some(lhs_parts), Some(rhs_parts)) = (self.parts, rhs.parts) {
             let mut combined = Vec::with_capacity(
@@ -758,13 +781,13 @@ impl DurationValue {
 
 /// Scales a duration by a scalar factor.
 ///
-/// When parts are retained ([`Some`]), each part's magnitude is scaled by `rhs`
-/// and seconds are computed as the single left-to-right fold over the scaled
-/// parts. When parts are [`None`], seconds are scaled directly.
+/// With retained parts ([`Some`]), each part's magnitude scales by `rhs` and
+/// seconds come from the single left-to-right fold over the scaled parts;
+/// with [`None`], seconds scale directly.
 ///
-/// A non-finite scalar (`NaN` or `±inf`) or overflow yields a non-finite
-/// seconds value that is rejected by subsequent consuming conversions with
-/// [`DurationError::NonFiniteSeconds`]; this operation never panics.
+/// A non-finite scalar (`NaN` or `±inf`) or overflow yields non-finite seconds,
+/// which consuming conversions reject with [`DurationError::NonFiniteSeconds`];
+/// this operation never panics.
 impl Mul<f64> for DurationValue {
     type Output = Self;
 
@@ -818,8 +841,8 @@ impl Serialize for DurationValue {
     }
 }
 
-/// Deserializes via the same parser as [`FromStr`], so an unparseable string
-/// is a hard deserialization error rather than a lossy fallback.
+/// Deserializes via the same parser as [`FromStr`], so an unparseable string is
+/// a hard deserialization error rather than a lossy fallback.
 impl<'de> Deserialize<'de> for DurationValue {
     #[inline]
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -833,18 +856,26 @@ impl<'de> Deserialize<'de> for DurationValue {
 
 /// A recognized duration unit.
 ///
-/// Single source of truth for unit parsing, seconds conversion, and naming.
-/// Match on [`DurationUnit`] directly for type-safe dispatch rather than
-/// converting to strings.
+/// Single source of truth for unit parsing and seconds conversion. Match on
+/// [`DurationUnit`] directly for type-safe dispatch rather than converting to
+/// strings.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub(crate) enum DurationUnit {
+    /// Thousandths of a second (`"ms"`, `"millisecond(s)"`).
     Millisecond,
+    /// Seconds (`"s"`, `"sec(s)"`, `"second(s)"`).
     Second,
+    /// Minutes (`"m"`, `"min(s)"`, `"minute(s)"`).
     Minute,
+    /// Hours (`"h"`, `"hr(s)"`, `"hour(s)"`).
     Hour,
+    /// Days (`"d"`, `"day(s)"`); a calendar application unit.
     Day,
+    /// Weeks (`"w"`, `"wk(s)"`, `"week(s)"`); a calendar application unit.
     Week,
+    /// Months (`"mo(s)"`, `"month(s)"`); a calendar application unit.
     Month,
+    /// Years (`"y"`, `"yr(s)"`, `"year(s)"`); a calendar application unit.
     Year,
 }
 
@@ -865,11 +896,10 @@ impl DurationUnit {
 
     /// Fixed seconds per unit for duration magnitude identity.
     ///
-    /// This is the sole unit-ratio table in the codebase. Calendar application
-    /// units (Day, Week, Month, and Year) have nominal fixed ratios defined
-    /// here solely for duration value identity and magnitude ordering;
-    /// their date-shifting behavior is owned exclusively by the date
-    /// module's calendar owner.
+    /// The sole unit-ratio table in the crate. Calendar units (Day, Week,
+    /// Month, Year) get nominal fixed ratios here for value identity and
+    /// magnitude ordering only; their date-shifting behavior belongs to the
+    /// date module's calendar owner.
     #[must_use]
     pub(crate) const fn fixed_seconds(self) -> f64 {
         match self {
@@ -887,8 +917,9 @@ impl DurationUnit {
     /// Whole fixed seconds per unit as `i64`, derived from
     /// [`Self::fixed_seconds`].
     ///
-    /// Returns `None` for [`Self::Millisecond`], which is fractional seconds.
-    /// Enumerates every variant exhaustively per `pat-exhaustive-enum`.
+    /// `None` only for [`Self::Millisecond`]; every other variant is listed
+    /// explicitly, so adding a unit forces it to declare whether its ratio is
+    /// a whole number of seconds.
     #[must_use]
     #[expect(
         clippy::as_conversions,
@@ -915,8 +946,9 @@ impl DurationUnit {
 
 /// Human-readable list of accepted unit spellings for error messages.
 ///
-/// Kept beside [`UNIT_MAP`] so the two cannot drift: extend this when a
-/// unit or spelling family is added to the registry.
+/// Kept beside [`UNIT_MAP`] as a reminder to update both when a unit or
+/// spelling family is added to the registry: this lists one spelling per
+/// family, not every accepted alias.
 pub(crate) const UNIT_HINT: &str =
     "\"years\"/\"y\", \"months\"/\"mo\", \"weeks\"/\"w\", \"days\"/\"d\", \
      \"hours\"/\"h\", \"minutes\"/\"m\", \"seconds\"/\"s\", or \"ms\"";
@@ -966,12 +998,13 @@ static UNIT_MAP: phf::Map<&'static str, DurationUnit> = phf::phf_map! {
 
 /// A duration measured in seconds.
 ///
-/// Wraps `f64` with NaN-safe ordering and arithmetic; the arithmetic
-/// operators do not re-validate finiteness, so an operation that overflows
-/// can yield a non-finite result. Always finite when constructed through
-/// [`DurationValue::to_seconds`] or [`DurationSeconds::try_from`]. A signed
-/// zero is normalized to positive zero at construction, so `"-0m"` and
-/// `"0m"` compare, order, and hash identically.
+/// Wraps `f64` with NaN-safe ordering and arithmetic; operators do not
+/// re-validate finiteness, so overflow can yield a non-finite result. Parsing
+/// and [`DurationValue::from_seconds`] always produce finite values
+/// ([`DurationSeconds::try_from`] rejects non-finite input); seconds read back
+/// through [`DurationValue::to_seconds`] after arithmetic may not be. A signed
+/// zero normalizes to positive zero at construction, so `"-0m"` and `"0m"`
+/// compare, order, and hash identically.
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct DurationSeconds(pub(crate) f64);
 
@@ -984,9 +1017,9 @@ const DISPLAY_EXPONENT_UPPER: f64 = 1e15;
 const DISPLAY_EXPONENT_LOWER: f64 = 1e-6;
 
 impl DurationSeconds {
-    /// Constructs from a raw `f64`, normalizing a signed zero to positive
-    /// zero so the type's invariant (see the type docs) holds everywhere,
-    /// not just at parse time.
+    /// Constructs from a raw `f64`, normalizing a signed zero to positive zero
+    /// so the type's invariant (see the type docs) holds everywhere, not just
+    /// at parse time.
     #[inline]
     fn normalized(value: f64) -> Self {
         Self(if value == 0.0 {
@@ -1012,8 +1045,9 @@ impl TryFrom<f64> for DurationSeconds {
 impl TryFrom<DurationSeconds> for TimeDelta {
     type Error = DurationError;
 
-    /// Converts to a [`TimeDelta`], returning a `NonFiniteSeconds` error on
-    /// arithmetic overflow.
+    /// Converts to a [`TimeDelta`], returning a `NonFiniteSeconds` error when
+    /// the seconds value is non-finite or outside `TimeDelta`'s representable
+    /// range.
     #[inline]
     fn try_from(seconds: DurationSeconds) -> Result<Self, Self::Error> {
         let total = seconds.0;
@@ -1031,6 +1065,8 @@ impl TryFrom<DurationSeconds> for TimeDelta {
     }
 }
 
+/// Compares by [`f64::total_cmp`], so a `NaN` operand orders consistently
+/// instead of comparing unequal to itself.
 impl PartialEq for DurationSeconds {
     fn eq(&self, other: &Self) -> bool {
         self.0.total_cmp(&other.0) == Ordering::Equal
@@ -1039,12 +1075,15 @@ impl PartialEq for DurationSeconds {
 
 impl Eq for DurationSeconds {}
 
+/// Orders through [`Self::cmp`]; see [`PartialEq`](Self::eq) for the total
+/// order's rationale.
 impl PartialOrd for DurationSeconds {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
+/// Orders by [`f64::total_cmp`], the same order [`PartialEq`] compares by.
 impl Ord for DurationSeconds {
     fn cmp(&self, other: &Self) -> Ordering {
         self.0.total_cmp(&other.0)
@@ -1052,9 +1091,9 @@ impl Ord for DurationSeconds {
 }
 
 /// Renders in scientific notation once the magnitude reaches or clears
-/// [`DISPLAY_EXPONENT_UPPER`] or falls below [`DISPLAY_EXPONENT_LOWER`]
-/// (exact zero excluded), so an extreme magnitude never dumps a
-/// hundreds-of-digits decimal literal.
+/// [`DISPLAY_EXPONENT_UPPER`] or falls below [`DISPLAY_EXPONENT_LOWER`] (exact
+/// zero excluded), so an extreme magnitude never dumps a hundreds-of-digits
+/// decimal literal.
 impl fmt::Display for DurationSeconds {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let value = self.0;
@@ -1069,12 +1108,16 @@ impl fmt::Display for DurationSeconds {
     }
 }
 
+/// Hashes the raw bit pattern, which agrees with [`PartialEq`] because
+/// [`f64::total_cmp`] returns `Equal` only for identical patterns; normalizing
+/// a signed zero at construction is what makes `"-0m"` and `"0m"` one value.
 impl Hash for DurationSeconds {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.0.to_bits().hash(state);
     }
 }
 
+/// Adds the underlying values, normalizing a resulting signed zero.
 impl Add for DurationSeconds {
     type Output = Self;
 
@@ -1083,6 +1126,7 @@ impl Add for DurationSeconds {
     }
 }
 
+/// Subtracts the underlying values, normalizing a resulting signed zero.
 impl Sub for DurationSeconds {
     type Output = Self;
 
@@ -1091,6 +1135,7 @@ impl Sub for DurationSeconds {
     }
 }
 
+/// Scales the underlying value, normalizing a resulting signed zero.
 impl Mul<f64> for DurationSeconds {
     type Output = Self;
 
@@ -1099,6 +1144,7 @@ impl Mul<f64> for DurationSeconds {
     }
 }
 
+/// Scales a duration by a scalar factor, normalizing a resulting signed zero.
 impl Mul<DurationSeconds> for f64 {
     type Output = DurationSeconds;
 
@@ -1110,9 +1156,20 @@ impl Mul<DurationSeconds> for f64 {
 
 /// Error returned when a duration operation fails.
 ///
-/// Covers two failure domains: parsing human-readable duration text (via
-/// [`DurationValue`]'s crate-internal parser) and converting raw seconds
-/// into a validated seconds value.
+/// Three failure domains:
+///
+/// - Parsing human-readable duration text;
+/// - Validating raw seconds;
+/// - Converting a duration or seconds value to a `TimeDelta`.
+///
+/// # Examples
+///
+/// ```rust
+/// use traces_pkm::{DurationError, DurationValue};
+///
+/// let err = "".parse::<DurationValue>().expect_err("empty input");
+/// assert!(matches!(err, DurationError::Empty));
+/// ```
 #[derive(Debug, Clone, thiserror::Error)]
 #[non_exhaustive]
 pub enum DurationError {
@@ -1127,8 +1184,8 @@ pub enum DurationError {
         input: String,
     },
 
-    /// The number portion has a malformed sign (e.g., `"+h"`), or a part
-    /// after the first carries an explicit `-` (e.g., `"1h -30m"`).
+    /// The number portion has a malformed sign (e.g., `"+h"`), or a part after
+    /// the first carries an explicit `-` (e.g., `"1h -30m"`).
     #[error("invalid number in `{input}`")]
     InvalidNumber {
         /// The raw input that failed to parse.
@@ -1167,7 +1224,8 @@ pub enum DurationError {
         input: String,
     },
 
-    /// A raw seconds value is `NaN` or infinite.
+    /// A raw seconds value is `NaN` or infinite, or does not fit
+    /// `TimeDelta`'s representable range.
     #[error("duration seconds must be finite")]
     NonFiniteSeconds,
 }
@@ -1733,7 +1791,7 @@ mod tests {
                 let dv = DurationValue::parse(input).unwrap();
                 let parts = dv.parts().unwrap();
 
-                // Assert (N15b corrected convention)
+                // Assert
                 assert_eq!(parts.len(), 2);
                 assert_eq!(
                     parts.first().copied(),
@@ -1781,7 +1839,7 @@ mod tests {
                 // divergence could not hide behind `total_cmp`.
                 #[expect(
                     clippy::float_cmp,
-                    reason = "ticket 03 pins the bit-exact Σ invariant with \
+                    reason = "the test pins the bit-exact Σ invariant with \
                               raw `f64` `==`"
                 )]
                 let bit_exact = fold_total == dv.to_seconds().0;
@@ -1806,10 +1864,9 @@ mod tests {
                 let sum = DurationValue::parse("1h").unwrap()
                     + DurationValue::parse("30m").unwrap();
 
-                // Assert: `1h` + `30m` equals the `1h 30m` spelling
-                // (value-level pin, spec line 88), and the
-                // fold-based result survives subtraction of the
-                // same operand.
+                // Assert: `1h` + `30m` equals the `1h 30m` value (equality is
+                // by total seconds), and `1h 30m` minus `30m` folds back to
+                // `1h`.
                 assert_eq!(sum, expected);
                 let sub = expected - DurationValue::parse("30m").unwrap();
                 assert_eq!(
@@ -1842,7 +1899,7 @@ mod tests {
                 // stored seconds, compared as raw `f64`.
                 #[expect(
                     clippy::float_cmp,
-                    reason = "ticket 03 pins the bit-exact Σ invariant with \
+                    reason = "the test pins the bit-exact Σ invariant with \
                               raw `f64` `==`"
                 )]
                 let bit_exact = fold_total == sum.to_seconds().0;
@@ -1883,7 +1940,7 @@ mod tests {
                 let diff = none_dv - some_dv;
 
                 // Assert: mixed `Some`+`None` ⇒ `None` witness; seconds
-                // subtract directly (`Sub` = add of the negated rhs).
+                // subtract directly as the fixed-regime operands.
                 assert!(diff.parts().is_none());
                 assert_eq!(
                     diff.to_seconds(),
@@ -1913,7 +1970,7 @@ mod tests {
                 );
                 #[expect(
                     clippy::float_cmp,
-                    reason = "ticket 03 pins the bit-exact Σ invariant with \
+                    reason = "the test pins the bit-exact Σ invariant with \
                               raw `f64` `==`"
                 )]
                 let bit_exact = fold_total == scaled.to_seconds().0;
