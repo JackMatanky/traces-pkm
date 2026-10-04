@@ -770,15 +770,6 @@ mod tests {
                 Some("$draft$ #work")
             );
         }
-        #[test]
-        fn preserves_math_and_footnote_spelling_in_list_item_text() {
-            let note = parse("- Item $x$ and [^ref]\n\n[^ref]: Definition");
-
-            assert_eq!(
-                note.lists().first().map(ListItem::raw_text),
-                Some("Item $x$ and [^ref]")
-            );
-        }
     }
 
     mod parse {
@@ -1121,6 +1112,16 @@ mod tests {
 
             let text = note.lists().first().map(ListItem::raw_text);
             assert_eq!(text, Some("Wrapped\nline"));
+        }
+
+        #[test]
+        fn preserves_math_and_footnote_spelling_in_list_item_text() {
+            let note = parse("- Item $x$ and [^ref]\n\n[^ref]: Definition");
+
+            assert_eq!(
+                note.lists().first().map(ListItem::raw_text),
+                Some("Item $x$ and [^ref]")
+            );
         }
 
         #[test]
