@@ -1,8 +1,8 @@
 //! Markdown event parser for [`Note`] records.
 //!
 //! [`parse_markdown`] walks a `pulldown-cmark` event stream in a single pass,
-//! assembling a [`Note`] from frontmatter, lists, outlinks, inline fields, and
-//! tags.
+//! assembling a [`Note`] from frontmatter, headings, lists, outlinks, inline
+//! fields, and tags.
 //!
 //! # Architecture
 //!
@@ -45,12 +45,12 @@ use std::mem;
 
 use indexmap::IndexMap;
 use pulldown_cmark::{
-    CowStr, Event, LinkType as CmarkLinkType, Options, Parser, Tag as CmarkTag,
-    TagEnd,
+    CowStr, Event, HeadingLevel, LinkType as CmarkLinkType, Options, Parser,
+    Tag as CmarkTag, TagEnd,
 };
 
 use super::{
-    Frontmatter, Link, LinkType, Note, NoteFieldValue, RawFrontmatter,
+    Frontmatter, Heading, Link, LinkType, Note, NoteFieldValue, RawFrontmatter,
 };
 use crate::{BytePos, ByteSpan, FieldKey, LineIndex, Tag};
 
@@ -64,15 +64,18 @@ mod task;
 pub use input::MarkdownParserInput;
 use list::ListTracker;
 
-/// Options configuring the Markdown parser: YAML frontmatter metadata blocks
-/// and Obsidian-style wikilinks.
-const MARKDOWN_OPTIONS: Options =
-    Options::ENABLE_YAML_STYLE_METADATA_BLOCKS.union(Options::ENABLE_WIKILINKS);
+/// Options configuring the Markdown parser: YAML frontmatter, wikilinks, math,
+/// and footnotes. Math and footnote events do not contribute heading text.
+const MARKDOWN_OPTIONS: Options = Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
+    .union(Options::ENABLE_WIKILINKS)
+    .union(Options::ENABLE_MATH)
+    .union(Options::ENABLE_FOOTNOTES);
 
 /// Parses Markdown source into a [`Note`].
 ///
 /// Traverses the source text in a single pass, extracting:
 /// - YAML frontmatter metadata blocks
+/// - Headings in document order with display text and source line
 /// - Ordered and unordered list items, including task statuses
 /// - Outlinks (wikilinks and standard Markdown links)
 /// - Dataview-style inline fields (`Key:: Value`, `[Key:: Value]`, `(Key::
@@ -179,10 +182,7 @@ fn is_inline_marker_barrier(event: &Event<'_>) -> bool {
                 | CmarkTag::Strikethrough
                 | CmarkTag::Image { .. }
         ) | Event::InlineHtml(_)
-            | Event::InlineMath(_)
-            | Event::DisplayMath(_)
             | Event::Html(_)
-            | Event::FootnoteReference(_)
     )
 }
 
@@ -197,6 +197,12 @@ fn handle_event(ctx: &mut ParserContext<'_>, event: Event<'_>, span: ByteSpan) {
         Event::End(tag) => handle_end_tag(ctx, tag),
         Event::Code(text) => ctx.handle_code(&text),
         Event::Text(text) => ctx.push_text(&text),
+        Event::InlineMath(_)
+        | Event::DisplayMath(_)
+        | Event::FootnoteReference(_) => {
+            ctx.list_nesting.reject_marker();
+            ctx.push_scan_text(&ctx.input.src()[span.to_range()]);
+        }
         Event::SoftBreak | Event::HardBreak => ctx.push_break(),
         _ => ctx.list_nesting.resolve_pending_marker(),
     }
@@ -222,10 +228,26 @@ fn handle_start_tag(
             ctx.start_link(link_type, dest_url);
         }
         CmarkTag::CodeBlock(_) => ctx.start_code_block(),
-        CmarkTag::Paragraph
-        | CmarkTag::Heading {
+        CmarkTag::Paragraph => ctx.start_text_block(),
+        CmarkTag::Heading {
+            level,
             ..
-        } => ctx.start_text_block(),
+        } => {
+            ctx.start_text_block();
+            let level = match level {
+                HeadingLevel::H1 => 1,
+                HeadingLevel::H2 => 2,
+                HeadingLevel::H3 => 3,
+                HeadingLevel::H4 => 4,
+                HeadingLevel::H5 => 5,
+                HeadingLevel::H6 => 6,
+            };
+            ctx.active_heading = Some(Heading {
+                level,
+                text: String::new(),
+                line: ctx.line_index.line_at(start),
+            });
+        }
         CmarkTag::List(start_number) => {
             ctx.start_list(start_number.is_some());
         }
@@ -247,7 +269,13 @@ fn handle_end_tag(ctx: &mut ParserContext<'_>, tag: TagEnd) {
         TagEnd::MetadataBlock(_) => ctx.end_metadata_block(),
         TagEnd::Link => ctx.end_link(),
         TagEnd::CodeBlock => ctx.end_code_block(),
-        TagEnd::Paragraph | TagEnd::Heading(_) => ctx.end_text_block(),
+        TagEnd::Paragraph => ctx.end_text_block(),
+        TagEnd::Heading(_) => {
+            if let Some(heading) = ctx.active_heading.take() {
+                ctx.headings.push(heading);
+            }
+            ctx.end_text_block();
+        }
         TagEnd::List(_) => ctx.end_list(),
         TagEnd::Item => ctx.end_item(),
         _ => ctx.list_nesting.resolve_pending_marker(),
@@ -266,6 +294,10 @@ struct ParserContext<'a> {
     metadata_buffer: String,
     /// Outlinks recorded in document order.
     outlinks: Vec<Link>,
+    /// Headings recorded in document order.
+    headings: Vec<Heading>,
+    /// Heading currently accumulating display text.
+    active_heading: Option<Heading>,
     /// Link currently being traversed and accumulating display text, if any.
     active_link: Option<ActiveLink>,
     /// Nested list and list-item state for the document.
@@ -296,6 +328,8 @@ impl<'a> ParserContext<'a> {
             block: BlockContext::default(),
             metadata_buffer: String::with_capacity(256),
             outlinks: Vec::with_capacity(8),
+            headings: Vec::new(),
+            active_heading: None,
             active_link: None,
             list_nesting: ListTracker::default(),
             body_buffer: String::with_capacity(body_capacity),
@@ -311,6 +345,9 @@ impl<'a> ParserContext<'a> {
         self.list_nesting.reject_marker();
         if let Some(link) = self.active_link.as_mut() {
             link.text.push_str(text);
+        }
+        if let Some(heading) = self.active_heading.as_mut() {
+            heading.text.push_str(text);
         }
         self.inline_code(text);
     }
@@ -331,6 +368,7 @@ impl<'a> ParserContext<'a> {
             self.outlinks,
             self.inline_fields,
             tags,
+            self.headings,
         )
     }
 
@@ -478,6 +516,15 @@ impl<'a> ParserContext<'a> {
     /// The same text can update frontmatter, link display text, list item text,
     /// and metadata scan buffers. Scan buffers skip code block content.
     fn push_text(&mut self, text: &str) {
+        if let Some(heading) = self.active_heading.as_mut() {
+            heading.text.push_str(text);
+        }
+        self.push_scan_text(text);
+    }
+
+    /// Preserves source spelling in metadata buffers without adding it to the
+    /// heading text.
+    fn push_scan_text(&mut self, text: &str) {
         if self.block == BlockContext::MetadataBlock {
             self.metadata_buffer.push_str(text);
             return;
@@ -498,6 +545,9 @@ impl<'a> ParserContext<'a> {
 
     /// Appends a Markdown line break to the active text buffer.
     fn push_break(&mut self) {
+        if let Some(heading) = self.active_heading.as_mut() {
+            heading.text.push(' ');
+        }
         if let Some(link) = self.active_link.as_mut() {
             link.text.push('\n');
         }
@@ -577,6 +627,160 @@ mod tests {
         );
         parse_markdown(&input)
     }
+    mod headings {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn collects_atx_heading_with_its_level_text_and_source_line() {
+            let note = parse("Intro\n\n## Chapter");
+
+            assert_eq!(note.headings(), [crate::Heading {
+                level: 2,
+                text: "Chapter".to_owned(),
+                line: SourceLine::new(3).expect("nonzero line"),
+            }]);
+        }
+        #[test]
+        fn collects_levels_one_through_six_in_document_order() {
+            let note = parse(
+                "# One\n## Two\n### Three\n#### Four\n##### Five\n###### Six",
+            );
+
+            let actual: Vec<(u8, &str, u32)> = note
+                .headings()
+                .iter()
+                .map(|heading| {
+                    (heading.level, heading.text.as_str(), heading.line.get())
+                })
+                .collect();
+            assert_eq!(actual, [
+                (1, "One", 1),
+                (2, "Two", 2),
+                (3, "Three", 3),
+                (4, "Four", 4),
+                (5, "Five", 5),
+                (6, "Six", 6),
+            ]);
+        }
+
+        #[rstest::rstest]
+        #[case::setext_h1(
+            "First line\nsecond line\n==========",
+            1,
+            "First line second line"
+        )]
+        #[case::setext_h2(
+            "First line\nsecond line\n----------",
+            2,
+            "First line second line"
+        )]
+        fn collects_setext_display_text_from_first_source_line(
+            #[case] source: &str,
+            #[case] level: u8,
+            #[case] text: &str,
+        ) {
+            let note = parse(source);
+
+            let heading = note.headings().first().expect("Setext heading");
+            assert_eq!(
+                (heading.level, heading.text.as_str(), heading.line.get()),
+                (level, text, 1)
+            );
+        }
+
+        #[rstest::rstest]
+        #[case::emphasis("# *emphasis* and **bold**", "emphasis and bold")]
+        #[case::inline_code("# `code` and text", "code and text")]
+        #[case::wiki_alias("# [[Page|alias]]", "alias")]
+        #[case::wiki_title("# [[Page]]", "Page")]
+        #[case::markdown_link("# [foo](bar)", "foo")]
+        #[case::hard_break("First  \nsecond\n---", "First second")]
+        fn uses_markup_stripped_display_text(
+            #[case] source: &str,
+            #[case] expected: &str,
+        ) {
+            let note = parse(source);
+
+            assert_eq!(
+                note.headings().first().map(|h| h.text.as_str()),
+                Some(expected)
+            );
+        }
+
+        #[rstest::rstest]
+        #[case::bare("##")]
+        #[case::math("# $x^2$")]
+        #[case::display_math("# $$x^2$$")]
+        #[case::html("# <span></span>")]
+        #[case::footnote("# [^x]\n\n[^x]: footnote body")]
+        fn retains_headings_without_display_text(#[case] source: &str) {
+            let note = parse(source);
+
+            let heading =
+                note.headings().first().expect("empty heading retained");
+            assert_eq!(
+                (heading.level, heading.text.as_str(), heading.line.get()),
+                (
+                    if source == "##" {
+                        2
+                    } else {
+                        1
+                    },
+                    "",
+                    1
+                )
+            );
+        }
+
+        #[test]
+        fn collects_headings_inside_blockquotes_and_list_items_without_losing_metadata()
+         {
+            let note =
+                parse("> ## Quote #book\n\n- Item\n\n  ### Status:: Draft");
+
+            let actual: Vec<(u8, &str, u32)> = note
+                .headings()
+                .iter()
+                .map(|heading| {
+                    (heading.level, heading.text.as_str(), heading.line.get())
+                })
+                .collect();
+            assert_eq!(actual, [
+                (2, "Quote #book", 1),
+                (3, "Status:: Draft", 5)
+            ]);
+            assert_eq!(note.tags(), [Tag::parse("#book").expect("valid tag")]);
+            assert_eq!(note.inline_fields().len(), 1);
+            assert_eq!(note.lists().len(), 1);
+        }
+        #[test]
+        fn retains_other_metadata_when_heading_contains_math() {
+            let note = parse("# $math$\n\nStatus:: $draft$ #work");
+
+            assert_eq!(
+                note.headings().first().map(|h| h.text.as_str()),
+                Some("")
+            );
+            assert_eq!(note.tags(), [Tag::parse("#work").expect("valid tag")]);
+            let value = note.inline_fields().values().next().expect("field");
+            assert_eq!(
+                value.first().and_then(NoteFieldValue::as_str),
+                Some("$draft$ #work")
+            );
+        }
+        #[test]
+        fn preserves_math_and_footnote_spelling_in_list_item_text() {
+            let note = parse("- Item $x$ and [^ref]\n\n[^ref]: Definition");
+
+            assert_eq!(
+                note.lists().first().map(ListItem::raw_text),
+                Some("Item $x$ and [^ref]")
+            );
+        }
+    }
+
     mod parse {
         use pretty_assertions::assert_eq;
         use rstest::rstest;

@@ -11,19 +11,31 @@ use super::{
     lists::{ListItem, descendants_of},
     metadata::Frontmatter,
 };
-use crate::{FieldKey, FieldKeyRef, Tag};
+use crate::{FieldKey, FieldKeyRef, SourceLine, Tag};
+
+/// A Markdown heading with display text and its 1-indexed source line.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct Heading {
+    /// Heading level, from 1 through 6.
+    pub level: u8,
+    /// Plain display text with Markdown markup removed.
+    pub text: String,
+    /// Source line containing the heading start.
+    pub line: SourceLine,
+}
 
 /// A parsed Markdown note.
 ///
-/// Stores page-level frontmatter, list items in document order, outgoing links,
-/// inline fields, and tags. [`Self::tasks`] filters stored list items to tasks
-/// instead of duplicating them.
+/// Stores page-level frontmatter, headings and list items in document order,
+/// outgoing links, inline fields, and tags. [`Self::tasks`] filters stored list
+/// items to tasks instead of duplicating them.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Note {
     #[serde(with = "crate::path::codec")]
     path: PathBuf,
     frontmatter: Option<Frontmatter>,
     lists: Box<[ListItem]>,
+    headings: Box<[Heading]>,
     outlinks: Box<[Link]>,
     inline_fields: IndexMap<FieldKey, Box<[NoteFieldValue]>>,
     tags: Box<[Tag]>,
@@ -37,19 +49,21 @@ impl Note {
         clippy::too_many_arguments,
         reason = "constructor accepts all Note components"
     )]
-    pub(crate) fn new<P, L, O, T>(
+    pub(crate) fn new<P, L, O, T, H>(
         path: P,
         frontmatter: Option<Frontmatter>,
         lists: L,
         outlinks: O,
         inline_fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
         tags: T,
+        headings: H,
     ) -> Self
     where
         P: Into<PathBuf>,
         L: Into<Box<[ListItem]>>,
         O: Into<Box<[Link]>>,
         T: Into<Box<[Tag]>>,
+        H: Into<Box<[Heading]>>,
     {
         let boxed_fields = inline_fields
             .into_iter()
@@ -59,6 +73,7 @@ impl Note {
             path: path.into(),
             frontmatter,
             lists: lists.into(),
+            headings: headings.into(),
             outlinks: outlinks.into(),
             inline_fields: boxed_fields,
             tags: tags.into(),
@@ -84,6 +99,13 @@ impl Note {
     #[must_use]
     pub fn lists(&self) -> &[ListItem] {
         &self.lists
+    }
+
+    /// Returns headings in document order.
+    #[inline]
+    #[must_use]
+    pub fn headings(&self) -> &[Heading] {
+        &self.headings
     }
 
     /// Returns the outgoing links extracted from Markdown and wikilink syntax.
@@ -244,6 +266,7 @@ mod tests {
                 vec![outlink.clone()],
                 IndexMap::new(),
                 Vec::new(),
+                Vec::new(),
             );
 
             assert_eq!(note.path(), Path::new("notes/a.md"));
@@ -260,6 +283,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 IndexMap::new(),
+                Vec::new(),
                 Vec::new(),
             );
 
@@ -285,6 +309,7 @@ mod tests {
                 Vec::new(),
                 fields,
                 Vec::new(),
+                Vec::new(),
             );
 
             let mut expected = IndexMap::new();
@@ -305,6 +330,7 @@ mod tests {
                 Vec::new(),
                 IndexMap::new(),
                 vec![Tag::parse("#book").unwrap()],
+                Vec::new(),
             );
 
             assert_eq!(note.tags(), [Tag::parse("#book").unwrap()]);
@@ -324,6 +350,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 IndexMap::new(),
+                Vec::new(),
                 Vec::new(),
             );
 
@@ -349,6 +376,7 @@ mod tests {
                 Vec::new(),
                 inline_fields,
                 Vec::new(),
+                Vec::new(),
             );
 
             let keys: Vec<String> =
@@ -373,6 +401,7 @@ mod tests {
                 vec![],
                 inline_fields,
                 vec![],
+                Vec::new(),
             );
             let fields: Vec<_> = note.fields().collect();
             assert_eq!(fields.len(), 1);
@@ -409,6 +438,7 @@ mod tests {
                 Vec::new(),
                 IndexMap::new(),
                 Vec::new(),
+                Vec::new(),
             );
 
             let task_text: Vec<&str> =
@@ -427,6 +457,7 @@ mod tests {
                 vec![plain, checkbox],
                 Vec::new(),
                 IndexMap::new(),
+                Vec::new(),
                 Vec::new(),
             );
 
@@ -469,6 +500,7 @@ mod tests {
                 Vec::new(),
                 IndexMap::new(),
                 Vec::new(),
+                Vec::new(),
             );
 
             let texts: Vec<&str> =
@@ -500,6 +532,7 @@ mod tests {
                 Vec::new(),
                 IndexMap::new(),
                 Vec::new(),
+                Vec::new(),
             );
 
             let texts: Vec<&str> =
@@ -517,6 +550,7 @@ mod tests {
                 Vec::new(),
                 IndexMap::new(),
                 Vec::new(),
+                Vec::new(),
             );
 
             assert_eq!(note.descendants(0).count(), 0);
@@ -531,6 +565,7 @@ mod tests {
                 vec![plain],
                 Vec::new(),
                 IndexMap::new(),
+                Vec::new(),
                 Vec::new(),
             );
 
@@ -580,12 +615,22 @@ mod tests {
                 vec![outlink],
                 inline_fields,
                 vec![crate::parse_tag("#book")],
+                vec![Heading {
+                    level: 3,
+                    text: "Plain heading".to_owned(),
+                    line: SourceLine::new(7).expect("valid source line"),
+                }],
             );
 
             let bytes = postcard::to_allocvec(&note).expect("encode note");
             let decoded: Note =
                 postcard::from_bytes(&bytes).expect("decode note");
 
+            assert_eq!(decoded.headings(), [Heading {
+                level: 3,
+                text: "Plain heading".to_owned(),
+                line: SourceLine::new(7).expect("valid source line"),
+            }]);
             assert_eq!(decoded, note);
         }
     }
