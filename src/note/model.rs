@@ -7,22 +7,12 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     field::NoteFieldValue,
+    heading::Heading,
     links::Link,
     lists::{ListItem, descendants_of},
     metadata::Frontmatter,
 };
-use crate::{FieldKey, FieldKeyRef, SourceLine, Tag};
-
-/// A Markdown heading with display text and its 1-indexed source line.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub struct Heading {
-    /// Heading level, from 1 through 6.
-    pub level: u8,
-    /// Plain display text with Markdown markup removed.
-    pub text: String,
-    /// Source line containing the heading start.
-    pub line: SourceLine,
-}
+use crate::{FieldKey, FieldKeyRef, Tag};
 
 /// A parsed Markdown note.
 ///
@@ -233,7 +223,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        TaskDateSet, TaskStatus, TaskStatusSymbol, TaskStatusType,
+        SourceLine, TaskDateSet, TaskStatus, TaskStatusSymbol, TaskStatusType,
         note::{
             LinkType, ListItem, ListItemType, NoteFieldValue, TaskListItem,
         },

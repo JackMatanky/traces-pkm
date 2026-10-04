@@ -37,6 +37,7 @@
 
 mod cursor;
 mod field;
+mod heading;
 mod links;
 mod lists;
 mod metadata;
@@ -45,9 +46,10 @@ mod parser;
 
 pub(crate) use field::NoteFieldType;
 pub use field::{NoteFieldValue, NoteFieldValueRef};
+pub use heading::Heading;
 pub use links::{Link, LinkTarget, LinkType};
 pub use lists::{ListItem, ListItemType, ListText, TaskListItem};
 pub use metadata::Frontmatter;
 pub(crate) use metadata::RawFrontmatter;
-pub use model::{Heading, Note};
+pub use model::Note;
 pub use parser::{MarkdownParserInput, parse_markdown};
