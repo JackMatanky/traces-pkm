@@ -242,11 +242,11 @@ fn handle_start_tag(
                 HeadingLevel::H5 => 5,
                 HeadingLevel::H6 => 6,
             };
-            ctx.active_heading = Some(Heading {
+            ctx.active_heading = Some(Heading::new(
                 level,
-                text: String::new(),
-                line: ctx.line_index.line_at(start),
-            });
+                String::new(),
+                ctx.line_index.line_at(start),
+            ));
         }
         CmarkTag::List(start_number) => {
             ctx.start_list(start_number.is_some());
@@ -347,7 +347,7 @@ impl<'a> ParserContext<'a> {
             link.text.push_str(text);
         }
         if let Some(heading) = self.active_heading.as_mut() {
-            heading.text.push_str(text);
+            heading.push_text(text);
         }
         self.inline_code(text);
     }
@@ -517,7 +517,7 @@ impl<'a> ParserContext<'a> {
     /// and metadata scan buffers. Scan buffers skip code block content.
     fn push_text(&mut self, text: &str) {
         if let Some(heading) = self.active_heading.as_mut() {
-            heading.text.push_str(text);
+            heading.push_text(text);
         }
         self.push_scan_text(text);
     }
@@ -546,7 +546,7 @@ impl<'a> ParserContext<'a> {
     /// Appends a Markdown line break to the active text buffer.
     fn push_break(&mut self) {
         if let Some(heading) = self.active_heading.as_mut() {
-            heading.text.push(' ');
+            heading.push_text(" ");
         }
         if let Some(link) = self.active_link.as_mut() {
             link.text.push('\n');
@@ -636,11 +636,11 @@ mod tests {
         fn collects_atx_heading_with_its_level_text_and_source_line() {
             let note = parse("Intro\n\n## Chapter");
 
-            assert_eq!(note.headings(), [crate::Heading {
-                level: 2,
-                text: "Chapter".to_owned(),
-                line: SourceLine::new(3).expect("nonzero line"),
-            }]);
+            assert_eq!(note.headings(), [crate::Heading::new(
+                2,
+                "Chapter".to_owned(),
+                SourceLine::new(3).expect("nonzero line"),
+            )]);
         }
         #[test]
         fn collects_levels_one_through_six_in_document_order() {
@@ -652,7 +652,7 @@ mod tests {
                 .headings()
                 .iter()
                 .map(|heading| {
-                    (heading.level, heading.text.as_str(), heading.line.get())
+                    (heading.level(), heading.text(), heading.line().get())
                 })
                 .collect();
             assert_eq!(actual, [
@@ -685,7 +685,7 @@ mod tests {
 
             let heading = note.headings().first().expect("Setext heading");
             assert_eq!(
-                (heading.level, heading.text.as_str(), heading.line.get()),
+                (heading.level(), heading.text(), heading.line().get()),
                 (level, text, 1)
             );
         }
@@ -704,7 +704,7 @@ mod tests {
             let note = parse(source);
 
             assert_eq!(
-                note.headings().first().map(|h| h.text.as_str()),
+                note.headings().first().map(crate::Heading::text),
                 Some(expected)
             );
         }
@@ -721,7 +721,7 @@ mod tests {
             let heading =
                 note.headings().first().expect("empty heading retained");
             assert_eq!(
-                (heading.level, heading.text.as_str(), heading.line.get()),
+                (heading.level(), heading.text(), heading.line().get()),
                 (
                     if source == "##" {
                         2
@@ -744,7 +744,7 @@ mod tests {
                 .headings()
                 .iter()
                 .map(|heading| {
-                    (heading.level, heading.text.as_str(), heading.line.get())
+                    (heading.level(), heading.text(), heading.line().get())
                 })
                 .collect();
             assert_eq!(actual, [
@@ -760,7 +760,7 @@ mod tests {
             let note = parse("# $math$\n\nStatus:: $draft$ #work");
 
             assert_eq!(
-                note.headings().first().map(|h| h.text.as_str()),
+                note.headings().first().map(crate::Heading::text),
                 Some("")
             );
             assert_eq!(note.tags(), [Tag::parse("#work").expect("valid tag")]);

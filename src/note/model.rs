@@ -605,22 +605,22 @@ mod tests {
                 vec![outlink],
                 inline_fields,
                 vec![crate::parse_tag("#book")],
-                vec![Heading {
-                    level: 3,
-                    text: "Plain heading".to_owned(),
-                    line: SourceLine::new(7).expect("valid source line"),
-                }],
+                vec![Heading::new(
+                    3,
+                    "Plain heading".to_owned(),
+                    SourceLine::new(7).expect("valid source line"),
+                )],
             );
 
             let bytes = postcard::to_allocvec(&note).expect("encode note");
             let decoded: Note =
                 postcard::from_bytes(&bytes).expect("decode note");
 
-            assert_eq!(decoded.headings(), [Heading {
-                level: 3,
-                text: "Plain heading".to_owned(),
-                line: SourceLine::new(7).expect("valid source line"),
-            }]);
+            assert_eq!(decoded.headings(), [Heading::new(
+                3,
+                "Plain heading".to_owned(),
+                SourceLine::new(7).expect("valid source line"),
+            )]);
             assert_eq!(decoded, note);
         }
     }
