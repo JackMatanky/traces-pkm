@@ -1056,7 +1056,7 @@ impl DatePoint {
     ///   bounds.
     pub(crate) fn diff(
         self,
-        to: DatePoint,
+        to: Self,
         unit: DurationUnit,
     ) -> Result<DateDiff, DateError> {
         let both_datetimes = self.has_time && to.has_time;
@@ -1981,9 +1981,9 @@ mod tests {
             // 15-day remainder (half of the nominal 30-day month) applies
             // as exact civil time.
             let january = DateValue::parse_iso("2026-01-31").unwrap();
-            let shifted =
+            let clamped =
                 january.apply(&DurationValue::parse("1.5mo").unwrap()).unwrap();
-            assert_eq!(shifted, DateValue::parse_iso("2026-03-15").unwrap());
+            assert_eq!(clamped, DateValue::parse_iso("2026-03-15").unwrap());
         }
 
         #[rstest]

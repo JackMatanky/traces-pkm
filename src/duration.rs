@@ -73,9 +73,9 @@ impl DurationValue {
         input: &str,
     ) -> Result<(f64, DurationUnit, usize), DurationError> {
         let (number, after_number) = Self::parse_number(bytes, pos, input)?;
-        let mut pos = after_number;
-        Self::skip_whitespace(bytes, &mut pos);
-        let (unit, after_unit) = Self::parse_unit(bytes, pos, input)?;
+        let mut cursor = after_number;
+        Self::skip_whitespace(bytes, &mut cursor);
+        let (unit, after_unit) = Self::parse_unit(bytes, cursor, input)?;
         Ok((number, unit, after_unit))
     }
 
