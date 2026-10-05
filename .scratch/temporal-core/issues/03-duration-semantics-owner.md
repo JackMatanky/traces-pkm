@@ -2,7 +2,7 @@
 
 **What to build:** `dur("1 month")` means one thing, declared in one place: the value's identity is its magnitude (fixed ratios, named `fixed_seconds`), its parsed shape is retained, and applying it to a date is calendar-correct through a single calendar owner that the template engine delegates to. Demo contract: `dur("1 month") == dur("30 days")` as values yet they shift a date differently — demonstrated by a pinning test, documented in the glossary.
 
-**Blocked by:** None (01 and 02 merged).
+**Blocked by:** 01, 02. *(Header amended 2026-10-05: previously read `None (01 and 02 merged)` — a resolved ticket's provenance should record its actual blocking edges, and both dependencies were true blockers that merged: 01 in `c990f6c9`, 02 merged before this ticket's work began. Matches spec L143's ordering — the seam chain runs after correctness — and ticket 01's own text, "ticket 03 (`Blocked by: 01`) can proceed once this lands".)*
 
 **Status:** resolved — implemented on `duration-semantics-owner` (`57ea1b09`; remediation: `fe4c01e2` rs-review-spec, `2e4304d2` rs-review-design, `bcc938b5` rs-review-arch + rust-design audit)
 

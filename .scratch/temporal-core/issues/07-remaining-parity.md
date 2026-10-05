@@ -20,3 +20,8 @@ Skills: `rust-integration-testing`, `rust-skills`. Rules: edge strategies named 
 - [ ] Integration cases cover each workflow and edge failure (bad format string, missing date field, out-of-range week number) or state an out-of-scope reason
 - [ ] `sow`/`eow`/`soy`/`eoy` and `weekday(n)` are built from chrono primitives (`NaiveDate::iso_week()` / `from_isoywd_opt` / weekday accessors) — no epoch-day division for weeks (Dataview `.week` footgun)
 - [ ] `mise run verify` green
+
+**Review amendments (2026-10-05 adversarial rust-design pass; source: `../review.md` §11):**
+
+- [ ] **(X1 cascade) Item 11 inherits ticket 05's open grammar decision.** Bucketing helpers that *return* a date for comparison (`sow(note.date) = …`) need the same function-as-value expression surface as 05's stories 1–3 — they are not predicate-shaped `FilterFunction`s. If spec line 75 resolves to option (ii) (function-only predicates), item 11 must be restated accordingly (or helpers become predicates, which changes their Dataview parity claim — cite L14960 carefully). Read 05's X1 decision before starting this ticket; do not resolve the grammar question here. Template-side shorthands (item 12) are unaffected — seam 3 already owns them.
+- [ ] **(blocker shape)** `Blocked by: 04, 05, 06` is correct as a schedule, but the calendar-owner dependency is a seam, not just a wait: shorthands delegate to 03's `apply`/`shift` *through* 04's recognition interface. If 04 lands late, 07 cannot even stub the delegations.
