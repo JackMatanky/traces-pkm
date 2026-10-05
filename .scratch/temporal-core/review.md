@@ -4,9 +4,9 @@ Companion to `spec.md` (the tracker feature `temporal-core`): the full findings/
 
 **Status:** decisions A2′, B1+local-naive, D-b(scoped), and D11-doc-widening are **accepted**. This document is the full findings/analysis/deepening record.
 
-**Implementation status (amended 2026-10-05 — the original line here read "No implementation performed", which stopped being true):** tickets **01** (`c990f6c9`, resolved), **02** (`90696f25`, resolved), and **03** (`57ea1b09` + remediation `bcc938b5`, resolved) have landed. Consequences for this document: §1's adapter counts, §2.3's dead-surface rows, §4's format-basis lines, §9's S1/S2/S6/S10 rows, and §10's steps 2–3/5–6 are stale where marked below; tickets **04–09** remain `ready-for-agent`. Findings that arrived from the 2026-10-05 adversarial pass are in §11.
+**Implementation status (amended 2026-10-05 — the original line here read "No implementation performed", which stopped being true):** tickets **01** (`c990f6c9`, resolved), **02** (`90696f25`, resolved), and **03** (`57ea1b09` + remediation `bcc938b5`, resolved) have landed. Consequences for this document: §1's adapter counts, §2.3's dead-surface rows, §4's format-basis lines, §9's S1/S2/S6/S10 rows, and §10's steps 2–3/5–6 are stale where marked below; tickets **04–09** remain `ready-for-agent`. Findings that arrived from the 2026-10-05 adversarial pass are in §11. **Second 2026-10-05 pass (stress-test + bloat audit + blast radius) is §13** — its verdicts supersede the earlier chrono-audit report where they conflict (notably: the "collapse the `Ambiguous` arm to `.earliest()`" proposal was refuted as a would-be DST bug).
 
-**Post-v4 evolutions (settled at spec time, marked inline below):** DST policy = ambiguous → `.earliest()`, nonexistent → shift forward (was the single open item); null ordering = keep current behavior, ADR replaces the code comment; the three test seams confirmed (value types / `FilterFunction` registry / template filters); calendar frame = local wall clock for day/week/month/year application (chrono `checked_add_*` + local round-trip; Temporal/Luxon/PG parity), sub-hour units exact, incoherence extended to `1d` vs `24h` across DST (pinned by test); week joins day as a calendar application unit (≡ 7 wall-days; moment/Temporal parity — research items 24–25); one gap-verified local→UTC resolver (`MappedLocalTime` exhaustive match; tz-data errors must not shift; rustdoc cited to Temporal `'compatible'`/RFC 5545 and jiff `Compatible`; wasm caveat chrono #1701 out-of-scope); format grammar formally bound to `chrono::format::strftime` (intra-doc link, no parallel invalid-pattern validator, `%+` forbidden, interop `…Z` via `to_rfc3339_opts(Secs, use_z=true)`), week bucketing mandated to `iso_week()`/`from_isoywd_opt`; external prior-art research completed (see `research/`), backing the divergence register.
+**Post-v4 evolutions (settled at spec time, marked inline below):** DST policy = ambiguous → earliest **by the resolver's own `local_minus_utc()` comparison** (`src/date.rs:1064-1076`) — **not** chrono's `.earliest()`: chrono's `Ambiguous` pair ordering is platform-dependent (unix = smaller-offset-first = later-instant-first; Windows = opposite) and `.earliest()` returns the *latest* occurrence on unix, so the manual comparison is load-bearing (§13 RPT-F1, refuted — do not simplify), nonexistent → shift forward (was the single open item); null ordering = keep current behavior, ADR replaces the code comment; the three test seams confirmed (value types / `FilterFunction` registry / template filters); calendar frame = local wall clock for day/week/month/year application (chrono `checked_add_*` + local round-trip; Temporal/Luxon/PG parity), sub-hour units exact, incoherence extended to `1d` vs `24h` across DST (pinned by test); week joins day as a calendar application unit (≡ 7 wall-days; moment/Temporal parity — research items 24–25); one gap-verified local→UTC resolver (`MappedLocalTime` exhaustive match; tz-data errors must not shift; rustdoc cited to Temporal `'compatible'`/RFC 5545 and jiff `Compatible`; wasm caveat chrono #1701 out-of-scope); format grammar formally bound to `chrono::format::strftime` (intra-doc link, no parallel invalid-pattern validator, `%+` forbidden, interop `…Z` via `to_rfc3339_opts(Secs, use_z=true)`), week bucketing mandated to `iso_week()`/`from_isoywd_opt`; external prior-art research completed (see `research/`), backing the divergence register.
 
 ---
 
@@ -106,7 +106,7 @@ Deletion test: every value type earns its keep (grammar + registry + error taxon
 - Instants stored as `DateTime<Utc>`; **naive input (`2026-07-29 14:30`) is interpreted in the local zone and converted to UTC at parse** (parity with both plugins; avoids wrong-by-hours comparisons against `file.mtime` for non-UTC users — the prior "keep UTC" lean optimised for test convenience, not user correctness).
 - Date-only values are civil dates — no zone applies; `DateValue` untouched.
 - `now`/`today`/`tomorrow`/`weekday`/file-stat **formatting** from the local clock; storage always UTC.
-- **DST ambiguity policy for local parse — SETTLED at spec time (was this review's single open item):** ambiguous fall-back → chrono `.earliest()`; nonexistent spring-forward → shifted forward by the gap; documented in the divergence register, pinned by a test. (Original options were `.single()` reject / `.earliest()` / `.latest()`.)
+- **DST ambiguity policy for local parse — SETTLED at spec time (was this review's single open item):** ambiguous fall-back → earliest by the resolver's own `local_minus_utc()` comparison (policy: earliest occurrence; **mechanism: the manual comparison at `src/date.rs:1064-1076`, not chrono `.earliest()`** — see §13 RPT-F1); nonexistent spring-forward → shifted forward by the gap; documented in the divergence register, pinned by a test. (Original options were `.single()` reject / `.earliest()` / `.latest()` — note the `.earliest()` option is only correct as *policy wording*; the API is not the implementation.)
 - Tests inject `TZ` to stay deterministic (the engineering cost, accepted).
 
 ### D-b — accepted, scoped
@@ -258,14 +258,14 @@ pub(crate) enum Precision { YearMonth, Date, DateTime }
 
 Three independent rust-design reviews (date, duration, corpus) were run against HEAD `5b7dc748` after tickets 01–03 landed. *(2026-10-05 integration: this pass began as four standalone draft files; the consolidated report now lives inline as §11.1–§11.10 below, and the three component reports are appended in full as §12.1 (date), §12.2 (duration), §12.3 (corpus).)*
 
-**ID warning:** these findings are namespaced in the consolidated report as **D#** (date), **U#** (duration), **X#** (corpus/process) to avoid collisions — but §2 above *also* uses `D1`/`D3`/`D6`/`D7`/`D9`/`D10`/`D11` for its own findings. **A cite like "D1" is ambiguous without a location: cite `§11 D1` (the consolidated report below; its findings carry the tag **FR** in the table) vs `this doc §2.3 D1`.** Component reports (§12) keep their original IDs — `C#` (date), `F#` (duration), `G#`/`Q1x`/`Q3-C#` (corpus), `R#` (correction register) — and §11 cites them by those names. Disposition column shows where each was written into the tickets/spec (no code was changed in this pass).
+**ID warning:** these findings are namespaced in the consolidated report as **D#** (date), **U#** (duration), **X#** (corpus/process) to avoid collisions — but §2 above *also* uses `D1`/`D3`/`D6`/`D7`/`D9`/`D10`/`D11` for its own findings. **A cite like "D1" is ambiguous without a location: cite `§11 D1` (the consolidated report below; its findings carry the tag **FR** in the table) vs `this doc §2.3 D1`.** Component reports (§12) keep their original IDs — `C#` (date), `F#` (duration), `G#`/`Q1x`/`Q3-C#` (corpus), `R#` (correction register) — and §11 cites them by those names. **ID warning #2 (added 2026-10-05, §13):** the 2026-10-05 second pass (§13) must not reuse bare `F#`/`D#`/`U#`/`X#` — its findings are namespaced `RPT-F#` (chrono-audit report), `NU#`/`ND#` (new design), `T#` (bloat audit), `P#` (proposals). Bare `F#` always means §12.2's duration component report; bare `D3` is ambiguous three ways (`§2.1 D3` fractional truncation / `§11 D3` shift twins / `§11.10` cites) — always qualify. Disposition column shows where each was written into the tickets/spec (no code was changed in this pass).
 
 | ID | Finding (one line) | Disposition |
 | --- | --- | --- |
 | **D1** (FR) | Shift-frame dispatch lives in the engine: `date_shift_unit`'s `match precision` (`engine/date.rs:469-491`, `shift_wall` call `:482`) while `shift_wall` is `pub(crate)` (`date.rs:1143`) solely for that caller; frame policy stated in 5 places | **folded into 04 — decided 2026-10-05:** executed inside 04 before its `YearMonth` arm (precision hoist + frame policy = same seam change); 04 checklist + brief amended; 05's engine-frame option dissolved (new sites route through the owner entry) |
 | **D2** (FR) | Consumed-length gap: `classify` returns no byte count, so date-side gates hardcode 10 in three places + two `parse_iso` scans; date needs its own prefix entry (duration has `parse_prefix`) | 04 amendments (items D2 ×2) |
-| **D3** (FR) | `shift_calendar_months` (`date.rs:539`) / `shift_calendar_days` (`:556`) re-implement `shift_wall` (`:1143`) — ~28 lines of duplicate frame logic | **candidate, not ticketed** (folds naturally into D1's relocation) |
-| **D4** (FR) | Two f64→`TimeDelta` conversion paths with different failure modes: `seconds_delta` (`date.rs:1120`) vs `TryFrom` (`duration.rs:1042`); `NonFiniteSeconds` mislabels its source; error source erased at `date.rs:213`/`:604` | **candidate, not ticketed** (belongs to an error-mapping pass) |
+| **D3** (FR) | `shift_calendar_months` (`date.rs:539`) / `shift_calendar_days` (`:556`) re-implement `shift_wall` (`:1143`) — ~28 lines of duplicate frame logic | **owner conflict identified (§13): `04:35`'s D1 fold never names the twins while §11.10 says "pair with 05/09" — resolved: 04 owns them** (the D1 relocation and the twins are the same seam change; amended into 04) |
+| **D4** (FR) | Two f64→`TimeDelta` conversion paths with different failure modes: `seconds_delta` (`date.rs:1120`) vs `TryFrom` (`duration.rs:1042`); `NonFiniteSeconds` mislabels its source; error source erased at `date.rs:213`/`:604` | **routed to 05 (§13 P5):** unification on one correct `TryFrom` + the two divergence pins (`0.9999999996`, `-1e-10`) + source-chain preservation; error-vocab naming gated on the spec error-naming lines; see the corrected equivalence proof at §12.1 C4 |
 | **D5** (FR) | `apply`/`apply_part` fold extraction (~40-line span of two near-identical left-to-right loops) | **candidate, not ticketed** (mechanical; rides D1 or 07) |
 | **D6** (FR) | `DatePoint::new(wall, instant, has_time: bool)` (`date.rs:937-947`) — stale-precision flag representable; both call sites pass literals (`engine/date.rs:218`/`:232`); contradicts 03's handoff L97-101 | 04 checklist (added) |
 | **D7** (FR) | `DateTimeFormat::parse` returns `Result<DateTime<Utc>, …>` but attaches a UTC placeholder for naive input (`date.rs:905-914`), undone by the caller (`:421-427`) — documented, but the type lies | 04 checklist (added) |
@@ -342,7 +342,7 @@ Three independent rust-design reviews (date, duration, corpus) were run against 
 
 | Check | Result |
 | --- | --- |
-| Production bypass of `DateValue::parse_iso` | CLEAN — only tests/docs outside date.rs |
+| Production bypass of `DateValue::parse_iso` | CLEAN — only tests/docs outside date.rs. **Scope note (§13 ND-1):** this row checks *parse* bypass only; recognition **veto** gates are a separate dimension — `is_iso_shape` (`src/date.rs:127`), prefix `.get(..10)` (`src/note/field.rs:114`), and the 10-byte gates can reject or re-shape strings before `parse_iso` sees them |
 | `Local::now` (D9/02 clock doctrine) | GONE — 0 hits; compares use `Utc::now()` (engine:96, :659, :669) |
 | `f64→TimeDelta` algorithms | exactly **two** (date.rs `seconds_delta`, duration.rs `TryFrom` at :1043) |
 | `trunc()/fract()` sites | only date.rs `:247 :253 :642 :648 :1120 :1121` + duration.rs `:1052 :1053` |
@@ -414,7 +414,7 @@ Ranking basis: knowledge-duplication × evidence confidence × corpus independen
 **Predicted:** ~28 lines deleted (span-measured `:538-565`); net resolver calls unchanged; `DateTimeValue::shift` becomes the 3-step wrapper its doc claims.
 
 ##### D4 (C4) — Two independent `f64 → TimeDelta` algorithms, two error vocabularies, one erased source chain
-`new`, `conflicts-with-03` (intent, not letter — 03's wording is scoped to `apply_part`) · compression · direction: one conversion owner; map errors keeping the source
+`new`, `conflicts-with-03` (intent, not letter — 03's wording is scoped to `apply_part`) · compression · direction: one conversion owner; map errors keeping the source — **routed to 05 (§13 P5); divergence inputs `0.9999999996` and `-1e-10` (equivalence claim at §12.1 C4 corrected 2026-10-05)**
 
 | | `date.rs::seconds_delta :1119-1129` | `duration.rs::TryFrom<DurationSeconds> :1043-1058` |
 | --- | --- | --- |
@@ -651,7 +651,7 @@ Net: 4 already decided, 4 ticket-covered, 3 genuinely new (D3/D4/D5) + the earli
 
 #### A. Docs-fix only (no code) — before any remaining ticket is picked up
 
-1. **Re-verify and repin every line cite in tickets 04/09 and review.md §2**, recording the verifying commit (as 03 did). *(X3 — highest mechanical leverage: every agent pickup re-derives these.)*
+1. **Re-verify and repin every line cite in tickets 04/09 and review.md §2**, recording the verifying commit (as 03 did). *(X3 — highest mechanical leverage: every agent pickup re-derives these.)* **Fold in §13's repin list (2026-10-05):** `date.rs:212`/`:603` (error erasure + TryFrom sites), `DateTimeFormat::ALL` → `date.rs:872`, `field.rs:376`/`:386` (String↔Duration arms), `engine/date.rs:125`/`:135`/`:376-397`/`:575`/`:587`/`:602`/`:691-692` (T-new-1 sites).
 2. **Rewrite ticket 06 items 2/15, spec L102-103, review §9 S4/§10 step 6** — `format_with` is deleted; residue is engine:304 alone; re-scope 06. *(X-A)*
 3. **Rewrite ticket 09's method set** to the 6 live `expect(dead_code)` items; fix `duration.rs:217`→`353`; retire item 13's `to_rfc3339()` premise. *(X-B)*
 4. **Retense review.md §1 (rows 1-3), §9 (S1/S2/S6/S10), §10 (steps 2-3, 5-6), §4**; fix `config/model.rs:52` (08 item 14). *(X-C)*
@@ -994,7 +994,7 @@ Verified by grep: these are the **only** two `trunc/fract` f64→duration algori
 2. Mislabeled error at `duration.rs:1054-1057`: a finite-but-out-of-`TimeDelta`-range `f64` returns `NonFiniteSeconds` (the type doc at :1048 admits the conflation: "non-finite **or outside TimeDelta's representable range**"). The variant name lies for the range case.
 3. Both date call sites then erase the diagnosis: `.map_err(|_| DateError::OutOfRange)` (`date.rs:213`, `date.rs:604`) — against the house source-chain rule that motivated 03's engine remediation (which deliberately preserved `LocalZoneLookup` chains).
 
-**Equivalence check (performed):** spot-evaluated `total = -0.5` and `total = -1e-10` through both algorithms — same normalized result (`-0.5s`, `0s` respectively; `TimeDelta::new(-1, 1_000_000_000)` normalizes to `0`). So the duplication is *currently behavior-compatible*, which is exactly why it has survived — a maintenance trap, not a live bug.
+**Equivalence check — CORRECTED 2026-10-05 (§13 RPT-F4):** the original claim here was wrong. `TimeDelta::new(-1, 1_000_000_000)` does **not** normalize to `0` — it returns `None` — and `-1e-10` is a *divergence* case, not an equivalence. The two algorithms actually diverge: `0.9999999996` → `TryFrom` `Err(NonFiniteSeconds)` vs `seconds_delta` `+1s`; `-1e-10` → `Err` vs `0` (because `TimeDelta::new(…, 1e9)` → `None` while `TimeDelta::nanoseconds` carries). Not live today (`parts == None` reaches only via `from_seconds`, zero prod callers, plus mixed arithmetic, test-only); both go live together when 05 wires `apply`. Pin both inputs through both entries (seam-1, spec L125).
 
 **Analysis:** one concept ("put f64 seconds on a timeline") has two owners, two normalizations, two error vocabularies, and one documented source-erasure. Consolidation: `apply`'s fixed branch calls the same conversion the parts path uses (`seconds_delta(duration.to_seconds().0)` — `DurationSeconds.0` is `pub(crate)` and readable from `date.rs`), deleting `map_err` entirely *and* improving the source chain.
 
@@ -1914,10 +1914,121 @@ Four enumerations that disagree: ticket 09's six-method set (five already gone),
 - `research/general-temporal-libraries.md` — Temporal/Luxon/Java/Python/standards; backs: DST `compatible`/earlier consensus, dual civil-vs-zoned timelines, magnitude duration equality, strict-parse norm, CLDR locale-data weeks.
 - `research/rust-temporal-ecosystem.md` — chrono/time/jiff/Arrow/DataFusion; backs: `MappedLocalTime` semantics + gap/error conflation, chrono `Days`/`Months` vs `TimeDelta` regime split, Arrow Duration-vs-Interval, chrono strftime as the de-facto Rust dialect, known chrono critiques (RUSTSEC, serde history).
 
-**Post-v4 evolution:** the DST-ambiguity policy (the one open item below) is now **settled** — ambiguous → `.earliest()`, nonexistent → shift forward (see §4 B1) — and null ordering is **decided** (keep current behavior + ADR, §3). ~~Everything else is decided.~~ **(2026-10-05 correction: no longer true — four maintainer decisions are open and recorded as such: §11 X1 query grammar, X4 `From<DateValue>` fallback, U1 comma precedence, X7 multi-part `apply` consumer; plus sequencing questions D1-vs-04 and X8. Spec and tickets carry the questions inline.)** Post-v4: external prior-art research (`research/`) and the chrono-API audit added the local-wall-clock calendar frame, day-as-calendar, the gap-verified resolver, and the chrono format/week delegation mandates (spec 'Implementation Decisions').
+**Post-v4 evolution:** the DST-ambiguity policy (the one open item below) is now **settled** — ambiguous → earliest by the resolver's own `local_minus_utc()` comparison (§4 B1; mechanism note added 2026-10-05 per §13 RPT-F1 — the earlier "→ `.earliest()`" gloss named chrono's API, which is platform-dependent and must not be used), nonexistent → shift forward — and null ordering is **decided** (keep current behavior + ADR, §3). ~~Everything else is decided.~~ **(2026-10-05 correction: no longer true — four maintainer decisions are open and recorded as such: §11 X1 query grammar, X4 `From<DateValue>` fallback, U1 comma precedence, X7 multi-part `apply` consumer; plus sequencing questions D1-vs-04 and X8. Spec and tickets carry the questions inline.)** Post-v4: external prior-art research (`research/`) and the chrono-API audit added the local-wall-clock calendar frame, day-as-calendar, the gap-verified resolver, and the chrono format/week delegation mandates (spec 'Implementation Decisions').
 
 **Post-v4 decisions (defined in `spec.md`):**
 - **D12** — calendar frame = local wall clock: day/week/month/year application round-trips `DateTime<Utc>` → local naive → UTC through the resolver; sub-day units remain exact on the instant.
 - **D13** — day is a calendar application unit; identity stays seconds-based (`1d == 24h` as values, may shift differently across DST).
-- **D14** — gap-verified `MappedLocalTime` resolver: ambiguous → earliest, true gap → shift forward, tz-data/OS `None` → error.
+- **D14** — gap-verified `MappedLocalTime` resolver: ambiguous → earliest, true gap → shift forward, tz-data/OS `None` → error. (Mechanism: the manual `local_minus_utc()` comparison at `src/date.rs:1064-1076` — "earliest" is the policy, not chrono's `.earliest()` API; see §13 RPT-F1.)
 - **Serde channel** — `Serialize` emits explicit RFC3339 `…Z` via `to_rfc3339_opts(SecondsFormat::Secs, use_z=true)`; human `Display` remains local-naive. The local→UTC rule therefore applies only to naive user-authored input, while serialized instants round-trip exactly.
+
+---
+
+## 13. 2026-10-05 second pass — stress-test, bloat audit, blast radius
+
+**Type:** focused review + audit (research only — no code changes, no tests run; every claim is source-derived, predictions marked).
+**Method:** five passes — (1) chrono-usage audit via rust-docs-mcp @ chrono 0.4.45; (2) adversarial design review; (3) codegraph/source bloat audit (`T#`); (4) adversarial **stress-test** of passes 1–2; (5) blast-radius mapping (`P#`). Chrono claims re-verified against `~/.cargo/registry/.../chrono-0.4.45` source, not memory.
+**ID namespace (see §11 ID warning #2):** `RPT-F#` = chrono-audit report findings; `NU#`/`ND#` = new design findings; `T#` = bloat audit; `P#` = proposals. Bare `F#` elsewhere means §12.2.
+**Verdict legend:** ✅ confirmed · ✅+ sharpened · ❌ refuted · ⚠️ already decided/ticketed.
+
+### 13.1 Verdicts on the original chrono-audit report (RPT-F1–F8)
+
+| ID | Verdict | Substance |
+| --- | --- | --- |
+| **RPT-F1** — collapse `Ambiguous` arm to chrono's ordered pair (`date.rs:1064-1076`) | ❌ **REFUTED — the fix would have introduced a DST bug** | The manual `local_minus_utc()` comparison is load-bearing. chrono orders `Ambiguous` platform-dependently: unix = smaller-offset-first = *later*-instant-first (`tz_info/timezone.rs:252-267`, `rule.rs:268/:280`); Windows = opposite (`offset/local/mod.rs`, pinned by chrono test `:398-413`). chrono's docs claim `(earliest, latest)` (`offset/mod.rs:86-92`) yet its `tests/dateutils.rs:19-26` admits inconsistency. **`.earliest()` returns the LATEST occurrence on unix.** Actions taken: keep the code; glosses at `:9`/`:109`/`:1917`/`:1922` corrected above; code-comment addition (`date.rs:1068`, do-not-simplify) routed to ticket 04. Only guard: outcome test `date.rs:1371-1381`. |
+| **RPT-F2** — `num_seconds().to_f64()+subsec/1e9` reimplements `as_seconds_f64` (`date.rs:988-994`) | ✅ confirmed, **HIGH → LOW** | Mathematically identical. Plus the adjacent `.ok_or(OutOfRange)` on total `i64::to_f64()` (`:990`) is **dead**, and `Result<DateDiff, DateError>` is a phantom error channel (doc concedes `:964-966`) — overlaps D8. Third seconds-float construction (D4 owns the other two). |
+| **RPT-F3** — `SecondsFormat::Secs` truncates sub-seconds (`date.rs:771`) | ✅+ confirmed → **MEDIUM** | Fractional `DateTimeValue` loses precision through Serialize→Deserialize; Display keeps it (`:704-708`, pin `:1474`). All three serde tests use `fixed_datetime()` (nanos=0) — truncation itself has **zero pins**. `issues/01:14` is a landed `[x]` AC that self-contradicts → AC erratum added. `Secs` pinned at spec `:102`/`:108`/`:113`. `AutoSi` verified safe for every pinned test (prints nothing at nano==0 → `…Z` pins survive). No persistence path (index stores `FileMeta` via postcard only) → wire churn is API/JSON-only. PREDICTED failure, observed mechanism. Decision routed to 08. |
+| **RPT-F4 / D4** — twin f64→`TimeDelta` conversions diverge | ✅ confirmed, ≈70% already corpus D4; **proof at §12.1 C4 corrected** | Divergence inputs: `0.9999999996` → `TryFrom` `Err(NonFiniteSeconds)` vs `seconds_delta` `+1s`; `-1e-10` → `Err` vs `0`. Not live today; both go live together when 05 wires `apply`. Prod reach: `date.rs:212`/`:603` erase `DurationError` `.source()` — against the house source-chain rule. Routed to 05 (P5). |
+| **RPT-F5** — `%.f` zero-nano branch redundant (`date.rs:704-708`) | ✅ LOW | Cosmetic; no test distinguishes branches. |
+| **RPT-F6** — "chrono does the same for a broken zone" (`date.rs:738-740`) | ⚠️ already decided | Execute `08:22/:52` AC. Half-wrong comment: chrono unix *does* fall back to a UTC zone on broken local zone (`local/unix.rs:105`) ⇒ defensible for zone-load failure only. |
+| **RPT-F7** — UTC-placeholder identity round-trip (`date.rs:905-914`, `:421-427`) | ⚠️ already ticketed verbatim | `issues/04` D7 item cites the same lines. Zero new work. |
+| **RPT-F8** — `chrono::Duration`/`TimeDelta` naming | ✅ NIT | Sites: `date.rs:509/:518/:1174/:1184`. |
+| Custom-code justified list | ✅ upheld | 13 items — no other chrono/stdlib duplication found. |
+
+### 13.2 New design findings (NU/ND)
+
+| ID | Verdict | Substance |
+| --- | --- | --- |
+| **NU-1** — three-field drift: `combine`/`Mul` keep `parts`, re-synthesize `raw` via `canonical_raw` (omits Month/Year) | ✅ mechanism confirmed; **rank #1 NOT justified; wrong owner → 08** | `parse("1mo")+parse("0s")` ⇒ parts `[(1,Mo),(0,s)]`, `raw="4w 2d"` — adding the identity element changes the spelling; `parse("1mo")*2.0` prints `"8w 4d"` but applies 2 calendar months. **But spec `:84/:90` already decide the mechanism** (raw display-only; witness never in raw). No production persistence of a computed value (Add/Sub zero prod callers). → 08 register entry + seam-1 Display/Serialize pin; **not** a 05 decision. |
+| **ND-1** — recognition grammars disagree | ✅+ confirmed, **verdict matrix** | Three grammars: strict `is_iso_shape` (`date.rs:127`), lenient cascade (`:87`, pin `2026-8-22` @ `:1574`), prefix `.get(..10)` (`note/field.rs:114`). Two inverse pairs: `parse_iso` accepts `2026-8-22` that `is_iso_shape` rejects; `as_date` accepts `2026-01-01junk` that `parse_iso` rejects. Downstream: `TextShape::classify` promotes `2026-8-22` to Date ⇒ **sorts chronologically and classifies as a date while never comparing equal to a `Date`**. Module doc `date.rs:3-6` falsified by its own pre-gates. **Grammar direction for 04's `classify` undecided anywhere → amended into 04.** (`field.rs:114` is already in 04's D2 inventory — not restated as missing.) |
+| **ND-2** — `From<DateValue>` eagerly resolves zone (`date.rs:741-749`, `engine:230`) | ✅ cite correct; **justification too broad** | `instant` IS consumed (`timestamp()`/`is_past()`/`is_future()` @ `engine:379/:659/:669`; `DatePoint::diff`) — narrow to diff/payload-equality. X4(a) decided ⇒ documentation-only: add `engine:230` to 08's reach list; keep `sort.rs:375/:396`. |
+| **ND-3** — fractional calendar remainders use nominal ratios | ✅ confirmed, worse than reported | Two docs contradict code: `duration.rs:956-963` ("identity and ordering **only**") vs `date.rs:253/:648` **applying** them; `date.rs:617-619/:643-645` claim the remainder "is still calendar time" when it is `fract × 30-day nominal`. `0.5mo` = 15 nominal days; `whole=0` skips the month shift. Temporal rejects fractional months → register material. Doc+pins routed to 05/08. |
+| **NU-2** — space-separated fractional datetime unparseable | ✅ genuinely unrecorded, **MEDIUM-LOW** | No `IsoSpaceFractional` in the 6-variant enum (`date.rs:854-879`); zero accept-or-reject tests for `2026-07-29 14:30:00.123`. **Make-or-break unknown:** does `"%Y-%m-%d %H:%M:%S"` already accept it via chrono's optional `%.f`? Unverified — check before adding a variant. 04 owns the fix shape (spec `:96`). |
+| **NU-3** — `parse(",1h")` accepts, `parse_prefix` rejects | ✅ LOW, largely subsumed | `skip_separators` admits `,` in both loops (corpus U6/F6); U1 list-first decided (`08:23`). Only the *leading*-comma case is new → one case in 04's raw-spelling pin. |
+| **NU-4** — non-finite `Mul` → `raw="infs"` one-way door | ✅ LOW | Spec `:90` declares consumption-time rejection but is silent on Display/Serialize, which emit `"infs"`/`"NaNs"` (Deserialize then fails). No test → one 08 clause. |
+
+### 13.3 Corpus adjudications
+
+| Item | Verdict |
+| --- | --- |
+| **D3** shift twins | ✅ open; **owner conflict** (`04:35` never names the twins — `rg -c shift_calendar issues/04` → 0; §11.10 says 05/09) → **resolved: 04 owns them**. Plus **ID collision:** `04:21`'s "(D3)" means §2.1 D3 (fractional truncation), not §11 D3 — ticket amended to qualify. |
+| **D4** | ✅ direction right; **was in no ticket** → routed to 05 (P5). |
+| **D7** | ⚠️ closed — already in 04 verbatim. |
+| **X4** | ⚠️ decided option (a); residual = `engine:230` citation + stale doc `filter.rs:217-218` → 08. |
+
+### 13.4 Bloat-audit findings (T-series, new — not in any prior report)
+
+1. **T-new-1 (MED-HIGH) — engine performs calendar arithmetic outside the "calendar owner".** `succ_opt()`/`pred_opt()` (`engine/date.rs:125/:135`), `with_day(1)` (`:575`), `with_day(num_days_in_month)` (`:587`), `weekday()` (`:602`), `leap_year()` (`:691-692`), plus `shift_date(closure)` (`:376-397`) beside `date_shift_unit`. `date.rs:26-33` claims single ownership; 3 of the 4 named methods are `expect(dead_code)` (`:165/:192/:585`). Ticket **07 will add more** on this pattern (bucketing, sow/eow). Corpus's bypass check grepped constructors, not operations. → amended into 05's AC + 07 guard.
+2. **T-new-2 (MED) — trait-impl stratum invisible to the dead-code census.** Six impls with zero production callers: `FromStr` ×3 (`duration.rs:754`, `date.rs:313/:752`), `From<NaiveDate> for DateValue` (`date.rs:297`), `TryFrom<DurationValue> for TimeDelta` (`duration.rs:763`), `TryFrom<DurationSeconds> for TimeDelta` (`duration.rs:1043`, reaches only through dead `apply`). `spec.md:113` / 09's census grep `dead_code` and **under-count**. F4's divergence lives in code no queued ticket touches until 05 wires `apply`. → spec `:113` + 09 amended.
+3. **T-new-3 (MED) — String↔Duration filter equality is direction-dependent.** `note/field.rs:376` (String arm matches any `as_str`) ⇒ `string_field == Duration("1h")` **true**; `:386-389` (Duration arm needs a Duration literal) ⇒ `duration_field == String("1h")` **false**. Ordering disagrees too (`rank()`: Duration=3 < Text=5). Corpus covered only Date↔DateTime. → 04 decide keep-and-pin or fix.
+4. **T-new-4 (MED) — grammar verdict matrix** = ND-1's matrix above (both agents derived it independently).
+5. **T-new-5 (LOW) — census-blind micro-dead-code:** `DateTimeValue::now()` `#[cfg(test)]` (`date.rs:377-385`) validates `std`, not the module; dead `.ok_or` (`date.rs:990`); phantom `DateDiff` Result. → 09 census extended.
+
+### 13.5 Free-fn ↔ method verdicts (the explicit ask)
+
+- `shift_calendar_months/days` → **wrong shape (D3)**: should *call* `shift_wall`; a fold, not a new type. → 04.
+- `seconds_delta` vs `TryFrom<DurationSeconds> for TimeDelta` → **two shapes, one op, one buggy (D4)**: consolidate on one correct `TryFrom` (`DurationSeconds` is the lawful home — orphan rules forbid `TryFrom<f64> for TimeDelta`); keep the `DateError::OutOfRange` mapping but stop erasing `.source()`. → 05.
+- `local_naive_to_utc`, `resolve_gap_offset`, `shift_months` → **free fns correct** (foreign receivers); keep — **and keep the manual ambiguity comparison (RPT-F1)**.
+- `signed_years_since`/`signed_months_since` → free fn correct; `NaiveDateExt` trait = marginal gain, **not recommended**.
+- 11 duration scanner associated fns → **namespace-mismatched, not method-worthy** (9 stateless scanner + 2 witness helpers; `combine` is consuming). Private `mod scan` grouping = navigability only; **rides 04's loop rewrite, never standalone**; breaks exactly 3 test paths (`duration.rs:1489/:1498`, `:1833/:1894/:1957`).
+- `DateTimeFormat`/`DateFormat` cascades; guards → missing `parse_any`, wrongly-attached guards — both owned by 04 (N20/D1, N15).
+- `shift_wall` → not "free to keep": 04's D1 fold demotes it to private; 09 verifies post-04.
+
+Net: no missed method conversions of consequence; wrong shapes = D3, D4, scanner namespace.
+
+### 13.6 `src/date/` split — HOLD (final answer)
+
+**HOLD; re-measure after 04 + 05.** Corroborated three ways: spec `:137` explicitly holds it; §11.5 lists it corpus-settled; the count is **non-monotonic** post-04 (classify + precision + `YearMonth` move *in*; D1 relocation + D3 twins move ~28 ln *out*). Freeze criteria: prod >~1.3k **and** ≥2 independently-changing regions. Natural split if triggered: `date/value.rs` (values + shift/apply) / `date/recognize.rs` (formats + classify + precision). Do **not** carve across `apply ↔ apply_part ↔ seconds_delta`. Import churn small (2 files: `lib.rs:63-101`, `engine/date.rs:44-48`) but `pub(crate)` widening collides with 04's demotion + 09's visibility review. `duration.rs`: only the optional `mod scan`; no directory split.
+
+### 13.7 Blast-radius dependency graph (P1–P11)
+
+```
+P3 (classify grammar direction) ──┬─> P6 (DateTimeFormat::parse shape)  [04 co-schedules both — D7 already there]
+                                  ├─> P9/NU-2 (space-fractional entry)  [same enum + cascade; verify %.f first]
+                                  └─> mod scan grouping                 [guards/scanner die with classify]
+P7/D3 (shift_calendar_* → shift_wall) ─> 04's D1 fold (04:35) ─> post-04 shift_wall visibility (09)
+P5/D4 (unify f64→TimeDelta) ─> routed to 05; error vocab gated on spec error-naming lines
+P1/NU-1 ─X─ NOT a 05 decision (spec:84/:90 decide it) ─> 08 register entry
+P2/RPT-F3 (Secs) ─> docs chain: spec:102/:108/:113 + 01 AC erratum + 04's fractional pin
+P4/RPT-F1 (Ambiguous arm) ─> independent; NO code change — glosses fixed here; comment → 04
+P8/ND-2 ─> superseded by X4(a) (08); residual = citation addendum (engine:230)
+P10 (date/ split) ─> strictly AFTER 04 + 05 + parse_with — last (spec:137 hold + freeze criteria)
+```
+
+**Ticket-ownership matrix:** RPT-F1 (04 comment + corpus fix done), RPT-F3 (01 erratum done; decision → 08), NU-1/NU-4/ND-2-citation (08), NU-2/ND-1 grammar/T-new-3/D3-twins/comment (04), D4/ND-3/T-new-1-AC (05), T-new-2/T-new-5 (09), D7/X4/F6 (already in 04/08).
+
+### 13.8 Test-coverage gaps (no pinning test today)
+
+1. **RPT-F1** — nothing distinguishes "earliest by our comparison" from "chrono's first field"; only outcome pin `date.rs:1371-1381`.
+2. **D4** — no test hits rounded nanos at exactly `1e9`; pins `0.9999999996`, `-1e-10` through both entries (nearest existing `duration.rs:2276`).
+3. **RPT-F3** — no test serializes a sub-second `DateTimeValue` (all serde tests whole-second: `date.rs:2284/:2293`, `field.rs:1776`).
+4. **NU-1** — no test pins Display/Serialize of a *computed* duration (`duration.rs:1667` covers parse only).
+5. **NU-2** — no test asserts accept *or* reject of space+fractional (gap is unknown, not merely unpinned).
+6. **RPT-F7** — the placeholder itself (`…00Z` before the undo at `:424-427`) unpinned.
+7. **ND-1** — `field.rs:833` pins leniency, but nothing pins `classify`'s `Some(Err)` × `field.rs:531` unguarded parse (spec `:116` perf rule).
+8. **ND-2** — UTC-fallback path unreproducible without fault injection; X4(a) registered, not executable.
+9. **D3** — engine shift tests don't assert *which* path ran; delegation verifiable only by line audit.
+
+→ All nine folded into spec `:125` (seam-1 list) and the relevant tickets.
+
+### 13.9 Explicit do-NOTs (stress-test-confirmed negatives)
+
+Do **not**: collapse the `Ambiguous` arm or adopt `.earliest()`; re-open NU-1 as a 05 design change; split `date/` now; add `NaiveDateExt`; re-propose D7; create a `Scanner` type; touch `SecondsFormat` without the spec+AC chain; re-litigate settled rejections (DurationValue split, Clock/TimeZone/Frame traits, merged errors, `DurationUnit::class()`, mega-classifier, `LocalWall`, public `Shift` trait, test-only `dead_code` surface).
+
+### 13.10 Coverage gaps (§11.9 addendum)
+
+No dynamic verification (`mise run verify`/tests not run — research-only; minimum pre-implementation checks: the two D4 pins, NU-2's `%.f` optionality, RPT-F3's `AutoSi` output). Chrono claims verified against registry source, not executed. `review.md` §12.2/§12.3 and several tickets read by grep, not in full. Production reach of `DateTimeValue`'s Serialize on CLI/query output paths not exhaustively traced (index persistence ruled out). Type-inferred `.into()` users of `From<DateValue> for NaiveDate` / `From<DateTimeValue> for DateTime<Utc>` not exhaustively chased. `resolve_gap_offset`'s 25-hour probe not traced against a real tzfile; no benches exist (deferred by 03).
+
+**Bottom line:** the earlier report's highest-severity item (F1 → RPT-F1) was refuted — its fix would have broken DST handling; the durable finds are RPT-F3 (spec+AC erratum, not a patch), D4 with concrete divergence values plus a corrected corpus proof, ND-1's three-grammar matrix, T-new-1 engine off-owner arithmetic, T-new-2 census blind spot, and T-new-3 equality asymmetry — sequenced into existing tickets 04/05/08/09; only this §13 + Phase-0 corpus hygiene was fresh work.
+
+*Consolidated 2026-10-05 (second pass). Read-only pass: only `.scratch/temporal-core/` docs were modified; no source files were changed.*
