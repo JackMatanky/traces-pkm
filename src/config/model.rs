@@ -58,7 +58,7 @@ const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%dT%H:%M:%S";
 /// merging.
 #[derive(Clone, Debug)]
 pub struct Config {
-    root: PathBuf,
+    root: Arc<Path>,
     templates: TemplateConfig,
     schemas: SchemasConfig,
     frontmatter: FrontmatterConfig,
@@ -69,7 +69,7 @@ impl Config {
     /// Creates a resolved config from builder-owned parts.
     #[inline]
     #[must_use]
-    pub(super) const fn new(
+    pub(super) fn new(
         templates: TemplateConfig,
         schemas: SchemasConfig,
         frontmatter: FrontmatterConfig,
@@ -77,7 +77,7 @@ impl Config {
         root: PathBuf,
     ) -> Self {
         Self {
-            root,
+            root: Arc::from(root.into_boxed_path()),
             templates,
             schemas,
             frontmatter,
@@ -108,14 +108,11 @@ impl Config {
         self.templates.global()
     }
 
-    /// Returns the configured output directory, or [`root`] when not
-    /// configured.
+    /// Returns the resolved output directory, or [`root`] when no output
+    /// directory was configured.
     ///
-    /// The value is preserved as-is from the config file:
-    ///
-    /// - **Relative**: the caller resolves it against [`root`].
-    /// - **Absolute**: used as-is; [`root`] is the fallback only when no output
-    ///   directory is configured.
+    /// Relative configured paths are resolved against [`root`]; absolute paths
+    /// are preserved.
     ///
     /// [`root`]: Self::root
     #[inline]
@@ -150,7 +147,7 @@ impl Config {
     #[inline]
     #[must_use]
     pub(crate) fn root_arc(&self) -> Arc<Path> {
-        Arc::from(self.root())
+        Arc::clone(&self.root)
     }
 
     /// Returns the `[schemas] class_field` name as a cheaply shareable
@@ -174,6 +171,7 @@ impl Config {
         global: Option<PathBuf>,
         output: PathBuf,
     ) -> Self {
+        let root: Arc<Path> = Arc::from(root.into_boxed_path());
         let schemas = SchemasConfig::default_for_root(&root);
         Self {
             root,
@@ -190,7 +188,8 @@ impl Config {
     #[must_use]
     pub fn test_default<P: Into<PathBuf>>(root: P) -> Self {
         let root = root.into();
-        let templates = TemplateConfig::new(None, None, root.clone());
+        let root: Arc<Path> = Arc::from(root.into_boxed_path());
+        let templates = TemplateConfig::new(None, None, root.to_path_buf());
         let schemas = SchemasConfig::default_for_root(&root);
         Self {
             root,
@@ -209,7 +208,7 @@ impl Config {
         self.templates = TemplateConfig::new(
             Some(self.root.join("templates")),
             None,
-            self.root.clone(),
+            self.root.to_path_buf(),
         );
         self
     }
@@ -326,8 +325,8 @@ impl SchemasConfig {
         self.class_field.as_str()
     }
 
-    /// Returns the Schema registry directory, resolved against the
-    /// originating config layer's root.
+    /// Returns the Schema registry directory, resolved against the originating
+    /// config layer's root.
     ///
     /// Defaults to `.traces/schemas/` when unconfigured.
     #[inline]
@@ -358,8 +357,8 @@ impl SchemasConfig {
     }
 
     /// Builds default schemas config with the directory resolved against
-    /// `root`, for test helpers that have a real project root to anchor
-    /// against (e.g. [`Config::test_default`]/[`Config::for_test`]).
+    /// `root`, for test helpers that have a real project root to anchor against
+    /// (e.g. [`Config::test_default`]/[`Config::for_test`]).
     #[cfg(any(test, feature = "test-utils"))]
     #[must_use]
     pub(super) fn default_for_root(root: &Path) -> Self {
@@ -557,8 +556,8 @@ impl TryFrom<RawFrontmatterConfig> for FrontmatterConfig {
     }
 }
 
-/// Resolved `[tasks]` settings: the task status lookup map and the tag
-/// filters that classify status-marked list items as Tasks.
+/// Resolved `[tasks]` settings: the task status lookup map and the tag filters
+/// that classify status-marked list items as Tasks.
 #[derive(Clone, Debug)]
 pub struct TaskConfig {
     statuses: TaskStatusMap,
@@ -568,9 +567,9 @@ pub struct TaskConfig {
 impl TaskConfig {
     /// Returns the resolved task status lookup map.
     ///
-    /// `pub(crate)`, not part of `Config`'s public accessor surface: the
-    /// lookup table is parser-internal plumbing, unlike [`Self::tag_filters`]
-    /// which is a genuine resolved-setting read.
+    /// `pub(crate)`, not part of `Config`'s public accessor surface: the lookup
+    /// table is parser-internal plumbing, unlike [`Self::tag_filters`] which is
+    /// a genuine resolved-setting read.
     #[inline]
     #[must_use]
     pub(crate) const fn statuses(&self) -> &TaskStatusMap {
@@ -684,6 +683,7 @@ impl From<RawTaskStatusKind> for TaskStatusType {
 
 /// Resolved `[schemas]` settings providing the class field name and registry
 /// directory for template lookup.
+///
 /// A safe, root-relative subdirectory path configured in TOML (e.g. `[schemas]
 /// directory`).
 ///
@@ -719,8 +719,8 @@ impl ConfigSubDir {
             })
     }
 
-    /// Validates a configured subdirectory, falling back to `default_rel`
-    /// when unconfigured.
+    /// Validates a configured subdirectory, falling back to `default_rel` when
+    /// unconfigured.
     ///
     /// # Errors
     ///
@@ -777,8 +777,8 @@ impl DateFieldConfig {
         &self.format
     }
 
-    /// Builds a default date field config for `name` using the shared
-    /// default date format.
+    /// Builds a default date field config for `name` using the shared default
+    /// date format.
     ///
     /// # Panics
     ///
@@ -828,6 +828,19 @@ impl DateFieldConfig {
 mod tests {
     use super::*;
     use crate::task::TaskError;
+
+    mod root_arc {
+        use super::*;
+
+        #[test]
+        fn repeated_calls_share_the_cached_allocation() {
+            let config = Config::test_default(PathBuf::from("/vault"));
+            let first = config.root_arc();
+            let second = config.root_arc();
+
+            assert!(Arc::ptr_eq(&first, &second));
+        }
+    }
 
     mod frontmatter_for_test {
         use pretty_assertions::assert_eq;

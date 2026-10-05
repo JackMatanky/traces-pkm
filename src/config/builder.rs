@@ -1,10 +1,10 @@
 //! Merges local and global layers into one resolved [`Config`].
 //!
 //! [`ConfigBuilder`] applies local-over-global precedence field by field,
-//! resolving relative paths (such as template directories) against each
-//! layer's own config file root before the local and global layers are
-//! merged, so a global config's relative paths never resolve against the
-//! local project root by mistake.
+//! resolving relative paths (such as template directories) against each layer's
+//! own config file root before the local and global layers are merged, so a
+//! global config's relative paths never resolve against the local project root
+//! by mistake.
 
 use std::path::PathBuf;
 
@@ -52,8 +52,8 @@ impl ConfigBuilder {
     /// # Errors
     ///
     /// Returns [`ConfigBuilderError`] if `SchemasConfig`, `FrontmatterConfig`,
-    /// or `TaskConfig` field validation fails (e.g. invalid field key,
-    /// escaping subdirectory, or invalid `tag_filters` entry).
+    /// or `TaskConfig` field validation fails (e.g. invalid field key, escaping
+    /// subdirectory, or invalid `tag_filters` entry).
     pub(crate) fn build(self) -> Result<Config, ConfigBuilderError> {
         Ok(Config::new(
             self.resolve_templates()?,
@@ -241,9 +241,9 @@ mod tests {
 
         use super::*;
 
-        /// Creates a real, existing directory under `temp` for a config
-        /// root. Schema/template directory resolution validates the root
-        /// exists on disk, so fabricated non-existent paths no longer work.
+        /// Creates a real, existing directory under `temp` for a config root.
+        /// Schema/template directory resolution validates the root exists on
+        /// disk, so fabricated non-existent paths no longer work.
         fn temp_root(temp: &tempfile::TempDir, name: &str) -> PathBuf {
             let root = temp.path().join(name);
             std::fs::create_dir_all(&root).unwrap();

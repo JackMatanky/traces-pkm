@@ -87,33 +87,8 @@ impl From<&LocalConfigFile<Tracked>> for TrustRequest {
     }
 }
 
-/// Holds trust requests resolved from a single discovery operation.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct TrustRequests(Box<[TrustRequest]>);
-
-impl From<Vec<TrustRequest>> for TrustRequests {
-    #[inline]
-    fn from(requests: Vec<TrustRequest>) -> Self {
-        Self(requests.into_boxed_slice())
-    }
-}
-
-impl From<TrustRequest> for TrustRequests {
-    #[inline]
-    fn from(request: TrustRequest) -> Self {
-        Self(Box::new([request]))
-    }
-}
-
-impl IntoIterator for TrustRequests {
-    type IntoIter = std::vec::IntoIter<TrustRequest>;
-    type Item = TrustRequest;
-
-    #[inline]
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.into_vec().into_iter()
-    }
-}
+/// Trust requests resolved from a single discovery operation.
+pub(crate) type TrustRequests = Vec<TrustRequest>;
 
 /// Trust state for a workspace root.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -146,7 +121,8 @@ impl Display for ConfigTrustStatus {
         f.write_str(match self {
             Self::Trusted => "trusted",
             Self::Untrusted => "untrusted",
-            Self::MissingBaseline | Self::Stale => "stale",
+            Self::MissingBaseline => "missing baseline",
+            Self::Stale => "stale",
         })
     }
 }
@@ -158,5 +134,18 @@ impl From<WorkspaceTrustStatus> for ConfigTrustStatus {
             WorkspaceTrustStatus::Trusted => Self::Trusted,
             WorkspaceTrustStatus::Untrusted => Self::Untrusted,
         }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_baseline_displays_distinctly_from_stale() {
+        assert_eq!(
+            ConfigTrustStatus::MissingBaseline.to_string(),
+            "missing baseline"
+        );
+        assert_eq!(ConfigTrustStatus::Stale.to_string(), "stale");
     }
 }

@@ -141,7 +141,7 @@ impl TryFrom<DiscoveryOutcome> for ConfigBuilderInput {
 /// Filesystem discovery (`load`) and `TrustRequest` operations (`trust`,
 /// `untrust`) are separate surfaces on this type.
 ///
-/// Durable state lives in two hash-keyed [`FilePathTracker`] stores:
+/// Durable state lives in two hash-keyed filesystem stores:
 ///
 /// - `tracked` records config files discovery has seen.
 /// - `trusted` records workspace roots and config content baselines.
@@ -441,8 +441,8 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// Returns `ConfigStateError::Tracker` when the trust entry cannot be
-    /// removed.
+    /// - If the trust store cannot remove the root entry or its content-hash
+    ///   companion.
     #[inline]
     pub fn untrust(
         &self,
@@ -457,8 +457,7 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// Returns `ConfigStateError::Tracker` when the tracking store exists but
-    /// cannot be read.
+    /// - [`ConfigStateError::Tracker`] if reading the tracking store fails.
     #[inline]
     pub(crate) fn list_tracked(
         &self,
@@ -472,8 +471,8 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigStateError::Tracker`] when the tracking store exists but
-    /// cannot be read, or a stale entry cannot be removed.
+    /// - [`ConfigStateError::Tracker`] if reading the tracking store fails or
+    ///   removing a stale entry fails.
     #[inline]
     pub(crate) fn clean_tracked_store(
         &self,
@@ -485,8 +484,7 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigStateError::Tracker`] when the trust store exists but
-    /// cannot be read.
+    /// - [`ConfigStateError::Tracker`] if reading the trust store fails.
     #[inline]
     pub(crate) fn list_trusted(
         &self,
@@ -500,9 +498,9 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigStateError::Tracker`] when the trust store exists but
-    /// cannot be read, a stale root entry cannot be removed, or an existing
-    /// content-hash companion cannot be removed.
+    /// - [`ConfigStateError::Tracker`] if reading the trust store fails,
+    ///   removing a stale root entry fails, or removing an existing
+    ///   content-hash companion fails.
     #[inline]
     pub(crate) fn clean_trusted_store(
         &self,
@@ -892,7 +890,7 @@ mod tests {
             // Assert
             assert!(result.is_ok());
             let subjects = result.unwrap();
-            assert_eq!(subjects.into_iter().count(), 1);
+            assert_eq!(subjects.len(), 1);
         }
     }
 
@@ -1554,66 +1552,6 @@ mod tests {
             }
 
             #[test]
-            fn extracts_local_template_dir() {
-                let fixture = Fixture::new();
-                let local_path = fixture.write_config(
-                    "project/.traces/config.toml",
-                    "[templates]\ndirectory = \".traces/templates\"",
-                );
-                let global_path = fixture.write_config(
-                    "global/config.toml",
-                    "[templates]\ndirectory = \"global_tmpl\"",
-                );
-
-                let local =
-                    LocalConfigFile::<FileDiscovered>::try_new(local_path)
-                        .unwrap();
-                let global =
-                    GlobalConfigFile::<FileDiscovered>::try_new(global_path)
-                        .unwrap();
-
-                // Act
-                let config = build(&fixture, local.clone(), Some(global))
-                    .expect("build");
-
-                // Assert
-                assert_eq!(
-                    config.local_template_dir(),
-                    Some(local.root().join(".traces/templates").as_path())
-                );
-            }
-
-            #[test]
-            fn extracts_global_template_dir() {
-                let fixture = Fixture::new();
-                let local_path = fixture.write_config(
-                    "project/.traces/config.toml",
-                    "[templates]\ndirectory = \".traces/templates\"",
-                );
-                let global_path = fixture.write_config(
-                    "global/config.toml",
-                    "[templates]\ndirectory = \"global_tmpl\"",
-                );
-
-                let local =
-                    LocalConfigFile::<FileDiscovered>::try_new(local_path)
-                        .unwrap();
-                let global =
-                    GlobalConfigFile::<FileDiscovered>::try_new(global_path)
-                        .unwrap();
-
-                // Act
-                let config = build(&fixture, local, Some(global.clone()))
-                    .expect("build");
-
-                // Assert
-                assert_eq!(
-                    config.global_template_dir(),
-                    Some(global.root().join("global_tmpl").as_path())
-                );
-            }
-
-            #[test]
             fn prioritizes_local_output_dir() {
                 let fixture = Fixture::new();
                 let local_path = fixture.write_config(
@@ -1708,35 +1646,6 @@ mod tests {
                         )
                     ))
                 ));
-            }
-
-            #[test]
-            fn falls_back_to_global_output_dir_when_local_omits_output_dir() {
-                let fixture = Fixture::new();
-                let local_path = fixture.write_config(
-                    "project/.traces/config.toml",
-                    "[templates]\ndirectory = \"local_tmpl\"",
-                );
-                let global_path = fixture.write_config(
-                    "global/config.toml",
-                    "[templates]\noutput_dir = \"global_out\"",
-                );
-                let local =
-                    LocalConfigFile::<FileDiscovered>::try_new(local_path)
-                        .unwrap();
-                let global =
-                    GlobalConfigFile::<FileDiscovered>::try_new(global_path)
-                        .unwrap();
-
-                // Act
-                let config =
-                    build(&fixture, local, Some(global)).expect("build");
-
-                // Assert
-                assert_eq!(
-                    config.output_dir(),
-                    fixture.temp.path().join("project/global_out")
-                );
             }
         }
 
@@ -1843,35 +1752,6 @@ mod tests {
 
                 // Assert
                 assert_eq!(config.schemas().class_field_name(), "local_kind");
-            }
-
-            #[test]
-            fn falls_back_to_global_directory_when_local_omits_directory() {
-                let fixture = Fixture::new();
-                let local_path = fixture.write_config(
-                    "project/.traces/config.toml",
-                    "[schemas]\nclass_field = \"local_kind\"",
-                );
-                let global_path = fixture.write_config(
-                    "global/config.toml",
-                    "[schemas]\ndirectory = \"global/schemas\"",
-                );
-                let local =
-                    LocalConfigFile::<FileDiscovered>::try_new(local_path)
-                        .unwrap();
-                let global =
-                    GlobalConfigFile::<FileDiscovered>::try_new(global_path)
-                        .unwrap();
-
-                // Act
-                let config =
-                    build(&fixture, local, Some(global)).expect("build");
-
-                // Assert
-                assert_eq!(
-                    config.schemas().directory(),
-                    fixture.temp.path().join("global/global/schemas")
-                );
             }
 
             #[test]

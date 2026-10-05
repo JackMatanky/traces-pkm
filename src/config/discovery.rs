@@ -275,7 +275,7 @@ pub(crate) fn trust_requests(
         Err(DiscoveryError::LocalConfigAbsent {
             ..
         }) if allow_root_fallback => {
-            Ok(TrustRequests::from(TrustRequest::from(start.as_path())))
+            Ok(vec![TrustRequest::from(start.as_path())])
         }
         Err(error) => Err(error),
     }
@@ -289,7 +289,7 @@ fn discovered_requests(
     let outcome = run(ctx)?;
     let requests: Vec<TrustRequest> =
         outcome.local().iter().map(TrustRequest::from).collect();
-    Ok(TrustRequests::from(requests))
+    Ok(requests)
 }
 
 fn trust_anchor(path: &Path) -> DiscoveryAnchor {
@@ -747,7 +747,7 @@ mod tests {
             // Assert
             assert!(result.is_ok());
             let requests = result.unwrap();
-            assert_eq!(requests.into_iter().count(), 1);
+            assert_eq!(requests.len(), 1);
         }
 
         #[test]
@@ -761,7 +761,7 @@ mod tests {
             // Assert
             assert!(result.is_ok());
             let requests = result.unwrap();
-            assert_eq!(requests.into_iter().count(), 1);
+            assert_eq!(requests.len(), 1);
         }
 
         #[test]
@@ -776,7 +776,7 @@ mod tests {
             // Assert
             assert!(result.is_ok());
             let requests = result.unwrap();
-            assert_eq!(requests.into_iter().count(), 1);
+            assert_eq!(requests.len(), 1);
         }
 
         #[test]

@@ -609,9 +609,7 @@ mod tests {
 
             let err = result.unwrap_err();
             assert!(matches!(err, ConfigFileError::Parse { .. }));
-            assert!(
-                err.to_string().contains("failed to read or parse config file")
-            );
+            assert!(err.to_string().contains("failed to parse config file"));
         }
 
         #[test]
