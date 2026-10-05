@@ -17,8 +17,8 @@ use std::{
 use super::{
     error::ConfigFileError,
     raw::{
-        RawDateFieldConfig, RawFrontmatterConfig, RawSchemasConfig,
-        RawTaskConfig, RawTaskStatusKind,
+        RawDateFieldConfig, RawFrontmatterConfig, RawTaskConfig,
+        RawTaskStatusKind,
     },
 };
 use crate::{
@@ -27,11 +27,14 @@ use crate::{
     path::{PathError, RelativePath, SafeRelativePath},
 };
 
-/// Default `[schemas] directory` when unconfigured.
-const DEFAULT_SCHEMAS_DIR: &str = ".traces/schemas/";
+/// Default local schemas directory when unconfigured.
+pub(super) const DEFAULT_LOCAL_SCHEMAS_DIR: &str = ".traces/schemas/";
+
+/// Default `[templates] directory` for the local layer when unconfigured.
+pub(crate) const DEFAULT_LOCAL_TEMPLATES_DIR: &str = ".traces/templates";
 
 /// Default `[schemas] class_field` when unconfigured.
-const DEFAULT_CLASS_FIELD: &str = "class";
+pub(super) const DEFAULT_CLASS_FIELD: &str = "class";
 
 /// Default `[frontmatter] title` key when unconfigured.
 const DEFAULT_TITLE_FIELD: &str = "title";
@@ -55,7 +58,7 @@ const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%dT%H:%M:%S";
 /// merging.
 #[derive(Clone, Debug)]
 pub struct Config {
-    root: PathBuf,
+    root: Arc<Path>,
     templates: TemplateConfig,
     schemas: SchemasConfig,
     frontmatter: FrontmatterConfig,
@@ -66,15 +69,15 @@ impl Config {
     /// Creates a resolved config from builder-owned parts.
     #[inline]
     #[must_use]
-    pub(super) const fn new(
-        root: PathBuf,
+    pub(super) fn new(
         templates: TemplateConfig,
         schemas: SchemasConfig,
         frontmatter: FrontmatterConfig,
         tasks: TaskConfig,
+        root: PathBuf,
     ) -> Self {
         Self {
-            root,
+            root: Arc::from(root.into_boxed_path()),
             templates,
             schemas,
             frontmatter,
@@ -105,14 +108,11 @@ impl Config {
         self.templates.global()
     }
 
-    /// Returns the configured output directory, or [`root`] when not
-    /// configured.
+    /// Returns the resolved output directory, or [`root`] when no output
+    /// directory was configured.
     ///
-    /// The value is preserved as-is from the config file:
-    ///
-    /// - **Relative**: the caller resolves it against [`root`].
-    /// - **Absolute**: used as-is; [`root`] is the fallback only when no output
-    ///   directory is configured.
+    /// Relative configured paths are resolved against [`root`]; absolute paths
+    /// are preserved.
     ///
     /// [`root`]: Self::root
     #[inline]
@@ -147,7 +147,7 @@ impl Config {
     #[inline]
     #[must_use]
     pub(crate) fn root_arc(&self) -> Arc<Path> {
-        Arc::from(self.root())
+        Arc::clone(&self.root)
     }
 
     /// Returns the `[schemas] class_field` name as a cheaply shareable
@@ -156,19 +156,6 @@ impl Config {
     #[must_use]
     pub(crate) fn class_field_arc(&self) -> Arc<str> {
         Arc::from(self.schemas().class_field_name())
-    }
-
-    /// Returns the Schema registry directory resolved against the project root.
-    ///
-    /// # Errors
-    ///
-    /// - [`ConfigFileError::InvalidSubDir`] when the Schema directory escapes
-    ///   the config root or cannot be verified.
-    #[inline]
-    pub(crate) fn resolved_schema_directory(
-        &self,
-    ) -> Result<PathBuf, ConfigFileError> {
-        self.schemas.directory.resolve_against(self.root())
     }
 
     /// Builds config directly for tests that do not exercise discovery.
@@ -184,10 +171,12 @@ impl Config {
         global: Option<PathBuf>,
         output: PathBuf,
     ) -> Self {
+        let root: Arc<Path> = Arc::from(root.into_boxed_path());
+        let schemas = SchemasConfig::default_for_root(&root);
         Self {
             root,
             templates: TemplateConfig::new(local, global, output),
-            schemas: SchemasConfig::default(),
+            schemas,
             frontmatter: FrontmatterConfig::default(),
             tasks: TaskConfig::default(),
         }
@@ -199,11 +188,13 @@ impl Config {
     #[must_use]
     pub fn test_default<P: Into<PathBuf>>(root: P) -> Self {
         let root = root.into();
-        let templates = TemplateConfig::new(None, None, root.clone());
+        let root: Arc<Path> = Arc::from(root.into_boxed_path());
+        let templates = TemplateConfig::new(None, None, root.to_path_buf());
+        let schemas = SchemasConfig::default_for_root(&root);
         Self {
             root,
             templates,
-            schemas: SchemasConfig::default(),
+            schemas,
             frontmatter: FrontmatterConfig::default(),
             tasks: TaskConfig::default(),
         }
@@ -217,7 +208,7 @@ impl Config {
         self.templates = TemplateConfig::new(
             Some(self.root.join("templates")),
             None,
-            self.root.clone(),
+            self.root.to_path_buf(),
         );
         self
     }
@@ -300,15 +291,31 @@ impl TemplateConfig {
     }
 }
 
-/// Resolved `[schemas]` settings providing the class field name and registry
-/// directory for template lookup.
+/// Schema settings providing the class field name and registry directory for
+/// template lookup.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SchemasConfig {
-    directory: ConfigSubDir,
+    directory: PathBuf,
     class_field: FieldName,
 }
 
 impl SchemasConfig {
+    /// Creates schemas config from already-validated, resolved parts.
+    ///
+    /// `directory` must already be resolved against the originating config
+    /// layer's root; this constructor performs no further validation.
+    #[inline]
+    #[must_use]
+    pub(super) const fn new(
+        directory: PathBuf,
+        class_field: FieldName,
+    ) -> Self {
+        Self {
+            directory,
+            class_field,
+        }
+    }
+
     /// Returns the frontmatter key naming a Note's File Class(es).
     ///
     /// Defaults to `class` when unconfigured.
@@ -318,23 +325,17 @@ impl SchemasConfig {
         self.class_field.as_str()
     }
 
-    /// Returns the Schema registry directory as configured, unresolved against
-    /// [`Config::root`].
+    /// Returns the schema registry directory.
     ///
-    /// Defaults to `.traces/schemas/` when unconfigured.
+    /// Values produced by config loading are resolved against the root of the
+    /// layer that supplied a configured directory. When no layer configures a
+    /// directory, the default is resolved against the local project root.
+    /// `SchemasConfig::default()` keeps `.traces/schemas/` relative because it
+    /// has no config root.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "test-utils exposes the configured Schema directory; \
-                      production resolves through \
-                      Config::resolved_schema_directory"
-        )
-    )]
     pub fn directory(&self) -> &Path {
-        self.directory.as_path()
+        &self.directory
     }
 
     /// Builds schemas config directly for tests that do not exercise TOML
@@ -352,10 +353,21 @@ impl SchemasConfig {
     )]
     pub fn for_test(class_field: &str) -> Self {
         Self {
-            directory: ConfigSubDir::try_from(DEFAULT_SCHEMAS_DIR)
-                .expect("DEFAULT_SCHEMAS_DIR is a valid safe relative path"),
+            directory: PathBuf::from(DEFAULT_LOCAL_SCHEMAS_DIR),
             class_field: FieldName::try_from(class_field)
                 .expect("test class field validates as a field key"),
+        }
+    }
+
+    /// Builds default schemas config with the directory resolved against
+    /// `root`, for test helpers that have a real project root to anchor against
+    /// (e.g. [`Config::test_default`]/[`Config::for_test`]).
+    #[cfg(any(test, feature = "test-utils"))]
+    #[must_use]
+    pub(super) fn default_for_root(root: &Path) -> Self {
+        Self {
+            directory: root.join(DEFAULT_LOCAL_SCHEMAS_DIR),
+            ..Self::default()
         }
     }
 }
@@ -374,53 +386,10 @@ impl Default for SchemasConfig {
     )]
     fn default() -> Self {
         Self {
-            directory: ConfigSubDir::try_from(DEFAULT_SCHEMAS_DIR)
-                .expect("DEFAULT_SCHEMAS_DIR is a valid safe relative path"),
+            directory: PathBuf::from(DEFAULT_LOCAL_SCHEMAS_DIR),
             class_field: FieldName::try_from(DEFAULT_CLASS_FIELD)
                 .expect("DEFAULT_CLASS_FIELD is a valid field key"),
         }
-    }
-}
-
-impl TryFrom<RawSchemasConfig> for SchemasConfig {
-    type Error = ConfigFileError;
-
-    /// # Errors
-    ///
-    /// - [`ConfigFileError::InvalidFieldKey`] if `class_field` fails field name
-    ///   validation.
-    /// - [`ConfigFileError::InvalidSubDir`] if `directory` fails path
-    ///   verification.
-    #[inline]
-    #[expect(
-        clippy::expect_used,
-        reason = "DEFAULT_SCHEMAS_DIR is a hardcoded constant"
-    )]
-    fn try_from(raw: RawSchemasConfig) -> Result<Self, Self::Error> {
-        let class_field = FieldName::try_from(
-            raw.class_field.unwrap_or_else(|| DEFAULT_CLASS_FIELD.to_owned()),
-        )
-        .map_err(|source| {
-            ConfigFileError::invalid_field_key("schemas", source)
-        })?;
-
-        let directory = match raw.directory {
-            Some(dir) => {
-                ConfigSubDir::try_from(dir.clone()).map_err(|source| {
-                    ConfigFileError::InvalidSubDir {
-                        path: dir,
-                        source,
-                    }
-                })?
-            }
-            None => ConfigSubDir::try_from(DEFAULT_SCHEMAS_DIR)
-                .expect("DEFAULT_SCHEMAS_DIR is a valid safe relative path"),
-        };
-
-        Ok(Self {
-            directory,
-            class_field,
-        })
     }
 }
 
@@ -590,8 +559,8 @@ impl TryFrom<RawFrontmatterConfig> for FrontmatterConfig {
     }
 }
 
-/// Resolved `[tasks]` settings: the task status lookup map and the tag
-/// filters that classify status-marked list items as Tasks.
+/// Resolved `[tasks]` settings: the task status lookup map and the tag filters
+/// that classify status-marked list items as Tasks.
 #[derive(Clone, Debug)]
 pub struct TaskConfig {
     statuses: TaskStatusMap,
@@ -601,9 +570,9 @@ pub struct TaskConfig {
 impl TaskConfig {
     /// Returns the resolved task status lookup map.
     ///
-    /// `pub(crate)`, not part of `Config`'s public accessor surface: the
-    /// lookup table is parser-internal plumbing, unlike [`Self::tag_filters`]
-    /// which is a genuine resolved-setting read.
+    /// `pub(crate)`, not part of `Config`'s public accessor surface: the lookup
+    /// table is parser-internal plumbing, unlike [`Self::tag_filters`] which is
+    /// a genuine resolved-setting read.
     #[inline]
     #[must_use]
     pub(crate) const fn statuses(&self) -> &TaskStatusMap {
@@ -717,6 +686,7 @@ impl From<RawTaskStatusKind> for TaskStatusType {
 
 /// Resolved `[schemas]` settings providing the class field name and registry
 /// directory for template lookup.
+///
 /// A safe, root-relative subdirectory path configured in TOML (e.g. `[schemas]
 /// directory`).
 ///
@@ -750,6 +720,23 @@ impl ConfigSubDir {
                 path: self.as_path().to_path_buf(),
                 source,
             })
+    }
+
+    /// Validates a configured subdirectory, falling back to `default_rel` when
+    /// unconfigured.
+    ///
+    /// # Errors
+    ///
+    /// - [`PathError`] if the raw or default value is not a valid safe relative
+    ///   path.
+    pub(super) fn from_raw_or_default(
+        raw: Option<PathBuf>,
+        default_rel: &'static str,
+    ) -> Result<Self, PathError> {
+        match raw {
+            Some(path) => Self::try_from(path),
+            None => Self::try_from(default_rel),
+        }
     }
 }
 
@@ -793,8 +780,8 @@ impl DateFieldConfig {
         &self.format
     }
 
-    /// Builds a default date field config for `name` using the shared
-    /// default date format.
+    /// Builds a default date field config for `name` using the shared default
+    /// date format.
     ///
     /// # Panics
     ///
@@ -845,49 +832,16 @@ mod tests {
     use super::*;
     use crate::task::TaskError;
 
-    mod resolved_schema_directory {
-        use pretty_assertions::assert_eq;
-
+    mod root_arc {
         use super::*;
 
         #[test]
-        fn joins_the_configured_schema_directory_onto_root() {
-            let temp = tempfile::tempdir().expect("create temp directory");
-            let root = temp.path().join("vault");
-            let schemas = root.join(".traces/schemas");
-            std::fs::create_dir_all(&schemas).expect("create schema directory");
-            let config = Config::test_default(&root);
+        fn repeated_calls_share_the_cached_allocation() {
+            let config = Config::test_default(PathBuf::from("/vault"));
+            let first = config.root_arc();
+            let second = config.root_arc();
 
-            assert_eq!(
-                config
-                    .resolved_schema_directory()
-                    .expect("schema directory resolves"),
-                schemas
-            );
-        }
-
-        #[cfg(unix)]
-        #[test]
-        fn rejects_schema_directory_that_resolves_outside_root() {
-            let temp = tempfile::tempdir().expect("create temp directory");
-            let root = temp.path().join("root");
-            let external = temp.path().join("external");
-            std::fs::create_dir_all(&root).expect("create root directory");
-            std::fs::create_dir_all(&external)
-                .expect("create external directory");
-            std::os::unix::fs::symlink(&external, root.join(".traces"))
-                .expect("create escaping schema symlink");
-
-            let config =
-                Config::for_test(root, None, None, temp.path().join("out"));
-            let error = config
-                .resolved_schema_directory()
-                .expect_err("schema directory escapes root through symlink");
-
-            assert!(matches!(error, ConfigFileError::InvalidSubDir {
-                source: crate::path::PathError::OutsideRoot,
-                ..
-            }));
+            assert!(Arc::ptr_eq(&first, &second));
         }
     }
 
@@ -940,6 +894,45 @@ mod tests {
             assert!(ConfigSubDir::try_from("/absolute/path").is_err());
             assert!(ConfigSubDir::try_from("../parent").is_err());
             assert!(ConfigSubDir::try_from("dir/../../escaped").is_err());
+        }
+
+        #[test]
+        fn resolve_against_joins_subdir_onto_root() {
+            let temp = tempfile::tempdir().expect("create temp directory");
+            let root = temp.path().join("vault");
+            let schemas = root.join(".traces/schemas");
+            std::fs::create_dir_all(&schemas).expect("create schema directory");
+            let subdir = ConfigSubDir::try_from(DEFAULT_LOCAL_SCHEMAS_DIR)
+                .expect("valid safe relative path");
+
+            assert_eq!(
+                subdir.resolve_against(&root).expect("resolves"),
+                schemas
+            );
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn resolve_against_rejects_subdir_that_escapes_root() {
+            let temp = tempfile::tempdir().expect("create temp directory");
+            let root = temp.path().join("root");
+            let external = temp.path().join("external");
+            std::fs::create_dir_all(&root).expect("create root directory");
+            std::fs::create_dir_all(&external)
+                .expect("create external directory");
+            std::os::unix::fs::symlink(&external, root.join(".traces"))
+                .expect("create escaping schema symlink");
+            let subdir = ConfigSubDir::try_from(DEFAULT_LOCAL_SCHEMAS_DIR)
+                .expect("valid safe relative path");
+
+            let error = subdir
+                .resolve_against(&root)
+                .expect_err("schema directory escapes root through symlink");
+
+            assert!(matches!(error, ConfigFileError::InvalidSubDir {
+                source: crate::path::PathError::OutsideRoot,
+                ..
+            }));
         }
     }
 

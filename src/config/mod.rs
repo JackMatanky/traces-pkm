@@ -5,7 +5,7 @@
 //! 1. **Discover** local `.traces/config.toml` and optional global
 //!    `traces/config.toml` from a directory anchor ([`discovery`]).
 //! 2. **Track** discovered local configs in a best-effort store
-//!    ([`tracker::ConfigPathTracker`]).
+//!    ([`service::ConfigService`]).
 //! 3. **Verify trust** before parsing local content; reject untrusted or stale
 //!    files ([`trust`]).
 //! 4. **Parse** TOML into [`raw::RawConfig`] ([`mod@file`]).
@@ -32,7 +32,6 @@ mod file;
 mod model;
 mod raw;
 mod service;
-mod tracker;
 mod trust;
 
 pub(crate) use builder::ConfigBuilder;
@@ -45,6 +44,7 @@ pub(crate) use error::{
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub(crate) use file::{Discovered, LocalConfigFile};
+pub(crate) use model::DEFAULT_LOCAL_TEMPLATES_DIR;
 pub use model::{Config, FrontmatterConfig, SchemasConfig, TaskConfig};
 pub use service::ConfigService;
 #[cfg(test)]
