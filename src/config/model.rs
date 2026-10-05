@@ -27,8 +27,8 @@ use crate::{
     path::{PathError, RelativePath, SafeRelativePath},
 };
 
-/// Default `[schemas] directory` when unconfigured.
-pub(super) const DEFAULT_SCHEMAS_DIR: &str = ".traces/schemas/";
+/// Default local schemas directory when unconfigured.
+pub(super) const DEFAULT_LOCAL_SCHEMAS_DIR: &str = ".traces/schemas/";
 
 /// Default `[templates] directory` for the local layer when unconfigured.
 pub(crate) const DEFAULT_LOCAL_TEMPLATES_DIR: &str = ".traces/templates";
@@ -291,8 +291,8 @@ impl TemplateConfig {
     }
 }
 
-/// Resolved `[schemas]` settings providing the class field name and registry
-/// directory for template lookup.
+/// Schema settings providing the class field name and registry directory for
+/// template lookup.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SchemasConfig {
     directory: PathBuf,
@@ -325,10 +325,13 @@ impl SchemasConfig {
         self.class_field.as_str()
     }
 
-    /// Returns the Schema registry directory, resolved against the originating
-    /// config layer's root.
+    /// Returns the schema registry directory.
     ///
-    /// Defaults to `.traces/schemas/` when unconfigured.
+    /// Values produced by config loading are resolved against the root of the
+    /// layer that supplied a configured directory. When no layer configures a
+    /// directory, the default is resolved against the local project root.
+    /// `SchemasConfig::default()` keeps `.traces/schemas/` relative because it
+    /// has no config root.
     #[inline]
     #[must_use]
     pub fn directory(&self) -> &Path {
@@ -350,7 +353,7 @@ impl SchemasConfig {
     )]
     pub fn for_test(class_field: &str) -> Self {
         Self {
-            directory: PathBuf::from(DEFAULT_SCHEMAS_DIR),
+            directory: PathBuf::from(DEFAULT_LOCAL_SCHEMAS_DIR),
             class_field: FieldName::try_from(class_field)
                 .expect("test class field validates as a field key"),
         }
@@ -363,7 +366,7 @@ impl SchemasConfig {
     #[must_use]
     pub(super) fn default_for_root(root: &Path) -> Self {
         Self {
-            directory: root.join(DEFAULT_SCHEMAS_DIR),
+            directory: root.join(DEFAULT_LOCAL_SCHEMAS_DIR),
             ..Self::default()
         }
     }
@@ -383,7 +386,7 @@ impl Default for SchemasConfig {
     )]
     fn default() -> Self {
         Self {
-            directory: PathBuf::from(DEFAULT_SCHEMAS_DIR),
+            directory: PathBuf::from(DEFAULT_LOCAL_SCHEMAS_DIR),
             class_field: FieldName::try_from(DEFAULT_CLASS_FIELD)
                 .expect("DEFAULT_CLASS_FIELD is a valid field key"),
         }
@@ -899,7 +902,7 @@ mod tests {
             let root = temp.path().join("vault");
             let schemas = root.join(".traces/schemas");
             std::fs::create_dir_all(&schemas).expect("create schema directory");
-            let subdir = ConfigSubDir::try_from(DEFAULT_SCHEMAS_DIR)
+            let subdir = ConfigSubDir::try_from(DEFAULT_LOCAL_SCHEMAS_DIR)
                 .expect("valid safe relative path");
 
             assert_eq!(
@@ -919,7 +922,7 @@ mod tests {
                 .expect("create external directory");
             std::os::unix::fs::symlink(&external, root.join(".traces"))
                 .expect("create escaping schema symlink");
-            let subdir = ConfigSubDir::try_from(DEFAULT_SCHEMAS_DIR)
+            let subdir = ConfigSubDir::try_from(DEFAULT_LOCAL_SCHEMAS_DIR)
                 .expect("valid safe relative path");
 
             let error = subdir

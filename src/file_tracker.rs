@@ -121,9 +121,10 @@ impl FilePathTracker {
     /// Lists the canonical paths of all live entries in this store.
     ///
     /// Reads recorded targets from symlinks on Unix and path-bearing files on
-    /// Windows. A live entry has a readable target that still exists on disk.
-    /// Dangling or unreadable entries are omitted. An absent or non-directory
-    /// root returns an empty list.
+    /// Windows. A live entry has a readable target and is included when that
+    /// target exists or its existence cannot be checked. Dangling or unreadable
+    /// entries are omitted. An absent or non-directory root returns an empty
+    /// list.
     ///
     /// # Errors
     ///

@@ -13,7 +13,8 @@ use super::{
     error::{ConfigBuilderError, ConfigFileError},
     file::{GlobalConfigFile, LocalConfigFile, Parsed},
     model::{
-        ConfigSubDir, DEFAULT_CLASS_FIELD, DEFAULT_SCHEMAS_DIR, TemplateConfig,
+        ConfigSubDir, DEFAULT_CLASS_FIELD, DEFAULT_LOCAL_SCHEMAS_DIR,
+        TemplateConfig,
     },
     raw::{RawDateFieldConfig, RawFrontmatterConfig, RawTaskConfig},
 };
@@ -136,16 +137,20 @@ impl ConfigBuilder {
         let (raw_dir, dir_root) = match &local_raw.schemas.directory {
             Some(dir) => (Some(dir.clone()), self.local.root()),
             None => match self.global.as_ref() {
-                Some(g) => (g.raw().schemas.directory.clone(), g.root()),
+                Some(g) => match &g.raw().schemas.directory {
+                    Some(dir) => (Some(dir.clone()), g.root()),
+                    None => (None, self.local.root()),
+                },
                 None => (None, self.local.root()),
             },
         };
         let directory = ConfigSubDir::from_raw_or_default(
             raw_dir.clone(),
-            DEFAULT_SCHEMAS_DIR,
+            DEFAULT_LOCAL_SCHEMAS_DIR,
         )
         .map_err(|source| ConfigFileError::InvalidSubDir {
-            path: raw_dir.unwrap_or_else(|| PathBuf::from(DEFAULT_SCHEMAS_DIR)),
+            path: raw_dir
+                .unwrap_or_else(|| PathBuf::from(DEFAULT_LOCAL_SCHEMAS_DIR)),
             source,
         })?
         .resolve_against(dir_root)?;
@@ -241,6 +246,43 @@ mod tests {
 
         use super::*;
 
+        mod schemas {
+            use pretty_assertions::assert_eq;
+
+            use super::*;
+
+            #[test]
+            fn resolves_default_to_local_root_when_global_directory_is_unset() {
+                // Arrange
+                let temp = tempfile::tempdir().expect("create temp dir");
+                let root = temp_root(&temp, "project");
+                let local = LocalConfigFile::<Parsed>::from_content_for_test(
+                    root.clone(),
+                    root.join(".traces/config.toml"),
+                    "",
+                )
+                .expect("parse local config");
+                let global_root = temp_root(&temp, "global");
+                let global = GlobalConfigFile::<Parsed>::from_content_for_test(
+                    global_root.clone(),
+                    global_root.join("config.toml"),
+                    "",
+                )
+                .expect("parse global config");
+
+                // Act
+                let config =
+                    ConfigBuilder::new(root.clone(), local, Some(global))
+                        .build()
+                        .expect("build config");
+
+                // Assert
+                assert_eq!(
+                    config.schemas().directory(),
+                    root.join(".traces/schemas/").as_path()
+                );
+            }
+        }
         /// Creates a real, existing directory under `temp` for a config root.
         /// Schema/template directory resolution validates the root exists on
         /// disk, so fabricated non-existent paths no longer work.
