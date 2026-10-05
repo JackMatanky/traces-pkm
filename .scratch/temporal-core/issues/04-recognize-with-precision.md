@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 (classify/parse paths built on the settled duration shape and calendar owner).
 
-**Status:** ready-for-agent
+**Status:** ready-for-agent; decisions D1/U1/F2 folded in 2026-10-05 (brief amended)
 
 Skills: `rust-skills`, `rust-unit-testing`, `rust-doc`, `codebase-design`. Rules: `api-parse-dont-validate` (N7, N15, N23), `api-must-use` (classify), `type-enum-states` (`Precision` — not in equality), `pat-exhaustive-enum` (engine `date_shift_unit`'s `match precision` at `src/template/engine/date.rs:480` gains a `YearMonth` arm — no `_`, so a new precision forces an explicit shift decision; recognition matches enumerate every format/unit variant), `err-doc-errors` + `doc-all-public` (`classify`'s `# Errors`, recognition-result/`Precision` docs); D11 doc written per `rust-doc` conventions. Design record: `../review.md` §2.2, §5.3–5.4, §9 (S5+S7).
 
@@ -14,6 +14,8 @@ Skills: `rust-skills`, `rust-unit-testing`, `rust-doc`, `codebase-design`. Rules
 - [ ] Format enums own the cascade loop once (`parse_any`-style). Live inventory (review §2.2's "four" is stale — the engine calls `parse_iso` rather than looping): **two** format-cascade loops (`DateValue::parse_iso` `src/date.rs:87`, cascade at `src/date.rs:94`; `DateTimeValue::parse_iso` `src/date.rs:400`, cascade at `src/date.rs:407`) and **three** datetime→date coercion cascades retired to `classify` (`src/field.rs:825`, `src/query/sort.rs:477`, engine `ParsedDate::parse` `src/template/engine/date.rs:210`); the `"1h 1x"` divergence is gone (N8, N20, D1). ISO-prefix scan deduplicated (D6) — live count is **two** inline 4-digit copies (`src/date.rs:115` in `has_four_digit_year`, `src/date.rs:127` in `is_iso_shape`), not ×4
 - [ ] `parse`/`parse_prefix` merged as **one scanner, two wrappers**: a single loop parameterized `Whole | Prefix` (spec line 92's "merge the duplicated loops"); `classify`/`parse` take the whole input and carry detail in `Err`, while the prefix wrapper stops at the atom boundary, returns the consumed-byte count, and maps anything invalid to `None` — so `src/note/parser/inline.rs:186` keeps its contract and no caller pays for detail it discards. `"1h 1x"` is one grammar with two shapes: `classify` → `Some(Err(DurationError::UnknownUnit))`, prefix wrapper → `None` (inline falls back to text) — both pinned
 - [ ] Note-parser date grammar widened to `YYYY-MM` (spec story 15: inline and YAML-deserialized dates share one grammar): the 10-byte gates `src/note/parser/inline.rs:219` (`advance(pos, 10)`) and `src/note/parser/lexer.rs:247` (`ISO_DATE_LEN`) accept the 7-byte year-month shape through `classify`; prose `2026-07` becomes a date where today it stays text — behavior change, pinned by test (not a divergence-register entry — story 15 forbids the divergence). **Additional gate added 2026-10-05 (§11 D2/X3-G3):** `src/note/field.rs:114` — `.get(..10).and_then(|prefix| DateValue::parse_iso(prefix))` is a third consumption site (prefix-lenient: no atom-boundary rule, so `"2026-01-01junk"` parses, locked by test `src/note/field.rs:833`), production caller `src/note/parser/task.rs:212`, and item 12 lists it only as an `.ok()` discard. It must route through the same widened grammar or story 15 stays half-applied on the task-date String path; its `.get(..10)` also fails on 7-char input after widening. Note: unlike inline/lexer, this site's leniency (no boundary check) is a behavior decision — keep or tighten explicitly, pinned either way
+- [ ] **(added 2026-10-05, §11 U1 — decided: list-first)** Comma precedence at the inline value seam is pinned **list-first**: when `,` follows a complete atom, the note parser tries the list reading first, so `1h, 30m` parses as a two-element list of durations — a behavior change from today's hand-traced duration-first outcome (the duration separator lookahead consumes the comma and yields a single value; the traced `1h, 45` and `1h,` outcomes shift with it), pinned by test. Commas keep their duration-separator meaning only in **explicit contexts**: `dur(…)` arguments and YAML scalars (two grammar owners today: duration separator `src/duration.rs:5` + `skip_separators` at `src/duration.rs:183`/`:263` vs note-list delimiter `src/note/parser/inline.rs:67`/`:82` + `parse_comma_list_from` at `:91`, YAML splitting before coercion `src/note/field.rs:656`). Pin both directions: inline `1h, 30m` → two-element list; `dur("1h, 30m")` and the YAML scalar spelling → duration with the comma as separator. Asserts ride this ticket's inline-seam edit; the divergence-register entry (number assigned at write) is ticket 08's
+- [ ] **(added 2026-10-05, §11 U2/F2 — decided: executable test here)** The `UNIT_MAP`↔`UNIT_HINT` "cannot drift" claim becomes executable: a derived sync test asserts every `UNIT_MAP` entry (35 keys, `src/duration.rs:53-89`) is covered by `UNIT_HINT` (`src/duration.rs:44-46`, prose-only "update both" contract at `src/duration.rs:39-43`) and every hint spelling resolves through the unit registry, plus parse cases iterated from `UNIT_MAP` itself rather than the hand-maintained `#[case::]` mirror (precedent: generated cases `src/duration.rs:2136-2139`) — making `unknown_unit_error`'s doc guarantee (`src/template/engine/date.rs:756-758`, message built at `:764`) a test rather than a comment (the failure class review N2 records as having "hid weeks"). Ticket 08 keeps only the doctrine record; the test-home question (04/08/09) is closed here
 - [ ] `Precision` (`YearMonth` | `Date` | `DateTime`) hoisted to the recognition result; engine's `ParsedDate`/`DatePrecision`/`format_precise` delegate then deleted (D10); precision never participates in value equality (N16); `DatePoint::has_time` (`src/date.rs:929`, struct at `src/date.rs:922`, driving `diff`'s instant/civil split at `src/date.rs:970` — `diff` fn `src/date.rs:965`) derives from the hoisted `Precision` — one precision signal, no third copy
 - [ ] **(added 2026-10-05, §11 D6/G5)** `DatePoint::new` takes the hoisted `Precision` (or is replaced by a `from_recognized` constructor) so 03's "a stale precision flag is unrepresentable" becomes true by construction — today `new(wall, instant, has_time: bool)` (`src/date.rs:937-947`) accepts an independent bool, both production sites supply literals (`src/template/engine/date.rs:218` `true`, `:232` `false`), and the invariant holds only by convention. Constructor ownership only — explicitly *not* the rejected `LocalWall` newtype
 - [ ] Fractional truncation fixed once behind the hoisted precision (D3), pinned by a round-trip test: a nanosecond-bearing input survives a shift through `date_add` and re-renders its fraction (reference behavior: `to_datetime_string` at `src/date.rs:436`; spec seam-1 line 123 lists the `YYYY-MM` round-trip but not this one)
@@ -30,7 +32,7 @@ Skills: `rust-skills`, `rust-unit-testing`, `rust-doc`, `codebase-design`. Rules
 - [ ] **(D7) `DateTimeFormat::parse` return shape** — its signature is `Result<DateTime<Utc>, ParseError>` (`src/date.rs:905-910`) but the `Some(pat)` arm attaches a placeholder (`naive.and_utc()`, `src/date.rs:914`); the caller then recovers the wall clock and resolves locally, undoing the lie (`src/date.rs:421-427`, comment "The shape pass attached UTC as a placeholder"). Documented at `src/date.rs:896-899`, but the type still says UTC. Shape pass should return the naive/Rfc3339 distinction it actually has (an enum or `NaiveDateTime`) so no caller can mistake the placeholder for an instant — small, but it is this ticket's recognition layer.
 - [ ] **(X-G) `classify` consumes the calendar flag** — verify the duration recognition result carries `is_calendar` (or the equivalent `DurationUnit` class) so `DurationValue::is_calendar` (`src/duration.rs:461`, an `expect(dead_code)`-gated method per ticket 09) gets its declared consumer through the interface; if not, record the fate explicitly for ticket 09 rather than leaving it to the dead-surface census.
 - [ ] **(D1 gate layering) `Some(Err)` must stay behind the `None` shape gate** — the `classify` contract's cheap-first ordering has a live counterexample: `src/note/field.rs:531` runs `DurationValue::parse(trimmed)` (the allocating detail path) on *every* string field value in the `if let Ok` chain with no shape gate. When item 12 routes this site through `classify`, the `None` gate must be consulted first or the coercion path pays allocation cost on all non-duration strings. (Pre-existing behavior — safe, `Err → Self::String` fallback — so performance knowledge, not a bug; spec line 116 is the authority.)
-- [ ] **(ordering vs D1) The shift frame lives in the engine** — `date_shift_unit`'s `match precision` dispatches the frame (`src/template/engine/date.rs:469-491`, `shift_wall` call at `:482`) while `shift_wall` is `pub(crate)` at `src/date.rs:1143` solely for that caller, and the "date-only is civil / datetime is instant" policy is stated in five places. If this ticket implements the `YearMonth` arm by *extending the engine match* (item 9's `pat-exhaustive-enum` framing does exactly that), the frame policy gets a sixth home. Prefer landing the narrow fold first (route through `DatePoint`/`DateValue::shift`, engine delegates): see §11 D1 — deliberately left unassigned; **open question: assign it before this ticket or fold it in here?**
+- [ ] **(§11 D1 — decided 2026-10-05: folded into this ticket, executed before its `YearMonth` arm)** The precision hoist and the shift-frame relocation are the same seam change, so land them together. Concretely: frame policy ("date-only is civil / datetime is instant", restated in five places today) becomes a single owner-side statement; date-only and shift dispatch route through the owner — `date_shift_unit`'s `match precision` (`src/template/engine/date.rs:469-491`) stops choosing frames: its arms call `DatePoint::shift`/`DateValue::shift` (today `shift_wall` at `:482`, `DateTimeValue::shift` at `:486`; `DateValue::shift` has zero production callers), and the `YearMonth` arm (the `pat-exhaustive-enum` framing stands) delegates the same way rather than owning a frame; the match retargets to the hoisted `Precision` once the engine's `DatePrecision` goes (see the precision-hoist item); and `shift_wall` (`pub(crate)` at `src/date.rs:1143` solely for that engine caller) is demoted to private once its sole engine caller is gone — ticket 09's `proj-pub-crate-internal` review then confirms. Sequencing question shared with ticket 05 dissolved: its engine-frame option no longer exists (new query sites route through the owner entry). Re-verify the cites above at implementation (repin rule)
 
 ## Comments
 
@@ -98,6 +100,32 @@ call **before pickup** — all four decided in the entry below:
 
 > *This was generated by AI during triage.*
 
+**2026-10-05 (decisions — maintainer):**
+
+1. **§11 D1 folded into this ticket, before its `YearMonth` arm.** The
+   precision hoist and the shift-frame relocation are the same seam change.
+   Concretely: frame policy stated once (owner-side), date-only/shift
+   dispatch routed through the owner (`DatePoint::shift`/`DateValue::shift`),
+   the engine's shift routine delegates (its precision match extended for
+   `YearMonth`), and `shift_wall` demoted to private once its sole engine
+   caller is gone — ticket 09's `proj-pub-crate-internal` review then
+   confirms. This dissolves the sequencing question this ticket shared with
+   05. The "(§11 D1)" checklist item was amended in place (it already held
+   the open question); brief amended.
+2. **§11 U1 pins ride IN this ticket — list-first.** Precedence at the inline
+   value seam is decided **list-first**: the note-parser tries the list
+   reading when `,` follows a complete atom, so `1h, 30m` becomes a
+   two-element list. Commas inside `dur(…)` arguments and YAML scalars keep
+   their duration-separator meaning (explicit contexts). Asserts land with
+   this ticket's inline-seam edit; the divergence-register entry (number
+   assigned at write) is ticket 08's.
+3. **§11 U2/F2 executable test lives in this ticket.** The
+   `UNIT_MAP`↔`UNIT_HINT` "cannot drift" claim becomes executable (derived
+   sync test + parse cases iterating the unit map). Ticket 08 keeps only the
+   doctrine record; ticket 09 no longer hosts the test-home question.
+
+> *This was generated by AI during triage.*
+
 ## Agent Brief
 
 **Category:** enhancement
@@ -152,10 +180,28 @@ it.
   layer; the engine's private precision/parsed-date/re-serialization trio
   delegates to it and is then deleted; `DatePoint::has_time` derives from it
   (one precision signal); precision never participates in value equality.
+- The date owner holds the shift-frame policy once: date-only and shift
+  dispatch route through the owner's shift entry (`DatePoint::shift` /
+  `DateValue::shift`), and the engine's shift routine keeps only an
+  exhaustive precision match — extended with a `YearMonth` arm — whose arms
+  all delegate to that entry instead of choosing a frame. Once its sole
+  engine caller is gone, the wall-level shift helper `shift_wall` becomes
+  private to the date module (ticket 09's visibility review then confirms).
 - Fractional seconds survive arithmetic re-serialization (fixed once behind
   the hoisted precision), and the note-parser date grammar accepts `YYYY-MM`
   so inline and YAML dates share one grammar (spec story 15) — prose
   `2026-07` becomes a date.
+- Comma precedence at the inline value seam is decided list-first: when `,`
+  follows a complete atom the note parser tries the list reading, so
+  `1h, 30m` is a two-element list of durations (a change from today's
+  duration-first trace), while commas inside `dur(…)` arguments and YAML
+  scalars keep their duration-separator meaning — explicit contexts, both
+  directions pinned by test.
+- The unit-hint/unit-map sync claim becomes executable: a derived test
+  checks the unit registry against the user-facing hint list, and parse
+  coverage is generated from the unit map itself, so adding a unit or
+  spelling without updating the hint fails the suite instead of drifting
+  behind a comment.
 - `date_add`/`date_sub` rustdoc widens to "any `DurationUnit` spelling" with
   the sub-day-on-date-only no-op caveat.
 
@@ -165,9 +211,18 @@ it.
 - Recognition result struct (date domain): `{ value, precision }`
 - `Precision`: hoisted enum; excluded from equality; feeds `DatePoint`'s
   time-of-day flag
+- Owner shift entry (`DatePoint::shift` / `DateValue::shift`): the single
+  frame-deciding path; the engine's shift routine delegates every precision
+  (incl. the new `YearMonth` arm) to it, and `shift_wall` ends the ticket
+  private to the date module
 - Format enums: `parse_any`-style constructor owning the cascade loop
 - Duration scanning: one loop, two wrappers (whole-input vs prefix-with-
   consumed-length); guards become private
+- Inline note value seam: list-first comma reading when `,` follows a
+  complete atom; duration-separator commas survive only in `dur(…)` arguments
+  and YAML scalars
+- Unit map ↔ unit hint: sync asserted by a derived test; parse cases
+  generated from the unit map rather than a hand-maintained mirror
 - Deleted by end of ticket: the engine's private precision enum, parsed-date
   wrapper, and precise-format helper; no second precision signal remains
 - Visibility: no new crate-public surface is required — recognition stays
@@ -197,6 +252,18 @@ it.
       re-serialization types, and its existing date-filter tests still pass
 - [ ] `date_add` rustdoc names any `DurationUnit` spelling and the sub-day-
       date-only caveat
+- [ ] Every precision routed by the engine's shift routine — including the
+      new year-month arm — delegates to the owner's shift entry, and existing
+      shift results are unchanged, pinned by test
+- [ ] The wall-level shift helper is private to the date module, with no
+      caller outside it
+- [ ] Inline `1h, 30m` parses as a two-element list of durations, while
+      `dur("1h, 30m")` and an equivalent YAML scalar still parse as durations
+      with the comma as separator — pinned by tests in both directions
+- [ ] A derived test fails when the unit map and the unit-hint list disagree
+      (a map entry missing from the hint, or a hint spelling the map cannot
+      parse), and the parse-coverage cases are generated from the unit map
+      rather than a hand-maintained mirror
 - [ ] `mise run verify` green and `mise run doc --all-features` clean
       (`RUSTDOCFLAGS=-D warnings` — verify does not run cargo-doc)
 - [ ] Every checklist item in this ticket's body is checked
@@ -204,10 +271,17 @@ it.
 **Out of scope:**
 - CONTEXT.md clauses, ADRs, and divergence-register entries (ticket 08) — and
   no divergence entry is recorded for `YYYY-MM` inline parsing, since
-  story 15 requires the shared grammar
-- Dead-surface deletions and the doc-gate task ownership (ticket 09)
+  story 15 requires the shared grammar; the comma-precedence entry (§11 U1)
+  *is* recorded there (number assigned at write), not here
+- Dead-surface deletions and the doc-gate task ownership (ticket 09) — the
+  wall-level shift helper's post-demotion visibility confirmation is 09's
+  `proj-pub-crate-internal` review; the demotion itself lands in this ticket
+- The unit-spelling sync doctrine/record (ticket 08) — this ticket writes
+  only the executable test
 - Query temporal functions (05), template format dialects (06),
-  shorthands/`parse_with` (07)
+  shorthands/`parse_with` (07) — 05's engine-frame option is dissolved: frame
+  policy lands with this ticket, and new query shift sites route through the
+  owner entry
 - Duration semantics and calendar-owner behavior settled by ticket 03
   (`parts`, bit-exact Σ, week-as-calendar, month clamping) — build on them,
   don't re-litigate

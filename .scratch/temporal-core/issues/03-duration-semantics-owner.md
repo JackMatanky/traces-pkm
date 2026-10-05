@@ -187,3 +187,8 @@ Deliberate remaining state (do not "fix" without reading the audit):
   allocation shape is ever questioned; no duration/date bench exists
   in `benches/`, and the audit's performance notes on these paths are
   labeled hypotheses.
+
+**2026-10-05 (triage backfill):**
+
+- **Category:** `bug` — duration semantics had two ratio registries, a parse-owned shape that hid calendar behavior, and calendar-unsafe application (`dur("1 month")` treated as 30 days) — broken-today correctness, not new capability.
+- **State:** `resolved` confirmed (implemented `57ea1b09`, remediated `fe4c01e2`/`2e4304d2`/`bcc938b5`). No further triage action.
