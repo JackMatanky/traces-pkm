@@ -121,10 +121,11 @@ impl FilePathTracker {
     /// Lists the canonical paths of all live entries in this store.
     ///
     /// Reads recorded targets from symlinks on Unix and path-bearing files on
-    /// Windows. A live entry has a readable target and is included when that
-    /// target exists or its existence cannot be checked. Dangling or unreadable
-    /// entries are omitted. An absent or non-directory root returns an empty
-    /// list.
+    /// Windows. Entries with a path suffix in `companion_suffixes` are skipped.
+    /// A live entry has a readable target and is included when that target
+    /// exists or its existence cannot be checked. Dangling or unreadable
+    /// entries are omitted. An absent or non-directory root returns an
+    /// empty list.
     ///
     /// # Errors
     ///
@@ -133,6 +134,7 @@ impl FilePathTracker {
     #[inline]
     pub(crate) fn list_all(
         &self,
+        companion_suffixes: &[&str],
     ) -> Result<Vec<PathBuf>, FilePathTrackerError> {
         if !self.root.is_dir() {
             return Ok(Vec::new());
@@ -141,6 +143,9 @@ impl FilePathTracker {
         for node in DirTree::children(&self.root) {
             let node = node.map_err(store_error)?;
             let entry = node.path().to_path_buf();
+            if has_suffix(&entry, companion_suffixes) {
+                continue;
+            }
             if let Some(target) = recorded_target(&entry)
                 && target.try_exists().unwrap_or(true)
             {
@@ -330,9 +335,7 @@ impl FilePathTracker {
         for node in DirTree::children(&self.root) {
             let node = node.map_err(store_error)?;
             let entry = node.path().to_path_buf();
-            if companion_suffixes.iter().any(|suffix| {
-                entry.as_os_str().to_string_lossy().ends_with(suffix)
-            }) {
+            if has_suffix(&entry, companion_suffixes) {
                 continue;
             }
             let Some(target) = recorded_target(&entry) else {
@@ -424,6 +427,11 @@ fn companion_path(entry: &Path, suffix: &str) -> PathBuf {
     let mut name = entry.as_os_str().to_owned();
     name.push(suffix);
     PathBuf::from(name)
+}
+
+fn has_suffix(path: &Path, suffixes: &[&str]) -> bool {
+    let name = path.file_name().unwrap_or_default().as_encoded_bytes();
+    suffixes.iter().any(|suffix| name.ends_with(suffix.as_bytes()))
 }
 
 /// Reads `entry`'s recorded target path.
@@ -709,7 +717,7 @@ mod tests {
             let fixture = Fixture::new();
 
             // Act
-            let result = fixture.store.list_all();
+            let result = fixture.store.list_all(&[]);
 
             // Assert
             assert_eq!(result.unwrap(), Vec::<PathBuf>::new());
@@ -722,7 +730,7 @@ mod tests {
             fs::create_dir_all(&fixture.store.root).expect("create store");
 
             // Act
-            let result = fixture.store.list_all();
+            let result = fixture.store.list_all(&[]);
 
             // Assert
             assert_eq!(result.unwrap(), Vec::<PathBuf>::new());
@@ -738,7 +746,7 @@ mod tests {
             fixture.store.record(&target2).expect("record 2");
 
             // Act
-            let result = fixture.store.list_all();
+            let result = fixture.store.list_all(&[]);
 
             // Assert
             let mut list = result.unwrap();
@@ -752,6 +760,29 @@ mod tests {
         }
 
         #[test]
+        fn excludes_companion_suffixes_from_listed_targets() {
+            // Arrange
+            let fixture = Fixture::new();
+            let target = fixture.target("target");
+            let target_contents =
+                target.canonicalize().expect("canonical target");
+            fixture.store.record(&target).expect("record target");
+            fixture
+                .store
+                .write_companion(
+                    &target,
+                    ".hash",
+                    target_contents.display().to_string(),
+                )
+                .expect("write companion");
+
+            // Act
+            let result = fixture.store.list_all(&[".hash"]);
+
+            // Assert
+            assert_eq!(result.unwrap(), vec![target_contents]);
+        }
+        #[test]
         fn omits_entries_whose_targets_were_deleted() {
             // Arrange
             let fixture = Fixture::new();
@@ -762,7 +793,7 @@ mod tests {
             fs::remove_file(&deleted).expect("delete target");
 
             // Act
-            let result = fixture.store.list_all();
+            let result = fixture.store.list_all(&[]);
 
             // Assert
             assert_eq!(result.unwrap(), vec![kept.canonicalize().unwrap()]);

@@ -462,7 +462,7 @@ impl ConfigService {
     pub(crate) fn list_tracked(
         &self,
     ) -> Result<Vec<PathBuf>, ConfigStateError> {
-        self.tracked.list_all().map_err(Into::into)
+        self.tracked.list_all(&[]).map_err(Into::into)
     }
 
     /// Removes dangling tracked-config entries.
@@ -489,7 +489,7 @@ impl ConfigService {
     pub(crate) fn list_trusted(
         &self,
     ) -> Result<Vec<PathBuf>, ConfigStateError> {
-        self.trusted.list_all().map_err(Into::into)
+        self.trusted.list_all(&[COMPANION_SUFFIX]).map_err(Into::into)
     }
 
     /// Removes dangling trust entries and their content-hash companions.
