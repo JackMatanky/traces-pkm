@@ -10,7 +10,7 @@ This is a **planning-only** effort: no production code is written or modified wh
 
 ## Notes
 
-**Domain**: read `CONTEXT-MAP.md` and the per-module `src/*/CONTEXT.md` files (Core, CLI, Config, Dialog, Index, Note, Query, Schema, Template) before any ticket touching that module's terminology — they are the authoritative glossary. Existing ADRs (`docs/adr/0001`–`0007`) cover minijinja interactivity, dialog selection, CLI error presentation, template/query interplay, config trust/tracking, File-Class schemas, and field-inheritance resolution; consult the relevant one before any ticket that could revisit those decisions.
+**Domain**: read `GLOSSARY-MAP.md` and the per-module `src/*/GLOSSARY.md` files (Core, CLI, Config, Dialog, Index, Note, Query, Schema, Template) before any ticket touching that module's terminology — they are the authoritative glossary. Existing ADRs (`docs/adr/0001`–`0007`) cover minijinja interactivity, dialog selection, CLI error presentation, template/query interplay, config trust/tracking, File-Class schemas, and field-inheritance resolution; consult the relevant one before any ticket that could revisit those decisions.
 
 **Skills**: every grilling-type ticket invokes `/grilling` and `/domain-modeling`. Every research-type ticket is resolved by a `/research` subagent. Prototype-type tickets (none created yet; may be added later if a "how should it look/behave" question surfaces) invoke `/prototype`.
 

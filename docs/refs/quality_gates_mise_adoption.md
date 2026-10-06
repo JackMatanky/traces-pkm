@@ -706,7 +706,7 @@ and the doc `docs/refs/mutation_testing.md` (whose §3.2 already shows a stale
 usage examples and §7 parallelism guidance).
 
 **Consumer scan (repo-wide):** nothing invokes `mutants`/`mutants:report`
-outside the task tree — no hk step, no CI job, no AGENTS/CLAUDE/CONTEXT
+outside the task tree — no hk step, no CI job, no AGENTS/CLAUDE/GLOSSARY
 reference, no `.scratch` issue (the `.scratch` "mutation" hits are the
 task-system's *data-model* mutation operations — unrelated). The only readers
 of `mutants-report.md` are `.gitignore` and `mutation_testing.md`. **The tasks

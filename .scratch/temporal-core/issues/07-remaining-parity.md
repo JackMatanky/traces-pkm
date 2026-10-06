@@ -97,7 +97,7 @@ The bucketing helpers (`sow`/`eow`/`soy`/`eoy`, start/end-of-month) exist on nei
 **Out of scope:**
 - The expression-surface implementation itself (ticket 05) — consume the decided surface, do not build it
 - Authorship of the local-zone clock / seam-3 pin (ticket 02) — already delivered; this ticket only verifies it
-- CONTEXT.md clauses, ADRs, and divergence-register records (ticket 08)
+- GLOSSARY.md clauses, ADRs, and divergence-register records (ticket 08)
 - A second duration grammar for ISO-8601 offsets — translation at the shorthand adapter only
 - Boolean algebra or operator precedence beyond the decided value-expression surface
 - New crate-public exports

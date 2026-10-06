@@ -62,7 +62,7 @@ Also worth noting (not in the Question but corrected during research): "last-win
 
 ### I.7 Glossary (authoritative)
 
-`Task` / `Task Status` at `src/note/CONTEXT.md:50-59`; `[tasks]` at `src/config/CONTEXT.md:60-70`; `Query Mode` at `src/query/CONTEXT.md:25-28`; flat list model at `src/note/lists.rs:3-6`; domain spec `.scratch/task-system/spec.md` (318 lines, authoritative for task-system semantics).
+`Task` / `Task Status` at `src/note/GLOSSARY.md:50-59`; `[tasks]` at `src/config/GLOSSARY.md:60-70`; `Query Mode` at `src/query/GLOSSARY.md:25-28`; flat list model at `src/note/lists.rs:3-6`; domain spec `.scratch/task-system/spec.md` (318 lines, authoritative for task-system semantics).
 
 ---
 

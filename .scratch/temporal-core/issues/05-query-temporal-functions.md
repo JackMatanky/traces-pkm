@@ -187,5 +187,5 @@ missing half is grammar and evaluation.
   07's deliverable per spec story 4
 - Recognition/classification and precision-hoist work (ticket 04), duration
   semantics settled by ticket 03, dead-surface deletion and the doc gate
-  (ticket 09), divergence register / CONTEXT.md / ADR entries (ticket 08)
+  (ticket 09), divergence register / GLOSSARY.md / ADR entries (ticket 08)
 - New crate-public exports not required to satisfy the acceptance criteria

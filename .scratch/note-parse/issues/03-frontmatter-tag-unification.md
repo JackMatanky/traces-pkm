@@ -49,7 +49,7 @@ into `Note.tags()` via a new configurable frontmatter key name.
 
 **Current behavior:**
 `Note.tags()` is populated only from `#tag` tokens found in Markdown body
-text and list items. `src/note/CONTEXT.md` documents Tag as "extracted from
+text and list items. `src/note/GLOSSARY.md` documents Tag as "extracted from
 body text and frontmatter", but the parser never reads frontmatter for
 tags — a frontmatter `tags:` (or similarly named) key lands only as an
 ordinary `Frontmatter` field. Because `#tag` source-expression matching, the

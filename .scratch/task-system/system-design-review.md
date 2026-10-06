@@ -427,10 +427,10 @@ To implement these architectural decisions cleanly, the remaining issues in
 
 ---
 
-## 8. Domain Glossary Discipline (`CONTEXT.md`)
+## 8. Domain Glossary Discipline (`GLOSSARY.md`)
 
-To prevent recurring naming confusion, update `src/note/CONTEXT.md` and
-`src/query/CONTEXT.md` with strict vocabulary entries:
+To prevent recurring naming confusion, update `src/note/GLOSSARY.md` and
+`src/query/GLOSSARY.md` with strict vocabulary entries:
 
 - **List Item:** The universal Markdown structural primitive, classified as a
   plain bullet, a checkbox, or a task.

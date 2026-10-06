@@ -6,7 +6,7 @@ Status: resolved
 
 ## Question
 
-Grounding: `Tag` (`src/note/model.rs:29`, `Vec<Tag>` on `Note`, no location tracking today) already models hierarchical sub-tags via prefix matching per `src/CONTEXT.md`'s Tag definition (`#projects/active`). Decide, informed by Markdown Oxide/Marksman tag handling (tickets 01, 02):
+Grounding: `Tag` (`src/note/model.rs:29`, `Vec<Tag>` on `Note`, no location tracking today) already models hierarchical sub-tags via prefix matching per `src/GLOSSARY.md`'s Tag definition (`#projects/active`). Decide, informed by Markdown Oxide/Marksman tag handling (tickets 01, 02):
 
 - Completion: tag-name completion triggered after `#`, including hierarchical-segment completion (typing `#projects/` completes existing children).
 - Definition/references: does "go to definition" make sense for a tag (there's no single defining location), or is "find references" (all notes/occurrences with this tag or a descendant tag) the only applicable capability, with hierarchical query semantics (does `#projects` reference-search include `#projects/active` occurrences)?
@@ -22,7 +22,7 @@ This ticket settles the LSP semantics, data model integration, and workspace ref
 
 Evidence base:
 - Local digests (`docs/digests/`): Markdown Oxide (`lsp_feel-ix-343-markdown-oxide-src-digest.txt`), Marksman (`lsp_artempyanykh-marksman-digest.txt`), zk (`zk-src-digest.txt`), Obsidian Dataview (`obsidian_blacksmithgu-obsidian-dataview-digest.txt`), and Obsidian Linter (`obsidian_platers-obsidian-linter-digest.txt`).
-- Codebase analysis: `src/tag.rs`, `src/note/parser.rs`, `src/index/store.rs`, `src/query/results.rs`, and `src/note/CONTEXT.md`.
+- Codebase analysis: `src/tag.rs`, `src/note/parser.rs`, `src/index/store.rs`, `src/query/results.rs`, and `src/note/GLOSSARY.md`.
 
 ---
 
@@ -99,7 +99,7 @@ Evidence base:
 ### 5. Frontmatter vs. Inline Body Tag Unification
 
 **Codebase Inconsistency Resolved**:
-- Investigation revealed that `src/note/CONTEXT.md` defines tags as:
+- Investigation revealed that `src/note/GLOSSARY.md` defines tags as:
   > *"A `#`-prefixed identifier extracted from body text and frontmatter supporting hierarchical sub-tags."*
 - In practice, `src/note/parser.rs` was populating `Note.tags` exclusively from body text and list items, storing frontmatter tags only as generic `Frontmatter.fields`. Consequently, frontmatter tags were missing from `PATHS_BY_TAG` in redb and ignored by query `tags` filtering.
 

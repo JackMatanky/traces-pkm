@@ -272,7 +272,7 @@ it.
 - [ ] Every checklist item in this ticket's body is checked
 
 **Out of scope:**
-- CONTEXT.md clauses, ADRs, and divergence-register entries (ticket 08) — and
+- GLOSSARY.md clauses, ADRs, and divergence-register entries (ticket 08) — and
   no divergence entry is recorded for `YYYY-MM` inline parsing, since
   story 15 requires the shared grammar; the comma-precedence entry (§11 U1)
   *is* recorded there (number assigned at write), not here

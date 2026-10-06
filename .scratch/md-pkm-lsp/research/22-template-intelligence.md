@@ -500,7 +500,7 @@ never dies") is untouched:
   var is valid at render, statically flagged; `find_undeclared` skips Include/Extends,
   `meta.rs:276` — the tracker copies that arm for oracle parity). **Soundness condition:**
   empty render context holds *today* on every production path (`engine.rs:195`,
-  `service.rs:270`) but `CONTEXT.md`'s Template Variable + ADR-0001's "AI provides variables"
+  `service.rs:270`) but `GLOSSARY.md`'s Template Variable + ADR-0001's "AI provides variables"
   anticipate a future non-empty context — condition recorded next to the glossary term, and it
   argues for Information, not for dropping the class. **No-AST tier (D1 degradation):** no
   undef-var class (name-only spans already rejected by Q10's ladder). Spans output

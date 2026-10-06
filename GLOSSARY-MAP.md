@@ -1,28 +1,28 @@
-# Context Map
+# Glossary Map
 
 Traces is a CLI tool for template-driven personal knowledge management.
-Each module under `src/` has its own `CONTEXT.md` defining the glossary,
+Each module under `src/` has its own `GLOSSARY.md` defining the glossary,
 domain terms, and seams for that area.
 
 ## Contexts
 
-- [Core](./src/CONTEXT.md) — Shared domain primitives, security boundaries,
+- [Core](./src/GLOSSARY.md) — Shared domain primitives, security boundaries,
   and cross-cutting types (`src/`)
-- [CLI](./src/cli/CONTEXT.md) — Command-line interface, argument routing, and
+- [CLI](./src/cli/GLOSSARY.md) — Command-line interface, argument routing, and
   diagnostic mapping (`src/cli/`)
-- [Config](./src/config/CONTEXT.md) — Discovery, TOML parsing, workspace trust
+- [Config](./src/config/GLOSSARY.md) — Discovery, TOML parsing, workspace trust
   verification, and config tracking (`src/config/`)
-- [Dialog](./src/dialog/CONTEXT.md) — Object-safe interactive and automated
+- [Dialog](./src/dialog/GLOSSARY.md) — Object-safe interactive and automated
   user prompt seam (`src/dialog/`)
-- [Index](./src/index/CONTEXT.md) — Persistent file index, redb storage, and
+- [Index](./src/index/GLOSSARY.md) — Persistent file index, redb storage, and
   derived inbound link graph (`src/index/`)
-- [Note](./src/note/CONTEXT.md) — Markdown note AST parsing, YAML frontmatter,
+- [Note](./src/note/GLOSSARY.md) — Markdown note AST parsing, YAML frontmatter,
   inline fields, links, and tasks (`src/note/`)
-- [Query](./src/query/CONTEXT.md) — Source selection DSL, row projection, and
+- [Query](./src/query/GLOSSARY.md) — Source selection DSL, row projection, and
   memoized result-set transformations (`src/query/`)
-- [Schema](./src/schema/CONTEXT.md) — Schema registry, field resolution,
+- [Schema](./src/schema/GLOSSARY.md) — Schema registry, field resolution,
   inheritance DAG, and class hierarchy (`src/schema/`)
-- [Template](./src/template/CONTEXT.md) — Template resolution, minijinja engine
+- [Template](./src/template/GLOSSARY.md) — Template resolution, minijinja engine
   namespaces, and root-confined file writing (`src/template/`)
 
 ## Relationships & Seams

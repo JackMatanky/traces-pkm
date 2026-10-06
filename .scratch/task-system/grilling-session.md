@@ -38,10 +38,10 @@
 - Terminal: `task_list()`, `table()`, `list()`, `count()`
 - Non-terminal: `where()`/`filter()`, `sort()`, `limit()`, `group_by()`, `flatten()`
 
-### Domain Model (`CONTEXT.md`)
+### Domain Model (`GLOSSARY.md`)
 
 - `Task` mentioned implicitly through `task.completed` / `task.text` fields
-- No explicit "Task" term defined in CONTEXT.md
+- No explicit "Task" term defined in GLOSSARY.md
 
 ---
 
@@ -1488,7 +1488,7 @@ Maps to `NoteConfigSpec { task: TaskConfig, frontmatter: FrontmatterConfig }`.
 | CLI | `src/cli/task.rs`, `src/cli/mod.rs` |
 | Template Engine | `src/template/engine/query.rs` |
 | Config | `src/config/model.rs` (TaskConfig addition) |
-| Domain Model | CONTEXT.md (Task term definition) |
+| Domain Model | GLOSSARY.md (Task term definition) |
 | LISTS table | New redb table definition |
 | LineIndex | Byte-to-line conversion utility (new) |
 | NoteConfigSpec | Replaces MarkdownParserInput |

@@ -45,7 +45,7 @@ Category/state unchanged: `enhancement` / `ready-for-agent`. An agent can take t
   future CLI query commands.
   - `table(headers: &[&str], columns: &[&str]) -> Result<String, QueryError>`
     pairs each header label with the field path at the same position,
-    matching `CONTEXT.md`'s pre-existing `Pipeline Query` example
+    matching `GLOSSARY.md`'s pre-existing `Pipeline Query` example
     (`table(["Name", "Rating"], ["file.name", "rating"])`) rather than
     inventing a divergent single-list signature. Headers and columns must
     have equal length (new `QueryError::TableColumnMismatch`). Cell values
@@ -103,7 +103,7 @@ Category/state unchanged: `enhancement` / `ready-for-agent`. An agent can take t
 - **Code review** (`/code-review`, Standards + Spec parallel sub-agents
   against `main`): Spec review found the diff fully faithful — no missing
   acceptance criteria, no scope creep into #08/#09, `table`'s two-list
-  signature verified against `CONTEXT.md`'s exact example, `count` verified
+  signature verified against `GLOSSARY.md`'s exact example, `count` verified
   exposed both ways, non-terminal ops verified untouched. Standards review
   found no hard violations; two Fowler judgement-call findings — a small
   `Vec<String>`→`Vec<&str>` conversion duplicated between `call_method`'s

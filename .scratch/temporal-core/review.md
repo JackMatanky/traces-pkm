@@ -99,7 +99,7 @@ Deletion test: every value type earns its keep (grammar + registry + error taxon
 ### A2′ — accepted
 - `mo/y` stay parseable; `DurationValue` retains `parts: Option<Box<[(f64, DurationUnit)]>>` alongside `seconds`.
 - **Identity stays seconds-based** (`fixed_seconds()` ratios, renamed to carry the regime in the name); **application** to dates is calendar for Month/Year parts via one owner (S1), applied left-to-right in written order.
-- The Luxon-style incoherence (`"1mo" == "30d"` but different date-shifts) is **accepted and declared**, not hidden — every reference implementation runs this dual regime; ours stops pretending otherwise. **Amendment:** prose alone won't tame it — add a pinning test that *demonstrates* the behavior (equal values, different shifts) so the contract is executable, plus the CONTEXT.md clause.
+- The Luxon-style incoherence (`"1mo" == "30d"` but different date-shifts) is **accepted and declared**, not hidden — every reference implementation runs this dual regime; ours stops pretending otherwise. **Amendment:** prose alone won't tame it — add a pinning test that *demonstrates* the behavior (equal values, different shifts) so the contract is executable, plus the GLOSSARY.md clause.
 - A1′ (reject `mo/y`) breaks Dataview L4814 and Templater L4973; A3′ (shape identity) breaks pinned `"1h 30m" == "90m"`. Rejected.
 
 ### B1 + naive-input = **local → UTC on parse** — accepted (revised)
@@ -186,7 +186,7 @@ pub(crate) enum Precision { YearMonth, Date, DateTime }
 | Cohesion & coupling      | ❌ engine reaches *through* registry and newtypes into chrono; target graph `note/query/template → date.rs\|duration.rs → chrono`; `date/` directory split only if S1+S7+S11 push size — don't preempt |
 | DRY                      | ❌ ×4 cascades (D1/N20), ×4 scans (D6), ×4 ratio tables (N18), ×3 format-with (N21), ×2 grammars (N8), ×4 guard sites (N15) — all have single-point remedies |
 | Modularity               | ❌ guard protocol changes rippled to callers (N15) — modularity's "change inside, not outside" failed; S5 restores it |
-| Information hiding       | ❌ protocol functions `pub(crate)` → go private under S5; `into_inner` demoted to monitored surface (D7); hidden facts promoted to normative CONTEXT.md (§7) |
+| Information hiding       | ❌ protocol functions `pub(crate)` → go private under S5; `into_inner` demoted to monitored surface (D7); hidden facts promoted to normative GLOSSARY.md (§7) |
 | Open/Closed              | ✅ `FilterFunction`, filter tables, format enums, `UNIT_MAP` — **parity features are almost entirely registry entries**; only A2′/B1/D-b + S1/S2/S5/S7 touch core. ❌ engine unit-match (per-unit arms + shortcuts) |
 | General flexibility      | S1's `shift`/`diff`/`apply` serve N callers from one implementation; rigidity of `checked_add`'s fixed regime resolved by A2′; flexibility as *data* (pinned Monday, declared regimes), never single-adapter traits |
 | Law of Demeter           | ❌ `can_start && parse` (protocol fiddling), chrono round-trips in `ParsedDate` — one call each after S5/S1 |
@@ -194,7 +194,7 @@ pub(crate) enum Precision { YearMonth, Date, DateTime }
 
 ---
 
-## 7. CONTEXT.md revisions
+## 7. GLOSSARY.md revisions
 
 - **(a)** Funnel claim made normative **and true**: "every date-shaped string — including deserialization — funnels through `parse_iso`" (true only after S6).
 - **(b)** Owner of anchored arithmetic named: "`date.rs` owns calendar shift/diff; template/query layers are thin adapters."
@@ -240,7 +240,7 @@ pub(crate) enum Precision { YearMonth, Date, DateTime }
 | **S10** | Correctness pass: N1, N4, N3′, N14, N19, D9 + **local-naive parse + DST policy**, N15b pinning, A2′ incoherence pinning test — **LANDED across tickets 01 (`c990f6c9`: N1/N3′/N14/N19, error sources, serde) and 02 (`90696f25`: D9, local-naive, DST policy), pinning from 03** (2026-10-05)                                                                                              | —                                    | —                                               | T5            |
 | **S11** | `parse_with(text, fmt)` with `Result` contract                                                                                                                                                                            | serves `reference` + future LSP        | —                                               | B12, T2       |
 | **S12** | `file.day` at index time                                                                                                                                                                                                | index computes, query exposes        | —                                               | B26, B30      |
-| **S13** | Docs: CONTEXT.md (§7), ADR null-ordering, divergence register (space-datetime, magnitude-vs-calendar, strftime-dialect, **local-naive + DST**, strictness-by-seam), config-const removal (`DEFAULT_DATETIME_FORMAT` caveat) | —                                    | —                                               | C-audit       |
+| **S13** | Docs: GLOSSARY.md (§7), ADR null-ordering, divergence register (space-datetime, magnitude-vs-calendar, strftime-dialect, **local-naive + DST**, strictness-by-seam), config-const removal (`DEFAULT_DATETIME_FORMAT` caveat) | —                                    | —                                               | C-audit       |
 
 ---
 
@@ -1417,7 +1417,7 @@ Absence probes: no duration benches exist in `benches/` (03:192); `UNIT_HINT` is
 
 **Analysis:** the doctrine "total_cmp distinguishes `-0.0`; the domain treats zeros equal" now lives in three places, only one of which (`DurationSeconds`) is type-owned. N3′/N11 covered durations; the raw-`f64` copies in note/query are unowned.
 
-**Direction:** one crate-level `normalize_zero` (or `core` helper) for the two raw-`f64` sites; keep `DurationSeconds::normalized` (construction ≠ comparison idiom). Record the doctrine once (08's CONTEXT/ADR surface already carries "canonical duration Eq"; this is its numeric sibling).
+**Direction:** one crate-level `normalize_zero` (or `core` helper) for the two raw-`f64` sites; keep `DurationSeconds::normalized` (construction ≠ comparison idiom). Record the doctrine once (08's GLOSSARY/ADR surface already carries "canonical duration Eq"; this is its numeric sibling).
 
 **Trade-off:** module-local tiny helpers are a defensible style; the counter is that this exact duplication was introduced *by a drift fix*.
 
@@ -1456,7 +1456,7 @@ Absence probes: no duration benches exist in `benches/` (03:192); `UNIT_HINT` is
 | R3 | **Merge `skip_separators`/`skip_whitespace`** (clone pair, differ by the `,` predicate) | Deletion + readability | **Rejected (micro).** A shared form hides the grammar predicate behind a bool (`skip(…, allow_comma)`) or a closure at call sites; ~20 lines; one call site each post-04 (183→merged loop, scan_part). No knowledge relocation. |
 | R4 | **Wrap `DurationParts` in a struct** (alias at 913, ops at 314/333/727/854/461) | Second-adapter test | **Rejected.** Alias used once (line 120); no cross-module operations; a struct without a second consumer is structure, not a seam. |
 | R5 | **`Scanner<'a>` extraction** | See F4 | **Rejected** — stateless helpers need no type; 04 collapses the only stateful code; 03 already rejected the adjacent type split; post-04 the struct would wrap one function's locals. |
-| R6 | **Split registry into `unit.rs`** | Knowledge-relocation test | **Rejected.** Parse table + ratios + hint + docs are cohesive; callers already import one path (`lib.rs:101` re-exports); a file split is CONTEXT-map churn with zero seam change (echoes the corpus rule "directory splits only if size pushes — don't preempt"). |
+| R6 | **Split registry into `unit.rs`** | Knowledge-relocation test | **Rejected.** Parse table + ratios + hint + docs are cohesive; callers already import one path (`lib.rs:101` re-exports); a file split is GLOSSARY-map churn with zero seam change (echoes the corpus rule "directory splits only if size pushes — don't preempt"). |
 | R7 | **Split/merge error enums** | Corpus check | Settled: merged `DurationError` stands; splitting re-fragments the owner. No new proposal. |
 | R8 | **`Cow<'raw>` for the stored `raw`** | Corpus check | Settled rejected; `raw` is re-derivable from `seconds` where consumers need it (display-only, spec:88). |
 | R9 | **`duration.rs:417` as a signed-zero violation** | Trace `total_secs` derivation | **Downgraded.** `canonical_raw` early-returns on `== 0.0` (383), so `-0.0` cannot reach 417; upstream finiteness holds. Survives only as the *visibility* finding F3. |

@@ -8,7 +8,7 @@ Issues: local markdown under `.scratch/`. See `docs/agents/issue-tracker.md`.
 Five roles mapped to local state strings in issue files. See `docs/agents/triage-labels.md`.
 
 ## Domain docs
-Multi-context — `CONTEXT-MAP.md` + per-module `CONTEXT.md` under `src/`. See `docs/agents/domain.md`.
+Multi-context — `GLOSSARY-MAP.md` + per-module `GLOSSARY.md` under `src/`. See `docs/agents/domain.md`.
 <!-- agent-skills:end -->
 
 <!-- mise:start -->

@@ -442,7 +442,7 @@ even when the values file is referenced transitively.
   `src/template/engine/schema.rs`, and integration/e2e template rendering cases
   exercising a file-sourced `select` end to end.
 - [x] ADR/doc touch-ups: ADR-0006 names ticket 08's static external values-file
-  option, ADR-0003 is accepted, `src/schema/CONTEXT.md` documents values
+  option, ADR-0003 is accepted, `src/schema/GLOSSARY.md` documents values
   polymorphism, and `src/template/engine/schema.rs` documents structured
   `.field()` output.
 
@@ -621,7 +621,7 @@ corrected in the body:
 4. Spec drift widened: beyond the known file-field drift (story 8, Impl
    Decisions ¶7), spec stories 6–7 and ¶7 describe `select` as returning plain
    strings unconditionally, which this ticket's structured sources supersede;
-   `src/schema/CONTEXT.md`'s schema-namespace entry ("returns plain strings")
+   `src/schema/GLOSSARY.md`'s schema-namespace entry ("returns plain strings")
    joins the doc touch-up list for when 08 lands. No body change; tracked here
    for the separate spec pass.
 
@@ -647,9 +647,9 @@ Corrections and additions:
 2. Doc references that this ticket supersedes (add to the spec-pass list):
    - `src/template/engine/schema.rs:16-17` module doc: "For a `select` field,
      plain strings" — structured sources return objects.
-   - `src/schema/CONTEXT.md:44` schema-namespace glossary: "For `select` fields
+   - `src/schema/GLOSSARY.md:44` schema-namespace glossary: "For `select` fields
      this returns plain strings" — same.
-   - `src/schema/CONTEXT.md:19` Field Definition glossary: no mention of
+   - `src/schema/GLOSSARY.md:19` Field Definition glossary: no mention of
      `values` polymorphism; should note the three shapes after 08 lands.
 3. ADR-0003 (`proposed`): its index-based selection contract
    (`SelectOptions::recover`) is already load-bearing for `ui.select`. This

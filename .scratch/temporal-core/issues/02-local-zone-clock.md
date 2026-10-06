@@ -66,7 +66,7 @@ Skills: `rust-skills`, `rust-unit-testing`. Rules: `num-overflow-explicit`, `con
   Tests inject `TZ` via `src/tz_guard.rs` (`TzGuard`, std-env-lock-backed
   writes serialized by `TZ_LOCK`); zone-sensitive tests elsewhere (query
   mtime/mdate boundaries) pinned to UTC. Adversarial two-axis review
-  (standards + spec) findings all addressed: stale `src/CONTEXT.md`
+  (standards + spec) findings all addressed: stale `src/GLOSSARY.md`
   Date-Time clause updated; `wall_or_utc` dedup; `resolve_gap_offset`
   extraction; guard SAFETY-contract correction; doctrine-pinning of the
   misnamed `evaluates_date_only_literal_at_midnight_utc` test. `mise run
@@ -184,7 +184,7 @@ Skills: `rust-skills`, `rust-unit-testing`. Rules: `num-overflow-explicit`, `con
     mtime's local calendar date, so unguarded process-zone runs would
     fail on a UTC-negative machine.
 
-  **`src/CONTEXT.md`** — Date-Time clause rewritten: "stored UTC and
+  **`src/GLOSSARY.md`** — Date-Time clause rewritten: "stored UTC and
   rendered as the reader's local wall clock; a naive input means the
   local zone (DST ambiguities and gaps resolve deterministically)";
   Date coercion now reads "midnight in the local zone". (Full glossary

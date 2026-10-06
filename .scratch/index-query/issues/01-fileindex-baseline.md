@@ -49,7 +49,7 @@ All work happened in that worktree; the `main` checkout was left untouched throu
   `traces::cli::index::failed`.
 - New dependencies: `redb = "4.1"` (index persistence), `walkdir = "2.5"`
   (directory scanning; pulls in exactly one transitive dep, `same-file`).
-- `CONTEXT.md`: added `index`/`WorkspaceIndex` domain-glossary entries, removed a
+- `GLOSSARY.md`: added `index`/`WorkspaceIndex` domain-glossary entries, removed a
   stale "Note Index" term ADR-0005 superseded.
 
 **File Record schema** (per ADR-0005's `file_records` table, not just the

@@ -122,6 +122,6 @@ constructs it.
   explicitly NOT chosen; deleting `InvalidPattern` is not an invitation to
   redesign the error enum
 - Date-recognition work (ticket 04) — build on it, don't touch it
-- Divergence-register / CONTEXT.md / ADR records (ticket 08)
+- Divergence-register / GLOSSARY.md / ADR records (ticket 08)
 - Query temporal functions (ticket 05) — parallelizes with this ticket
 - Shorthands / `parse_with` (ticket 07)

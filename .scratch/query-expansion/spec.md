@@ -128,7 +128,7 @@ Rename the existing LINKS redb table to INLINKS for clarity — it already store
 - **`file.frontmatter` raw accessor**: Frontmatter fields are already flattened into IndexRecord fields. A raw accessor adds no value.
 - **Nested `file.tasks.completed` through lists**: FieldPath redesign for deeply nested list access is a separate effort.
 - **Full function call support in WHERE expressions**: String matching, date/duration constructors, and date accessors cover 90% of real queries. General-purpose function calls are a bigger parser project.
-- **CONTEXT.md updates for implementation details**: Storage changes (TAGS table, INLINKS rename) and internal field additions (`date`) are implementation details, not domain vocabulary. The `[periodic]` config table format is a config concern. Domain-facing terms (`from_inlinks`, `from_outlinks`, `any`/`all` filter expressions, task implicit fields) may be added to CONTEXT.md in a follow-up if they surface in template authoring discussions.
+- **GLOSSARY.md updates for implementation details**: Storage changes (TAGS table, INLINKS rename) and internal field additions (`date`) are implementation details, not domain vocabulary. The `[periodic]` config table format is a config concern. Domain-facing terms (`from_inlinks`, `from_outlinks`, `any`/`all` filter expressions, task implicit fields) may be added to GLOSSARY.md in a follow-up if they surface in template authoring discussions.
 
 ## Further Notes
 

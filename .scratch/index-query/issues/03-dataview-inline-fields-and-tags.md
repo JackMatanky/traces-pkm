@@ -385,7 +385,7 @@
   - **Also fixed while triaging `#07`**: `#07`'s `Blocked by` gained `09`
     (its task-list criterion needs `09`'s task-level `QueryOutcome`, not
     just `06`), `#09`'s `Blocked by` gained this ticket (`03`), and
-    `ADR-0005`/`CONTEXT.md` both had `task_list` missing from their
+    `ADR-0005`/`GLOSSARY.md` both had `task_list` missing from their
     terminal-methods enumeration (`table`/`list`/`count` only) despite
     `spec.md` and `#07` already specifying it — corrected in both.
 
