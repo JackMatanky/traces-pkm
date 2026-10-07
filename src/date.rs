@@ -50,23 +50,6 @@ pub(crate) const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%d";
 /// [`DateTimeValue`]'s canonical output format: `2026-07-29T14:30:00`.
 pub(crate) const DEFAULT_DATETIME_FORMAT: &str = "%Y-%m-%dT%H:%M:%S";
 
-/// Parsed calendar date with no time-of-day component.
-///
-/// Wraps [`NaiveDate`] as a newtype, enforcing ISO-8601 recognition. All
-/// four-digit years are accepted; two-digit years are rejected to prevent
-/// chrono's silent century misinterpretation.
-///
-/// # Examples
-///
-/// ```rust
-/// use traces_pkm::DateValue;
-///
-/// let date: DateValue = "2026-07-29".parse().expect("valid ISO-8601 date");
-/// assert_eq!(date.to_string(), "2026-07-29");
-///
-/// let year_month: DateValue = "2026-07".parse().expect("reduced precision");
-/// assert_eq!(year_month.to_string(), "2026-07-01");
-/// ```
 /// Precision of a recognized date or date-time string.
 #[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum Precision {
@@ -939,7 +922,7 @@ impl From<DateTimeValue> for DateTime<Utc> {
 /// one.
 ///
 /// On zone-lookup failure, this promotion degrades to the neutral UTC frame
-/// (civil date read as UTC — deterministic and shift-free) instead of surfacing
+/// (civil date read as UTC, deterministic and shift-free) instead of surfacing
 /// [`DateError::LocalZoneLookup`], because the infallible conversion is
 /// consumed by equality, sort-key, and ordering paths that cannot propagate an
 /// error, while `TryFrom` would duplicate that fallback at each of them.
@@ -1315,6 +1298,13 @@ impl DatePoint {
 
     /// Moves to the specified ISO weekday in this point's ISO week, preserving
     /// its time-of-day and precision.
+    ///
+    /// # Errors
+    ///
+    /// - [`DateError::OutOfRange`] if the target date exceeds representable
+    ///   bounds.
+    /// - [`DateError::LocalZoneLookup`] if resolving the target local wall time
+    ///   to UTC fails.
     pub(crate) fn weekday_point(
         self,
         target: Weekday,

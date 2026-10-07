@@ -848,10 +848,17 @@ fn translate_moment_dialect(
             while i < len && bytes.get(i) != Some(&b']') {
                 i = i.saturating_add(1);
             }
-            let literal = pattern.get(start..i).unwrap_or_default();
-            if bytes.get(i) == Some(&b']') {
-                i = i.saturating_add(1);
+            if bytes.get(i) != Some(&b']') {
+                return Err(Error::new(
+                    ErrorKind::InvalidOperation,
+                    format!(
+                        "unclosed bracket literal in moment-dialect pattern \
+                         `{pattern}`"
+                    ),
+                ));
             }
+            let literal = pattern.get(start..i).unwrap_or_default();
+            i = i.saturating_add(1);
             for ch in literal.chars() {
                 if ch == '%' {
                     result.push_str("%%");
@@ -1930,6 +1937,19 @@ mod tests {
             let msg = error.to_string();
             assert!(msg.contains("unsupported moment-dialect token `Q`"));
             assert!(msg.contains("supported tokens are"));
+        }
+        #[test]
+        fn rejects_unclosed_bracket_literal_in_moment_dialect() {
+            let error = env()
+                .render_str(
+                    r#"{{ "2026-07-29" | date_format("[Daily YYYY-MM-DD") }}"#,
+                    minijinja::context!(),
+                )
+                .expect_err("unclosed bracket must fail");
+            assert!(
+                error.to_string().contains("unclosed bracket literal"),
+                "expected unclosed bracket error, got: {error}"
+            );
         }
 
         #[test]

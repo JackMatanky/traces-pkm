@@ -409,7 +409,7 @@ fn template_filters_support_bucketing_aliases_and_weekday_arg() {
 
 /// Proves template weekday rejects out-of-range argument.
 #[test]
-fn template_weekday_rejects_out_of_range() {
+fn template_weekday_rejects_out_of_range_day_index() {
     let temp = tempfile::tempdir().expect("create temp dir");
     let project = TestProject::trusted(temp.path().join("project"));
     project.write_template(
@@ -429,7 +429,7 @@ fn template_weekday_rejects_out_of_range() {
 
 /// Proves file.day is exposed in query filters with filename precedence.
 #[test]
-fn file_day_exposed_in_query_with_filename_precedence() {
+fn file_day_resolves_in_query_with_filename_precedence() {
     let temp = tempfile::tempdir().expect("create temp dir");
     let project = TestProject::trusted(temp.path().join("project"));
     project.write_note("notes/2026-07-29-daily.md", "---\ntitle: Daily\n---\n");
