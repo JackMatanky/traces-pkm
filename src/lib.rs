@@ -156,8 +156,8 @@ pub use template::{
     CommitPolicy, RenderFailureKind, TemplatePathInput, TemplateService,
     WriteMode, WriteOutcome,
 };
-#[cfg(test)]
-pub(crate) use test_support::TzGuard;
+#[cfg(any(test, feature = "test-utils"))]
+pub use test_support::TzGuard;
 #[cfg(any(test, feature = "test-utils"))]
 pub use test_support::{
     DEFAULT_SCHEMA_VALUES_DIR, DEFAULT_SCHEMAS_DIR, DEFAULT_TEMPLATES_DIR,
@@ -686,11 +686,11 @@ mod test_support {
         path
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-utils"))]
     /// Serializes tests against the process-global `TZ` variable.
     static TZ_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-utils"))]
     thread_local! {
         /// Per-test-thread holder of the [`TzGuard`]; the guard drops when the
         /// thread ends, restoring `TZ`.
@@ -722,22 +722,25 @@ mod test_support {
     /// must hold the guard (`set` or `keep`); zone-stable assertions elsewhere
     /// are unaffected by a swap. The previous `TZ` is restored when the test
     /// thread ends.
-    #[cfg(test)]
-    pub(crate) struct TzGuard {
+    #[cfg(any(test, feature = "test-utils"))]
+    #[derive(Debug)]
+    pub struct TzGuard {
         previous: Option<String>,
         _lock: std::sync::MutexGuard<'static, ()>,
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-utils"))]
     impl TzGuard {
         /// Holds the `TZ` lock for this thread without changing the zone.
-        pub(crate) fn keep() {
+        #[inline]
+        pub fn keep() {
             Self::install(None);
         }
 
         /// Sets `TZ` to `zone` for this thread, restoring the previous value
         /// when the thread ends.
-        pub(crate) fn set(zone: &str) {
+        #[inline]
+        pub fn set(zone: &str) {
             Self::install(Some(zone));
         }
 
@@ -768,8 +771,9 @@ mod test_support {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-utils"))]
     impl Drop for TzGuard {
+        #[inline]
         fn drop(&mut self) {
             match self.previous.take() {
                 Some(previous) => set_var(&previous),
@@ -778,7 +782,7 @@ mod test_support {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-utils"))]
     #[expect(
         unsafe_code,
         reason = "chrono's `Local` reads the `TZ` environment variable, so \
@@ -794,7 +798,7 @@ mod test_support {
         unsafe { std::env::set_var("TZ", value) };
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-utils"))]
     #[expect(
         unsafe_code,
         reason = "chrono's `Local` reads the `TZ` environment variable, so \

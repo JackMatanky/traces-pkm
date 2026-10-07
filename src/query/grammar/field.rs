@@ -167,6 +167,9 @@ pub(crate) enum FileField {
     /// Accesses [`crate::FileMeta::modified_at`] as a datetime without a UTC
     /// offset.
     ModifiedDateTime,
+    /// Accesses the file's calendar day, with filename winning over
+    /// `created_at`.
+    Day,
     /// Accesses note-level tags from the row's file.
     Tags,
 }
@@ -184,6 +187,7 @@ impl FileField {
         "modified_at",
         "mtime",
         "mdate",
+        "day",
         "tags",
     ];
 
@@ -201,6 +205,7 @@ impl FileField {
             "cdate" => Some(Self::CreatedDate),
             "modified_at" | "mtime" => Some(Self::ModifiedDateTime),
             "mdate" => Some(Self::ModifiedDate),
+            "day" => Some(Self::Day),
             "tags" => Some(Self::Tags),
             _ => None,
         }

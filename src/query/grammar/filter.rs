@@ -25,7 +25,7 @@ use super::{
 use crate::{
     DateTimeValue, DurationSeconds, DurationUnit, DurationValue, LexError,
     NoteFieldValue, NoteFieldValueRef, Spanned, SpannedTokenStream, TokenSpec,
-    date::{DateDiff, DatePoint, Precision},
+    date::{DateDiff, DateError, DatePoint, Precision},
     lexical_unquote,
     query::{
         QueryRow,
@@ -380,6 +380,11 @@ fn evaluate_binary(
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    clippy::large_stack_frames,
+    reason = "evaluates all registered temporal functions across query rows"
+)]
 fn evaluate_registry_call(
     name: &str,
     args: &[NoteFieldValue],
@@ -450,9 +455,83 @@ fn evaluate_registry_call(
     if name.eq_ignore_ascii_case("date_component") {
         return evaluate_date_component(args);
     }
+    if name.eq_ignore_ascii_case("sow") {
+        return date_boundary(args, |pt| pt.week_boundary(false));
+    }
+    if name.eq_ignore_ascii_case("eow") {
+        return date_boundary(args, |pt| pt.week_boundary(true));
+    }
+    if name.eq_ignore_ascii_case("som")
+        || name.eq_ignore_ascii_case("start_of_month")
+    {
+        return date_boundary(args, |pt| pt.month_boundary(false));
+    }
+    if name.eq_ignore_ascii_case("eom")
+        || name.eq_ignore_ascii_case("end_of_month")
+    {
+        return date_boundary(args, |pt| pt.month_boundary(true));
+    }
+    if name.eq_ignore_ascii_case("soy") {
+        return date_boundary(args, |pt| pt.year_boundary(false));
+    }
+    if name.eq_ignore_ascii_case("eoy") {
+        return date_boundary(args, |pt| pt.year_boundary(true));
+    }
+    if name.eq_ignore_ascii_case("date") {
+        return match args {
+            [NoteFieldValue::Date(d)]
+            | [NoteFieldValue::Date(d), NoteFieldValue::String(_)] => {
+                Some(NoteFieldValue::Date(*d))
+            }
+            [NoteFieldValue::DateTime(dt)]
+            | [NoteFieldValue::DateTime(dt), NoteFieldValue::String(_)] => {
+                Some(NoteFieldValue::DateTime(*dt))
+            }
+            [NoteFieldValue::String(s)] => {
+                let rec = crate::DateValue::classify(s)?.ok()?;
+                Some(if rec.precision.has_time() {
+                    NoteFieldValue::DateTime(DateTimeValue::from(rec.instant()))
+                } else {
+                    NoteFieldValue::Date(rec.date())
+                })
+            }
+            [NoteFieldValue::String(s), NoteFieldValue::String(fmt)] => {
+                let rec = crate::DateValue::parse_with(s, fmt).ok()?;
+                Some(if rec.precision.has_time() {
+                    NoteFieldValue::DateTime(DateTimeValue::from(rec.instant()))
+                } else {
+                    NoteFieldValue::Date(rec.date())
+                })
+            }
+            [NoteFieldValue::Null] | [NoteFieldValue::Null, _] => {
+                Some(NoteFieldValue::Null)
+            }
+            _ => None,
+        };
+    }
     None
 }
 
+fn date_boundary(
+    args: &[NoteFieldValue],
+    op: impl FnOnce(DatePoint) -> Result<DatePoint, DateError>,
+) -> Option<NoteFieldValue> {
+    let date = args.first()?;
+    if matches!(date, NoteFieldValue::Null) {
+        return Some(NoteFieldValue::Null);
+    }
+    let pt = date_point(date)?;
+    let shifted = op(pt).ok()?;
+    match date {
+        NoteFieldValue::Date(_) => Some(NoteFieldValue::Date(
+            crate::DateValue::from(shifted.wall.date()),
+        )),
+        NoteFieldValue::DateTime(_) => {
+            Some(NoteFieldValue::DateTime(DateTimeValue::from(shifted.instant)))
+        }
+        _ => Some(NoteFieldValue::Null),
+    }
+}
 fn evaluate_date_component(args: &[NoteFieldValue]) -> Option<NoteFieldValue> {
     use chrono::{Datelike as _, Timelike as _};
     let [date, NoteFieldValue::String(component)] = args else {
@@ -486,9 +565,23 @@ fn validate_registry_function_name(
     input: &str,
     span: std::ops::Range<usize>,
 ) -> Result<(), QueryBuilderError> {
-    if ["dur", "date_add", "date_diff", "date_component"]
-        .iter()
-        .any(|entry| name.eq_ignore_ascii_case(entry))
+    if [
+        "dur",
+        "date_add",
+        "date_diff",
+        "date_component",
+        "sow",
+        "eow",
+        "som",
+        "start_of_month",
+        "eom",
+        "end_of_month",
+        "soy",
+        "eoy",
+        "date",
+    ]
+    .iter()
+    .any(|entry| name.eq_ignore_ascii_case(entry))
     {
         Ok(())
     } else {
@@ -496,7 +589,7 @@ fn validate_registry_function_name(
             QueryDialect::Filter,
             input,
             span,
-            "one of: dur, date_add, date_diff, date_component",
+            "recognized filter function",
         )
         .into())
     }
@@ -556,6 +649,28 @@ fn validate_call_args(
             )
         } else {
             None
+        }
+    } else if matches!(
+        name.to_ascii_lowercase().as_str(),
+        "sow"
+            | "eow"
+            | "som"
+            | "start_of_month"
+            | "eom"
+            | "end_of_month"
+            | "soy"
+            | "eoy"
+    ) {
+        if args.len() == 1 {
+            None
+        } else {
+            Some("1 argument for bucketing function")
+        }
+    } else if name.eq_ignore_ascii_case("date") {
+        if matches!(args.len(), 1 | 2) {
+            None
+        } else {
+            Some("1 or 2 arguments for date()")
         }
     } else {
         None
@@ -1692,5 +1807,103 @@ mod tests {
         ] {
             assert!(FilterExpr::parse(expression).is_err(), "{expression}");
         }
+    }
+
+    #[test]
+    fn query_bucketing_helpers_and_date_function() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let rows = rows_for_files(temp.path(), &[
+            ("sun.md", "---\nwhen: 2026-02-01\n---"),
+            ("wed.md", "---\nwhen: 2026-07-29\n---"),
+        ]);
+        assert_eq!(
+            names(
+                &rows
+                    .clone()
+                    .filter("sow(when) == \"2026-01-26\"")
+                    .expect("sow")
+            ),
+            vec!["sun"],
+        );
+        assert_eq!(
+            names(
+                &rows
+                    .clone()
+                    .filter("eow(when) == \"2026-02-01\"")
+                    .expect("eow")
+            ),
+            vec!["sun"],
+        );
+        assert_eq!(
+            names(
+                &rows
+                    .clone()
+                    .filter("som(when) == \"2026-07-01\"")
+                    .expect("som")
+            ),
+            vec!["wed"],
+        );
+        assert_eq!(
+            names(
+                &rows
+                    .clone()
+                    .filter("start_of_month(when) == \"2026-07-01\"")
+                    .expect("start_of_month")
+            ),
+            vec!["wed"],
+        );
+        assert_eq!(
+            names(
+                &rows
+                    .clone()
+                    .filter("eom(when) == \"2026-07-31\"")
+                    .expect("eom")
+            ),
+            vec!["wed"],
+        );
+        assert_eq!(
+            names(
+                &rows
+                    .clone()
+                    .filter("end_of_month(when) == \"2026-07-31\"")
+                    .expect("end_of_month")
+            ),
+            vec!["wed"],
+        );
+        assert_eq!(
+            names(
+                &rows
+                    .clone()
+                    .filter("soy(when) == \"2026-01-01\"")
+                    .expect("soy")
+            ),
+            vec!["sun", "wed"],
+        );
+        assert_eq!(
+            names(
+                &rows
+                    .clone()
+                    .filter("eoy(when) == \"2026-12-31\"")
+                    .expect("eoy")
+            ),
+            vec!["sun", "wed"],
+        );
+        assert_eq!(
+            names(
+                &rows
+                    .clone()
+                    .filter("date(\"29/07/2026\", \"%d/%m/%Y\") == when")
+                    .expect("date parse_with")
+            ),
+            vec!["wed"],
+        );
+        assert_eq!(
+            names(
+                &rows
+                    .filter("date(\"2026-07-29\") == when")
+                    .expect("date classify")
+            ),
+            vec!["wed"],
+        );
     }
 }

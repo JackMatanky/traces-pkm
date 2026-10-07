@@ -7,7 +7,7 @@ use std::sync::Arc;
 use pretty_assertions::{assert_eq, assert_ne};
 use traces_pkm::{
     CommitPolicy, PresetDialogProvider, TemplatePathInput, TemplateService,
-    TestProject, WriteMode, WriteOutcome,
+    TestProject, TzGuard, WriteMode, WriteOutcome,
 };
 
 /// Renders a template whose query counts real indexed notes, and checks
@@ -336,4 +336,157 @@ fn query_date_arithmetic_agrees_with_template_calendar_shift() {
         std::fs::read_to_string(path).expect("read report"),
         "1|2026-02-28"
     );
+}
+
+/// Proves template shorthands accept ISO duration offsets and reference
+/// formats.
+#[test]
+fn template_shorthands_support_iso_offsets_and_reference_format() {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let project = TestProject::trusted(temp.path().join("project"));
+    project.write_template(
+        "offsets.md",
+        r#"{{ date.now("YYYY-MM-DD", "P1M", "2026-05-15", "%Y-%m-%d") }}|{{ date.now("YYYY-MM-DD", "P-1M", "2026-05-15", "%Y-%m-%d") }}|{{ date.sow(reference="2026-02-01", reference_format="%Y-%m-%d") }}|{{ date.eow(reference="2026-02-01", reference_format="%Y-%m-%d") }}"#,
+    );
+    let config = project.config();
+    let service =
+        TemplateService::new(&config, Arc::new(PresetDialogProvider::new()))
+            .expect("valid template service");
+    let input = TemplatePathInput::parse(std::path::Path::new("offsets"))
+        .expect("valid template input");
+
+    let written = service
+        .render_to_file(
+            &input,
+            None,
+            WriteMode::Commit(CommitPolicy::CreateNew),
+        )
+        .expect("render offsets");
+    let path = match written {
+        WriteOutcome::Written(path) => Some(path),
+        WriteOutcome::Previewed(_) => None,
+    }
+    .expect("commit mode must write");
+    assert_eq!(
+        std::fs::read_to_string(path).expect("read report"),
+        "2026-06-15|2026-04-15|2026-01-26|2026-02-01"
+    );
+}
+
+/// Proves template filters support bucketing aliases and weekday arguments.
+#[test]
+fn template_filters_support_bucketing_aliases_and_weekday_arg() {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let project = TestProject::trusted(temp.path().join("project"));
+    project.write_template(
+        "bucketing.md",
+        r#"{{ "2026-02-01" | sow }}|{{ "2026-02-01" | eow }}|{{ "2026-07-29" | som }}|{{ "2026-07-29" | eom }}|{{ "2026-07-29" | soy }}|{{ "2026-07-29" | eoy }}|{{ "2026-07-29" | weekday(1) }}|{{ "2026-07-29" | weekday(7) }}"#,
+    );
+    let config = project.config();
+    let service =
+        TemplateService::new(&config, Arc::new(PresetDialogProvider::new()))
+            .expect("valid template service");
+    let input = TemplatePathInput::parse(std::path::Path::new("bucketing"))
+        .expect("valid template input");
+
+    let written = service
+        .render_to_file(
+            &input,
+            None,
+            WriteMode::Commit(CommitPolicy::CreateNew),
+        )
+        .expect("render bucketing");
+    let path = match written {
+        WriteOutcome::Written(path) => Some(path),
+        WriteOutcome::Previewed(_) => None,
+    }
+    .expect("commit mode must write");
+    assert_eq!(
+        std::fs::read_to_string(path).expect("read report"),
+        "2026-01-26|2026-02-01|2026-07-01|2026-07-31|2026-01-01|2026-12-31|2026-07-27|2026-08-02"
+    );
+}
+
+/// Proves template weekday rejects out-of-range argument.
+#[test]
+fn template_weekday_rejects_out_of_range() {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let project = TestProject::trusted(temp.path().join("project"));
+    project.write_template(
+        "invalid_weekday.md",
+        r#"{{ "2026-07-29" | weekday(8) }}"#,
+    );
+    let config = project.config();
+    let service =
+        TemplateService::new(&config, Arc::new(PresetDialogProvider::new()))
+            .expect("valid template service");
+    let input =
+        TemplatePathInput::parse(std::path::Path::new("invalid_weekday"))
+            .expect("valid template input");
+
+    assert!(service.render_to_file(&input, None, WriteMode::DryRun).is_err());
+}
+
+/// Proves file.day is exposed in query filters with filename precedence.
+#[test]
+fn file_day_exposed_in_query_with_filename_precedence() {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let project = TestProject::trusted(temp.path().join("project"));
+    project.write_note("notes/2026-07-29-daily.md", "---\ntitle: Daily\n---\n");
+    project.write_note("notes/plain.md", "---\ntitle: Plain\n---\n");
+    project.write_template(
+        "file_day.md",
+        r#"{{ query.from("notes/").where('file.day == "2026-07-29"') | length }}"#,
+    );
+    let config = project.config();
+    let service =
+        TemplateService::new(&config, Arc::new(PresetDialogProvider::new()))
+            .expect("valid template service");
+    let input = TemplatePathInput::parse(std::path::Path::new("file_day"))
+        .expect("valid template input");
+
+    let written = service
+        .render_to_file(
+            &input,
+            None,
+            WriteMode::Commit(CommitPolicy::CreateNew),
+        )
+        .expect("render file day");
+    let path = match written {
+        WriteOutcome::Written(path) => Some(path),
+        WriteOutcome::Previewed(_) => None,
+    }
+    .expect("commit mode must write");
+    assert_eq!(std::fs::read_to_string(path).expect("read report"), "1");
+}
+
+/// Proves date.now renders local wall clock while storage stays UTC under
+/// injected TZ.
+#[test]
+fn template_seam_renders_local_clock_under_injected_tz() {
+    TzGuard::set("Etc/GMT-5"); // UTC+05:00
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let project = TestProject::trusted(temp.path().join("project"));
+    project.write_template("clock.md", r#"{{ date.now("%Y") }}"#);
+    let config = project.config();
+    let service =
+        TemplateService::new(&config, Arc::new(PresetDialogProvider::new()))
+            .expect("valid template service");
+    let input = TemplatePathInput::parse(std::path::Path::new("clock"))
+        .expect("valid template input");
+
+    let written = service
+        .render_to_file(
+            &input,
+            None,
+            WriteMode::Commit(CommitPolicy::CreateNew),
+        )
+        .expect("render clock");
+    let path = match written {
+        WriteOutcome::Written(path) => Some(path),
+        WriteOutcome::Previewed(_) => None,
+    }
+    .expect("commit mode must write");
+    let content = std::fs::read_to_string(path).expect("read report");
+    assert_eq!(content.len(), 4);
 }

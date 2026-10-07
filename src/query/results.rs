@@ -287,6 +287,12 @@ impl QueryRow {
             FileField::ModifiedDate => QueryFieldValueRef::Note(
                 NoteFieldValueRef::Date(DateValue::from(file.modified_at())),
             ),
+            FileField::Day => match file.day() {
+                Some(day) => {
+                    QueryFieldValueRef::Note(NoteFieldValueRef::Date(day))
+                }
+                None => QueryFieldValueRef::Note(NoteFieldValueRef::Null),
+            },
             FileField::Tags => {
                 let tags = self.note().map_or(&[][..], Note::tags);
                 QueryFieldValueRef::Tags(tags)
