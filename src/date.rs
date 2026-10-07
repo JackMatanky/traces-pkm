@@ -42,7 +42,7 @@ use chrono::{
 use num_traits::ToPrimitive as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::duration::{DurationUnit, DurationValue};
+use crate::duration::{DurationSeconds, DurationUnit, DurationValue};
 
 /// [`DateValue`]'s canonical output format: `2026-07-29`.
 pub(crate) const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%d";
@@ -362,14 +362,6 @@ impl DateValue {
     ///
     /// - [`DateError::OutOfRange`] if arithmetic overflows representable
     ///   bounds.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "part of DateValue surface; called in tests and by \
-                      future query temporal functions"
-        )
-    )]
     pub(crate) fn shift(
         self,
         n: i64,
@@ -389,14 +381,6 @@ impl DateValue {
     ///
     /// - [`DateError::OutOfRange`] if arithmetic overflows or the duration
     ///   contains non-finite seconds.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "part of DateValue surface; called in tests and by \
-                      future query temporal functions"
-        )
-    )]
     pub(crate) fn apply(
         self,
         duration: &DurationValue,
@@ -424,10 +408,9 @@ impl DateValue {
     ///
     /// Calendar units ([`DurationUnit::Year`], [`DurationUnit::Month`],
     /// [`DurationUnit::Week`], [`DurationUnit::Day`]) truncate to a whole count
-    /// for [`Self::shift`] and apply the fractional remainder as exact seconds
-    /// on the resulting midnight. Sub-day units apply as exact seconds on
-    /// midnight directly, so a sub-day magnitude of 24 hours or more still
-    /// advances the civil date.
+    /// for [`Self::shift`]. Fractional remainders use nominal fixed ratios
+    /// (half a month is 15 days), applied at the resulting midnight. Sub-day
+    /// units apply exactly at midnight, even when they advance the civil date.
     ///
     /// # Errors
     ///
@@ -771,14 +754,6 @@ impl DateTimeValue {
     ///   contains non-finite seconds.
     /// - [`DateError::LocalZoneLookup`] if a shifted local wall clock cannot be
     ///   resolved.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "part of DateTimeValue surface; called in tests and by \
-                      future query temporal functions"
-        )
-    )]
     pub(crate) fn apply(
         self,
         duration: &DurationValue,
@@ -806,10 +781,9 @@ impl DateTimeValue {
     ///
     /// Calendar units ([`DurationUnit::Year`], [`DurationUnit::Month`],
     /// [`DurationUnit::Week`], [`DurationUnit::Day`]) truncate to a whole count
-    /// for [`Self::shift`]; the fractional remainder is still calendar time, so
-    /// it advances the local wall clock and re-resolves through the local zone
-    /// rather than landing as exact seconds on the instant. Sub-day units shift
-    /// the instant exactly.
+    /// for [`Self::shift`]. Fractional remainders use nominal fixed ratios
+    /// (half a month is 15 days) on the local wall clock, then re-resolve
+    /// through the local zone; sub-day units shift the instant exactly.
     ///
     /// # Errors
     ///
@@ -840,9 +814,8 @@ impl DateTimeValue {
                 let rem_secs = mag.fract() * unit.fixed_seconds();
                 if rem_secs != 0.0 {
                     let delta = seconds_delta(rem_secs)?;
-                    // The remainder is still a calendar unit: it round-trips
-                    // through the local zone instead of landing as exact
-                    // seconds on the instant.
+                    // The nominal remainder advances the local wall clock
+                    // rather than the stored instant across DST.
                     let wall =
                         current.local_wall().ok_or(DateError::OutOfRange)?;
                     let shifted_wall = wall
@@ -1153,14 +1126,6 @@ impl DatePoint {
     /// Constructs a point from its wall clock, UTC instant, and precision.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "part of DatePoint constructor surface; production uses \
-                      from_recognized"
-        )
-    )]
     pub(crate) const fn new(
         wall: NaiveDateTime,
         instant: DateTime<Utc>,
@@ -1216,6 +1181,31 @@ impl DatePoint {
                 precision: self.precision,
             })
         }
+    }
+
+    /// Moves to the first or last day of this point's month in its civil frame,
+    /// preserving its time-of-day and precision.
+    pub(crate) fn month_boundary(self, end: bool) -> Result<Self, DateError> {
+        let date = self
+            .wall
+            .date()
+            .with_day(if end {
+                u32::from(self.wall.date().num_days_in_month())
+            } else {
+                1
+            })
+            .ok_or(DateError::OutOfRange)?;
+        let wall = date.and_time(self.wall.time());
+        let instant = if self.has_time() {
+            local_naive_to_utc(wall)?
+        } else {
+            DateTimeValue::from(DateValue(date)).into_inner()
+        };
+        Ok(Self {
+            wall,
+            instant,
+            precision: self.precision,
+        })
     }
 
     /// Measures the difference from `self` to `to` in `unit`s.
@@ -1389,15 +1379,9 @@ fn resolve_gap_offset(
 /// overflow of either component. The single whole/sub-second split for
 /// [`DateValue::apply_part`] and [`DateTimeValue::apply_part`].
 fn seconds_delta(part_secs: f64) -> Result<TimeDelta, DateError> {
-    let whole_secs = part_secs.trunc().to_i64().ok_or(DateError::OutOfRange)?;
-    let subsec_nanos = (part_secs.fract() * 1e9)
-        .round()
-        .to_i64()
-        .ok_or(DateError::OutOfRange)?;
-    TimeDelta::try_seconds(whole_secs)
-        .ok_or(DateError::OutOfRange)?
-        .checked_add(&TimeDelta::nanoseconds(subsec_nanos))
-        .ok_or(DateError::OutOfRange)
+    let ds = DurationSeconds::try_from(part_secs)
+        .map_err(|_| DateError::OutOfRange)?;
+    TimeDelta::try_from(ds).map_err(|_| DateError::OutOfRange)
 }
 
 /// Shifts a civil wall-clock datetime by `n` `unit`s.
