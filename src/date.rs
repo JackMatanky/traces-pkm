@@ -1201,6 +1201,42 @@ impl DatePoint {
         }
     }
 
+    /// Applies `duration` to this date point, preserving its civil vs instant
+    /// frame policy and precision.
+    ///
+    /// # Errors
+    ///
+    /// - [`DateError::OutOfRange`] if arithmetic overflows chrono's
+    ///   representable range.
+    /// - [`DateError::LocalZoneLookup`] if resolving a local wall time to UTC
+    ///   fails.
+    pub(crate) fn apply(
+        self,
+        duration: &DurationValue,
+    ) -> Result<Self, DateError> {
+        if self.has_time() {
+            let dt = DateTimeValue(self.instant).apply(duration)?;
+            let wall = dt.local_wall().ok_or(DateError::OutOfRange)?;
+            Ok(Self {
+                wall,
+                instant: dt.into_inner(),
+                precision: self.precision,
+            })
+        } else {
+            let date = DateValue(self.wall.date()).apply(duration)?;
+            let wall = date
+                .into_inner()
+                .and_hms_opt(0, 0, 0)
+                .ok_or(DateError::OutOfRange)?;
+            let instant = DateTimeValue::from(date).into_inner();
+            Ok(Self {
+                wall,
+                instant,
+                precision: self.precision,
+            })
+        }
+    }
+
     /// Moves to the first or last day of this point's month in its civil frame,
     /// preserving its time-of-day and precision.
     ///
@@ -1405,6 +1441,17 @@ pub(crate) enum DateDiff {
     Exact(f64),
 }
 
+impl DateDiff {
+    /// Returns the measured difference magnitude as an `f64`.
+    #[inline]
+    #[must_use]
+    pub(crate) fn to_f64(self) -> Option<f64> {
+        match self {
+            Self::Whole(n) => num_traits::ToPrimitive::to_f64(&n),
+            Self::Exact(n) => Some(n),
+        }
+    }
+}
 /// Resolves a naive local wall-clock datetime to a UTC instant under the
 /// crate's DST doctrine.
 ///
@@ -2991,6 +3038,29 @@ mod tests {
                 sun.wall.date(),
                 DateValue::parse_iso("2026-08-02").unwrap().into_inner()
             );
+        }
+
+        #[test]
+        fn date_point_apply_shifts_point_by_compound_duration() {
+            let wednesday = DateValue::parse_iso("2026-07-29").unwrap();
+            let pt = DatePoint::new(
+                wednesday.into_inner().and_hms_opt(0, 0, 0).unwrap(),
+                DateTimeValue::from(wednesday).into_inner(),
+                Precision::Date,
+            );
+            let dur = DurationValue::parse("1w 2d").unwrap();
+            let shifted = pt.apply(&dur).expect("apply succeeds");
+            assert_eq!(
+                shifted.wall.date(),
+                DateValue::parse_iso("2026-08-07").unwrap().into_inner()
+            );
+            assert_eq!(shifted.precision, Precision::Date);
+        }
+
+        #[test]
+        fn date_diff_to_f64_projects_whole_and_exact_variants() {
+            assert_eq!(DateDiff::Whole(42).to_f64(), Some(42.0));
+            assert_eq!(DateDiff::Exact(2.5).to_f64(), Some(2.5));
         }
     }
 }

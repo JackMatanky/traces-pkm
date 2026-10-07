@@ -295,32 +295,7 @@ fn apply_offset_to_point(
                 DateError::OutOfRange,
             )
         })?;
-        let shifted = if point.has_time() {
-            let dt = DateTimeValue::from(point.instant)
-                .apply(&duration)
-                .map_err(date_error)?;
-            let wall = dt.local_wall().ok_or_else(date_out_of_range_error)?;
-            DatePoint {
-                wall,
-                instant: dt.into_inner(),
-                precision: point.precision,
-            }
-        } else {
-            let date = DateValue::from(point.wall.date())
-                .apply(&duration)
-                .map_err(date_error)?;
-            let wall = date
-                .into_inner()
-                .and_hms_opt(0, 0, 0)
-                .ok_or_else(date_out_of_range_error)?;
-            let instant = DateTimeValue::from(date).into_inner();
-            DatePoint {
-                wall,
-                instant,
-                precision: point.precision,
-            }
-        };
-        return Ok(shifted);
+        return point.apply(&duration).map_err(date_error);
     }
     Err(invalid_operation(
         format!(
@@ -1138,22 +1113,8 @@ fn date_shift_unit(
     unit: DurationUnit,
 ) -> TemplateEngineResult<String> {
     let recognized = parse_recognized(value)?;
-    #[expect(
-        clippy::match_same_arms,
-        reason = "pat-exhaustive-enum: explicit match per variant forces a \
-                  shift decision when adding precision"
-    )]
-    let shifted_point = match recognized.precision {
-        Precision::YearMonth => {
-            recognized.point().shift(n, unit).map_err(date_error)?
-        }
-        Precision::Date => {
-            recognized.point().shift(n, unit).map_err(date_error)?
-        }
-        Precision::DateTime => {
-            recognized.point().shift(n, unit).map_err(date_error)?
-        }
-    };
+    let shifted_point =
+        recognized.point().shift(n, unit).map_err(date_error)?;
     let pat = shifted_point.precision.format_pattern(shifted_point.wall);
     format_with(shifted_point.wall.format(pat), pat)
 }

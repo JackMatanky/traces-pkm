@@ -25,7 +25,7 @@ use super::{
 use crate::{
     DateTimeValue, DurationSeconds, DurationUnit, DurationValue, LexError,
     NoteFieldValue, NoteFieldValueRef, Spanned, SpannedTokenStream, TokenSpec,
-    date::{DateDiff, DateError, DatePoint, Precision},
+    date::{DateError, DatePoint, Precision},
     lexical_unquote,
     query::{
         QueryRow,
@@ -348,10 +348,7 @@ fn evaluate_binary(
             let diff = date_point(&date2)?
                 .diff(date_point(&date1)?, DurationUnit::Second)
                 .ok()?;
-            let seconds = match diff {
-                DateDiff::Whole(n) => num_traits::ToPrimitive::to_f64(&n)?,
-                DateDiff::Exact(n) => n,
-            };
+            let seconds = diff.to_f64()?;
             Some(NoteFieldValue::Duration(DurationValue::from_seconds(
                 DurationSeconds::try_from(seconds).ok()?,
             )))
@@ -450,10 +447,7 @@ fn evaluate_registry_call(
             return Some(NoteFieldValue::Null);
         }
         let diff = date_point(date1)?.diff(date_point(date2)?, unit).ok()?;
-        return Some(NoteFieldValue::Number(match diff {
-            DateDiff::Whole(n) => num_traits::ToPrimitive::to_f64(&n)?,
-            DateDiff::Exact(n) => n,
-        }));
+        return Some(NoteFieldValue::Number(diff.to_f64()?));
     }
     if name.eq_ignore_ascii_case("date_component") {
         return evaluate_date_component(args);
