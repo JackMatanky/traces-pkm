@@ -116,11 +116,14 @@ def scan_source_files(
     elif target_path.is_dir():
         candidates = sorted(target_path.rglob(f"*{rust_ext}"))
 
+    scan_root = target_path if target_path.is_dir() else target_path.parent
     for file_p in candidates:
-        parts: tuple[str, ...] = file_p.parts
-        if target_dir in parts or any(p.startswith(hidden_prefix) for p in parts[:-1]):
+        try:
+            rel_parts = file_p.relative_to(scan_root).parts
+        except ValueError:
+            rel_parts = file_p.parts
+        if target_dir in rel_parts or any(p.startswith(hidden_prefix) for p in rel_parts[:-1]):
             continue
-
         sloc: int
         comments: int
         sloc, comments = count_sloc_and_comments(file_p)
