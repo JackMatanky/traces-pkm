@@ -123,20 +123,20 @@ impl Object for DateOps {
             "tomorrow" => Some(Value::from_function(
                 |kwargs: Kwargs| -> TemplateEngineResult<String> {
                     let format = format_kwarg(&kwargs)?;
-                    let date = local_now()
-                        .date()
-                        .succ_opt()
-                        .ok_or_else(date_out_of_range_error)?;
+                    let date = DateValue::from(local_now().date())
+                        .shift(1, DurationUnit::Day)
+                        .map_err(date_error)?
+                        .into_inner();
                     format_with(date.format(format), format)
                 },
             )),
             "yesterday" => Some(Value::from_function(
                 |kwargs: Kwargs| -> TemplateEngineResult<String> {
                     let format = format_kwarg(&kwargs)?;
-                    let date = local_now()
-                        .date()
-                        .pred_opt()
-                        .ok_or_else(date_out_of_range_error)?;
+                    let date = DateValue::from(local_now().date())
+                        .shift(-1, DurationUnit::Day)
+                        .map_err(date_error)?
+                        .into_inner();
                     format_with(date.format(format), format)
                 },
             )),
@@ -541,23 +541,13 @@ fn timestamp(value: &str) -> TemplateEngineResult<i64> {
     Ok(parse_recognized(value)?.instant().timestamp())
 }
 
-/// Parses `value` as a date/time string, transforms `datetime` via `op`, and
-/// re-serializes the result at `value`'s original precision.
-///
-/// # Errors
-///
-/// - [`ErrorKind::InvalidOperation`] if `value` is not parseable.
-/// - [`ErrorKind::InvalidOperation`] if `op` returns `None`, indicating
-///   arithmetic overflow.
-fn shift_date(
-    value: &str,
-    op: impl FnOnce(NaiveDateTime) -> Option<NaiveDateTime>,
-) -> TemplateEngineResult<String> {
+/// Returns the first or last day of the input's month at its original
+/// precision.
+fn month_boundary(value: &str, end: bool) -> TemplateEngineResult<String> {
     let recognized = parse_recognized(value)?;
-    let shifted =
-        op(recognized.wall_or_utc()).ok_or_else(date_out_of_range_error)?;
-    let pat = recognized.precision.format_pattern(shifted);
-    format_with(shifted.format(pat), pat)
+    let shifted = recognized.point().month_boundary(end).map_err(date_error)?;
+    let pat = shifted.precision.format_pattern(shifted.wall);
+    format_with(shifted.wall.format(pat), pat)
 }
 
 /// `{{ value | date_add(n, unit="days") }}` adds `n` `unit`s to a piped
@@ -745,7 +735,7 @@ fn sub_years(value: &str, n: u32) -> TemplateEngineResult<String> {
 /// - [`ErrorKind::InvalidOperation`] if the first day of the month is outside
 ///   chrono's representable range; see [`date_out_of_range_error`].
 fn start_of_month(value: &str) -> TemplateEngineResult<String> {
-    shift_date(value, |dt| dt.with_day(1))
+    month_boundary(value, false)
 }
 
 /// `{{ value | end_of_month }}` returns the last day of the input month.
@@ -757,7 +747,7 @@ fn start_of_month(value: &str) -> TemplateEngineResult<String> {
 /// - [`ErrorKind::InvalidOperation`] if the last day of the month is outside
 ///   chrono's representable range; see [`date_out_of_range_error`].
 fn end_of_month(value: &str) -> TemplateEngineResult<String> {
-    shift_date(value, |dt| dt.with_day(u32::from(dt.num_days_in_month())))
+    month_boundary(value, true)
 }
 
 /// `{{ value | weekday }}` returns `0` for Monday through `6` for Sunday.

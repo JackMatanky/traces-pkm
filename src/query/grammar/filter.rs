@@ -7,6 +7,11 @@
 //! - Comparison operators (`==`, `!=`, `<`, `<=`, `>`, `>=`) with type
 //!   coercion.
 //! - Function calls such as `contains(field, target)` with tag prefix matching.
+//! - Value expressions: date ± duration, date − date (duration result),
+//!   duration ± duration and duration × number, plus `dur`, `date_add`,
+//!   `date_diff`, and `date_component` calls. Arithmetic groups left-to-right
+//!   without precedence; null and invalid row values do not satisfy ordered
+//!   comparisons. Static invalid function arguments fail at parse time.
 //! - Boolean combinators (`and`, `or`, `not`, parentheses) parsed via the
 //!   shared boolean expression grammar.
 use logos::{Lexer, Logos};
@@ -18,8 +23,10 @@ use super::{
     },
 };
 use crate::{
-    LexError, NoteFieldValue, NoteFieldValueRef, Spanned, SpannedTokenStream,
-    TokenSpec, lexical_unquote,
+    DateTimeValue, DurationSeconds, DurationUnit, DurationValue, LexError,
+    NoteFieldValue, NoteFieldValueRef, Spanned, SpannedTokenStream, TokenSpec,
+    date::{DateDiff, DatePoint, Precision},
+    lexical_unquote,
     query::{
         QueryRow,
         error::{QueryBuilderError, QueryDialect, QuerySyntaxError},
@@ -60,7 +67,17 @@ impl FilterExpr {
                             expected: "a finite numeric literal",
                         }),
                         Err(_) => {
-                            Ok(Spanned::new(FilterToken::Ident(word), span))
+                            if let Some(Ok(dv)) = DurationValue::classify(&word)
+                            {
+                                Ok(Spanned::new(
+                                    FilterToken::Literal(
+                                        NoteFieldValue::Duration(dv),
+                                    ),
+                                    span,
+                                ))
+                            } else {
+                                Ok(Spanned::new(FilterToken::Ident(word), span))
+                            }
                         }
                     },
                     other => Ok(Spanned::new(other, span)),
@@ -146,33 +163,38 @@ impl FilterFunction {
     }
 }
 
-/// Field comparison against a literal value.
+/// Comparison expression between two value expressions.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ComparisonExpr {
-    field: FieldPath,
+    lhs: ValueExpr,
     op: CompareOp,
-    literal: NoteFieldValue,
+    rhs: ValueExpr,
 }
 
 impl ComparisonExpr {
-    /// Pre-classifies `literal`'s date/duration shape once, so `is_matching`
-    /// never re-runs text classification per row.
-    pub(super) fn new(
-        field: FieldPath,
-        op: CompareOp,
-        literal: NoteFieldValue,
-    ) -> Self {
+    pub(super) fn new(lhs: ValueExpr, op: CompareOp, rhs: ValueExpr) -> Self {
         Self {
-            field,
+            lhs,
             op,
-            literal: Self::classify_literal(literal),
+            rhs,
         }
     }
 
-    /// Returns `true` if `row`'s field at `self.field` satisfies `self.op`
-    /// against `self.literal`.
+    /// Returns `true` if `row` satisfies `self.op` between `self.lhs` and
+    /// `self.rhs`.
     pub(super) fn is_matching(&self, row: &QueryRow) -> bool {
-        self.op.is_satisfied_by(&row.resolve_ref(&self.field), &self.literal)
+        if let (ValueExpr::Field(path), ValueExpr::Literal(literal)) =
+            (&self.lhs, &self.rhs)
+        {
+            return self.op.is_satisfied_by(&row.resolve_ref(path), literal);
+        }
+        let Some(lhs_val) = self.lhs.evaluate(row) else {
+            return false;
+        };
+        let Some(rhs_val) = self.rhs.evaluate(row) else {
+            return false;
+        };
+        self.op.is_satisfied_by_values(&lhs_val, &rhs_val)
     }
 
     /// Promotes a filter literal's `String` payload to `Date`/`DateTime`/
@@ -183,7 +205,7 @@ impl ComparisonExpr {
     /// `String` are its only literal shapes). Reuses [`TextShape::classify`]
     /// (the same heuristic `SortKey::from_text` uses), so filter literals and
     /// sort-key text classify identically, not via a second hand-rolled copy.
-    fn classify_literal(literal: NoteFieldValue) -> NoteFieldValue {
+    pub(super) fn classify_literal(literal: NoteFieldValue) -> NoteFieldValue {
         let NoteFieldValue::String(text) = &literal else {
             return literal;
         };
@@ -194,6 +216,360 @@ impl ComparisonExpr {
             TextShape::Plain => literal,
         }
     }
+}
+
+/// A value expression in a query filter.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum ValueExpr {
+    /// Field path lookup on a query row.
+    Field(FieldPath),
+    /// A literal value.
+    Literal(NoteFieldValue),
+    /// A value-returning function call (e.g. `dur`, `date_add`, `date_diff`,
+    /// `date_component`).
+    Call {
+        name: String,
+        args: Vec<Self>,
+    },
+    /// An arithmetic binary operation evaluated left-to-right.
+    Binary {
+        lhs: Box<Self>,
+        op: ArithOp,
+        rhs: Box<Self>,
+    },
+}
+
+/// Binary arithmetic operator.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ArithOp {
+    /// `+`
+    Add,
+    /// `-`
+    Sub,
+    /// `*`
+    Mul,
+}
+
+impl ValueExpr {
+    /// Evaluates a value expression; an invalid row value cannot satisfy a
+    /// comparison.
+    fn evaluate(&self, row: &QueryRow) -> Option<NoteFieldValue> {
+        match self {
+            Self::Field(path) => Some(row.resolve_ref(path).to_owned_value()),
+            Self::Literal(value) => Some(value.clone()),
+            Self::Call {
+                name,
+                args,
+            } => {
+                let values = args
+                    .iter()
+                    .map(|arg| arg.evaluate(row))
+                    .collect::<Option<Vec<_>>>()?;
+                evaluate_registry_call(name, &values)
+            }
+            Self::Binary {
+                lhs,
+                op,
+                rhs,
+            } => evaluate_binary(lhs.evaluate(row)?, *op, rhs.evaluate(row)?),
+        }
+    }
+}
+
+fn date_point(value: &NoteFieldValue) -> Option<DatePoint> {
+    match value {
+        NoteFieldValue::Date(date) => Some(DatePoint::new(
+            date.into_inner().and_hms_opt(0, 0, 0)?,
+            DateTimeValue::from(*date).into_inner(),
+            Precision::Date,
+        )),
+        NoteFieldValue::DateTime(datetime) => Some(DatePoint::new(
+            datetime.wall_or_utc(),
+            datetime.into_inner(),
+            Precision::DateTime,
+        )),
+        _ => None,
+    }
+}
+
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "duration operators preserve overflow as non-finite; consuming \
+              conversions reject it"
+)]
+fn evaluate_binary(
+    left: NoteFieldValue,
+    op: ArithOp,
+    right: NoteFieldValue,
+) -> Option<NoteFieldValue> {
+    if matches!(left, NoteFieldValue::Null)
+        || matches!(right, NoteFieldValue::Null)
+    {
+        return Some(NoteFieldValue::Null);
+    }
+    match (left, op, right) {
+        (
+            NoteFieldValue::Date(date),
+            ArithOp::Add,
+            NoteFieldValue::Duration(duration),
+        )
+        | (
+            NoteFieldValue::Duration(duration),
+            ArithOp::Add,
+            NoteFieldValue::Date(date),
+        ) => Some(NoteFieldValue::Date(date.apply(&duration).ok()?)),
+        (
+            NoteFieldValue::DateTime(datetime),
+            ArithOp::Add,
+            NoteFieldValue::Duration(duration),
+        )
+        | (
+            NoteFieldValue::Duration(duration),
+            ArithOp::Add,
+            NoteFieldValue::DateTime(datetime),
+        ) => Some(NoteFieldValue::DateTime(datetime.apply(&duration).ok()?)),
+        (
+            NoteFieldValue::Date(date),
+            ArithOp::Sub,
+            NoteFieldValue::Duration(duration),
+        ) => Some(NoteFieldValue::Date(date.apply(&(duration * -1.0)).ok()?)),
+        (
+            NoteFieldValue::DateTime(datetime),
+            ArithOp::Sub,
+            NoteFieldValue::Duration(duration),
+        ) => Some(NoteFieldValue::DateTime(
+            datetime.apply(&(duration * -1.0)).ok()?,
+        )),
+        (
+            date1 @ (NoteFieldValue::Date(_) | NoteFieldValue::DateTime(_)),
+            ArithOp::Sub,
+            date2 @ (NoteFieldValue::Date(_) | NoteFieldValue::DateTime(_)),
+        ) => {
+            let diff = date_point(&date2)?
+                .diff(date_point(&date1)?, DurationUnit::Second)
+                .ok()?;
+            let seconds = match diff {
+                DateDiff::Whole(n) => num_traits::ToPrimitive::to_f64(&n)?,
+                DateDiff::Exact(n) => n,
+            };
+            Some(NoteFieldValue::Duration(DurationValue::from_seconds(
+                DurationSeconds::try_from(seconds).ok()?,
+            )))
+        }
+        (
+            NoteFieldValue::Duration(a),
+            ArithOp::Add,
+            NoteFieldValue::Duration(b),
+        ) => Some(NoteFieldValue::Duration(a + b)),
+        (
+            NoteFieldValue::Duration(a),
+            ArithOp::Sub,
+            NoteFieldValue::Duration(b),
+        ) => Some(NoteFieldValue::Duration(a - b)),
+        (
+            NoteFieldValue::Duration(duration),
+            ArithOp::Mul,
+            NoteFieldValue::Number(n),
+        )
+        | (
+            NoteFieldValue::Number(n),
+            ArithOp::Mul,
+            NoteFieldValue::Duration(duration),
+        ) => Some(NoteFieldValue::Duration(duration * n)),
+        _ => Some(NoteFieldValue::Null),
+    }
+}
+
+fn evaluate_registry_call(
+    name: &str,
+    args: &[NoteFieldValue],
+) -> Option<NoteFieldValue> {
+    if name.eq_ignore_ascii_case("dur") {
+        return match args {
+            [NoteFieldValue::Duration(duration)] => {
+                Some(NoteFieldValue::Duration(duration.clone()))
+            }
+            [NoteFieldValue::String(text)] => {
+                Some(NoteFieldValue::Duration(DurationValue::parse(text).ok()?))
+            }
+            [_] => Some(NoteFieldValue::Null),
+            _ => None,
+        };
+    }
+    if name.eq_ignore_ascii_case("date_add") {
+        return match args {
+            [date, NoteFieldValue::Duration(duration)] => evaluate_binary(
+                date.clone(),
+                ArithOp::Add,
+                NoteFieldValue::Duration(duration.clone()),
+            ),
+            [date, NoteFieldValue::String(text)] => evaluate_binary(
+                date.clone(),
+                ArithOp::Add,
+                NoteFieldValue::Duration(DurationValue::parse(text).ok()?),
+            ),
+            [date, NoteFieldValue::Number(n), NoteFieldValue::String(unit)] => {
+                use num_traits::ToPrimitive as _;
+                let unit = DurationUnit::parse(unit)?;
+                let n = (n.fract() == 0.0).then(|| n.to_i64()).flatten()?;
+                let shifted = date_point(date)?.shift(n, unit).ok()?;
+                match date {
+                    NoteFieldValue::Date(_) => Some(NoteFieldValue::Date(
+                        crate::DateValue::from(shifted.wall.date()),
+                    )),
+                    NoteFieldValue::DateTime(_) => {
+                        Some(NoteFieldValue::DateTime(DateTimeValue::from(
+                            shifted.instant,
+                        )))
+                    }
+                    _ => Some(NoteFieldValue::Null),
+                }
+            }
+            _ => None,
+        };
+    }
+    if name.eq_ignore_ascii_case("date_diff") {
+        let (date1, date2, unit) = match args {
+            [date1, date2] => (date1, date2, DurationUnit::Day),
+            [date1, date2, NoteFieldValue::String(unit)] => {
+                (date1, date2, DurationUnit::parse(unit)?)
+            }
+            _ => return None,
+        };
+        if matches!(date1, NoteFieldValue::Null)
+            || matches!(date2, NoteFieldValue::Null)
+        {
+            return Some(NoteFieldValue::Null);
+        }
+        let diff = date_point(date2)?.diff(date_point(date1)?, unit).ok()?;
+        return Some(NoteFieldValue::Number(match diff {
+            DateDiff::Whole(n) => num_traits::ToPrimitive::to_f64(&n)?,
+            DateDiff::Exact(n) => n,
+        }));
+    }
+    if name.eq_ignore_ascii_case("date_component") {
+        return evaluate_date_component(args);
+    }
+    None
+}
+
+fn evaluate_date_component(args: &[NoteFieldValue]) -> Option<NoteFieldValue> {
+    use chrono::{Datelike as _, Timelike as _};
+    let [date, NoteFieldValue::String(component)] = args else {
+        return Some(NoteFieldValue::Null);
+    };
+    let wall = date_point(date)?.wall;
+    let number = if component.eq_ignore_ascii_case("year") {
+        f64::from(wall.year())
+    } else if component.eq_ignore_ascii_case("month") {
+        f64::from(wall.month())
+    } else if component.eq_ignore_ascii_case("day") {
+        f64::from(wall.day())
+    } else if component.eq_ignore_ascii_case("hour") {
+        f64::from(wall.hour())
+    } else if component.eq_ignore_ascii_case("minute") {
+        f64::from(wall.minute())
+    } else if component.eq_ignore_ascii_case("second") {
+        f64::from(wall.second())
+    } else if component.eq_ignore_ascii_case("weekday") {
+        f64::from(wall.weekday().number_from_monday())
+    } else if component.eq_ignore_ascii_case("week") {
+        f64::from(wall.iso_week().week())
+    } else {
+        return None;
+    };
+    Some(NoteFieldValue::Number(number))
+}
+
+fn validate_registry_function_name(
+    name: &str,
+    input: &str,
+    span: std::ops::Range<usize>,
+) -> Result<(), QueryBuilderError> {
+    if ["dur", "date_add", "date_diff", "date_component"]
+        .iter()
+        .any(|entry| name.eq_ignore_ascii_case(entry))
+    {
+        Ok(())
+    } else {
+        Err(QuerySyntaxError::unexpected_end(
+            QueryDialect::Filter,
+            input,
+            span,
+            "one of: dur, date_add, date_diff, date_component",
+        )
+        .into())
+    }
+}
+
+#[expect(
+    clippy::cognitive_complexity,
+    reason = "checks the four registry signatures and literal arguments in \
+              one pass"
+)]
+fn validate_call_args(
+    name: &str,
+    args: &[ValueExpr],
+    input: &str,
+    span: std::ops::Range<usize>,
+) -> Result<(), QueryBuilderError> {
+    let expected = if name.eq_ignore_ascii_case("dur") {
+        if args.len() != 1 {
+            Some("1 argument for dur()")
+        } else if matches!(args.first(), Some(ValueExpr::Literal(NoteFieldValue::String(text))) if DurationValue::parse(text).is_err())
+        {
+            Some("valid duration")
+        } else {
+            None
+        }
+    } else if name.eq_ignore_ascii_case("date_add") {
+        if !matches!(args.len(), 2 | 3) {
+            Some("2 or 3 arguments for date_add()")
+        } else if matches!(args.get(1), Some(ValueExpr::Literal(NoteFieldValue::String(text))) if DurationValue::parse(text).is_err())
+            && args.len() == 2
+        {
+            Some("valid duration")
+        } else if args.len() == 3
+            && matches!(args.get(2), Some(ValueExpr::Literal(NoteFieldValue::String(unit))) if DurationUnit::parse(unit).is_none())
+        {
+            Some("recognized duration unit")
+        } else {
+            None
+        }
+    } else if name.eq_ignore_ascii_case("date_diff") {
+        if !matches!(args.len(), 2 | 3) {
+            Some("2 or 3 arguments for date_diff()")
+        } else if matches!(args.get(2), Some(ValueExpr::Literal(NoteFieldValue::String(unit))) if DurationUnit::parse(unit).is_none())
+        {
+            Some("recognized duration unit")
+        } else {
+            None
+        }
+    } else if name.eq_ignore_ascii_case("date_component") {
+        if args.len() != 2 {
+            Some("2 arguments for date_component()")
+        } else if matches!(args.get(1), Some(ValueExpr::Literal(NoteFieldValue::String(comp))) if !["year", "month", "day", "hour", "minute", "second", "weekday", "week"].iter().any(|valid| comp.eq_ignore_ascii_case(valid)))
+        {
+            Some(
+                "valid component: year, month, day, hour, minute, second, \
+                 weekday, week",
+            )
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    if let Some(expected) = expected {
+        return Err(QuerySyntaxError::unexpected_end(
+            QueryDialect::Filter,
+            input,
+            span,
+            expected,
+        )
+        .into());
+    }
+    Ok(())
 }
 
 /// Comparison operator parsed from filter syntax.
@@ -214,13 +590,7 @@ pub(super) enum CompareOp {
 }
 
 impl CompareOp {
-    /// `Eq`/`Ne` use `is_equal_to_literal`'s existing cross-kind coercion (e.g.
-    /// a `Date` field against a `DateTime` literal at midnight UTC).
-    /// `Lt`/`Le`/`Gt`/`Ge` use [`NoteFieldValueRef::compare`]'s full rank order
-    /// directly; a `Null` on either side never satisfies an ordering comparison
-    /// (matches today's behavior: a missing field never passes a numeric/date
-    /// threshold).
-    pub(super) fn is_satisfied_by(
+    fn is_satisfied_by(
         self,
         field: &QueryFieldValueRef<'_>,
         literal: &NoteFieldValue,
@@ -233,15 +603,40 @@ impl CompareOp {
                 !equal
             };
         }
-        let Some(field_ref) = field.as_note_ref() else {
+        let Some(value) = field.as_note_ref() else {
             return false;
         };
-        if matches!(field_ref, NoteFieldValueRef::Null)
+        if matches!(value, NoteFieldValueRef::Null)
             || matches!(literal, NoteFieldValue::Null)
         {
             return false;
         }
-        match field_ref.compare(&literal.as_ref()) {
+        match value.compare(&literal.as_ref()) {
+            std::cmp::Ordering::Less => matches!(self, Self::Lt | Self::Le),
+            std::cmp::Ordering::Equal => matches!(self, Self::Le | Self::Ge),
+            std::cmp::Ordering::Greater => matches!(self, Self::Gt | Self::Ge),
+        }
+    }
+
+    pub(super) fn is_satisfied_by_values(
+        self,
+        lhs: &NoteFieldValue,
+        rhs: &NoteFieldValue,
+    ) -> bool {
+        if matches!(self, Self::Eq | Self::Ne) {
+            let equal = lhs.as_ref().is_equal_to_literal(rhs);
+            return if matches!(self, Self::Eq) {
+                equal
+            } else {
+                !equal
+            };
+        }
+        if matches!(lhs, NoteFieldValue::Null)
+            || matches!(rhs, NoteFieldValue::Null)
+        {
+            return false;
+        }
+        match lhs.as_ref().compare(&rhs.as_ref()) {
             std::cmp::Ordering::Less => matches!(self, Self::Lt | Self::Le),
             std::cmp::Ordering::Equal => matches!(self, Self::Le | Self::Ge),
             std::cmp::Ordering::Greater => matches!(self, Self::Gt | Self::Ge),
@@ -354,26 +749,131 @@ impl FilterGrammar {
         })
     }
 
-    /// Parses a `<field> <op> <value>` comparison after the field token.
-    fn parse_comparison(
+    fn parse_registry_call(
         input: &str,
         tokens: &mut SpannedTokenStream<FilterToken>,
-        field_ident: &str,
-    ) -> Result<ComparisonExpr, QueryBuilderError> {
-        let op_spanned = tokens
-            .expect_map(input, "a comparison operator", |token| {
-                let spanned = token;
-                match spanned.into_value() {
-                    FilterToken::Op(op) => Some(op),
-                    _ => None,
+        name: String,
+        span: std::ops::Range<usize>,
+    ) -> Result<ValueExpr, QueryBuilderError> {
+        validate_registry_function_name(&name, input, span.clone())?;
+        tokens.next();
+        let mut args = Vec::new();
+        if !tokens.peek_is_value(&FilterToken::RParen) {
+            loop {
+                args.push(Self::parse_value_expr(input, tokens)?);
+                if !tokens.peek_is_value(&FilterToken::Comma) {
+                    break;
                 }
-            })
-            .map_err(|e| {
-                QuerySyntaxError::from_lex(QueryDialect::Filter, input, e)
+                tokens.next();
+            }
+        }
+        tokens
+            .expect(
+                input,
+                TokenSpec::new(
+                    &FilterToken::RParen,
+                    "`)` after function arguments",
+                ),
+            )
+            .map_err(|err| {
+                QuerySyntaxError::from_lex(QueryDialect::Filter, input, err)
             })?;
-        let field = FieldPath::parse(field_ident)?;
-        let value = Self::parse_literal_arg(input, tokens)?;
-        Ok(ComparisonExpr::new(field, *op_spanned.value(), value))
+        validate_call_args(&name, &args, input, span)?;
+        Ok(ValueExpr::Call {
+            name,
+            args,
+        })
+    }
+
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "duration negation preserves non-finite results without \
+                  panicking"
+    )]
+    fn parse_primary(
+        input: &str,
+        tokens: &mut SpannedTokenStream<FilterToken>,
+    ) -> Result<ValueExpr, QueryBuilderError> {
+        let negative = tokens.peek_is_value(&FilterToken::Minus);
+        if negative {
+            tokens.next();
+        }
+        let span = tokens.next_span(input);
+        let token = tokens.next().ok_or_else(|| {
+            QuerySyntaxError::unexpected_end(
+                QueryDialect::Filter,
+                input,
+                span.clone(),
+                "a field, literal, or function call",
+            )
+        })?;
+        let expression = match token.into_value() {
+            FilterToken::Literal(value) => {
+                ValueExpr::Literal(ComparisonExpr::classify_literal(value))
+            }
+            FilterToken::Ident(name)
+                if tokens.peek_is_value(&FilterToken::LParen) =>
+            {
+                Self::parse_registry_call(input, tokens, name, span.clone())?
+            }
+            FilterToken::Ident(name) => {
+                ValueExpr::Field(FieldPath::parse(&name)?)
+            }
+            _ => {
+                return Err(QuerySyntaxError::unexpected_end(
+                    QueryDialect::Filter,
+                    input,
+                    span,
+                    "a field, literal, or function call",
+                )
+                .into());
+            }
+        };
+        if !negative {
+            return Ok(expression);
+        }
+        match expression {
+            ValueExpr::Literal(NoteFieldValue::Number(number)) => {
+                Ok(ValueExpr::Literal(NoteFieldValue::Number(-number)))
+            }
+            ValueExpr::Literal(NoteFieldValue::Duration(duration)) => Ok(
+                ValueExpr::Literal(NoteFieldValue::Duration(duration * -1.0)),
+            ),
+            _ => Err(QuerySyntaxError::unexpected_end(
+                QueryDialect::Filter,
+                input,
+                span,
+                "a number or duration after `-`",
+            )
+            .into()),
+        }
+    }
+
+    /// Folds arithmetic in written order; comparison and logical tokens end it.
+    fn parse_value_expr(
+        input: &str,
+        tokens: &mut SpannedTokenStream<FilterToken>,
+    ) -> Result<ValueExpr, QueryBuilderError> {
+        let mut lhs = Self::parse_primary(input, tokens)?;
+        loop {
+            let op = if tokens.peek_is_value(&FilterToken::Plus) {
+                ArithOp::Add
+            } else if tokens.peek_is_value(&FilterToken::Minus) {
+                ArithOp::Sub
+            } else if tokens.peek_is_value(&FilterToken::Star) {
+                ArithOp::Mul
+            } else {
+                break;
+            };
+            tokens.next();
+            let rhs = Self::parse_primary(input, tokens)?;
+            lhs = ValueExpr::Binary {
+                lhs: Box::new(lhs),
+                op,
+                rhs: Box::new(rhs),
+            };
+        }
+        Ok(lhs)
     }
 }
 
@@ -390,38 +890,56 @@ impl AtomParser for FilterGrammar {
             FilterToken::LParen => Some(LogicalControl::LeftParen),
             FilterToken::RParen => Some(LogicalControl::RightParen),
             FilterToken::Comma
+            | FilterToken::Plus
+            | FilterToken::Minus
+            | FilterToken::Star
             | FilterToken::Op(_)
             | FilterToken::Literal(_)
             | FilterToken::Ident(_) => None,
         }
     }
 
-    /// Parses a function call when an identifier is followed by `(`; otherwise
-    /// parses a comparison.
+    /// Parses a `contains` predicate or compares two value expressions.
     fn parse_atom(
         &self,
         input: &str,
         tokens: &mut SpannedTokenStream<Self::Token>,
     ) -> Result<Self::Atom, QueryBuilderError> {
-        let spanned_ident = tokens
-            .expect_map(input, "a filter term", |token| {
-                let spanned = token;
-                match spanned.into_value() {
-                    FilterToken::Ident(name) => Some(name),
+        if matches!(
+            tokens.peek().map(Spanned::value),
+            Some(FilterToken::Ident(name)) if name.eq_ignore_ascii_case("contains")
+        ) {
+            let name = tokens
+                .expect_map(input, "`contains`", |token| {
+                    match token.into_value() {
+                        FilterToken::Ident(name) => Some(name),
+                        _ => None,
+                    }
+                })
+                .map_err(|err| {
+                    QuerySyntaxError::from_lex(QueryDialect::Filter, input, err)
+                })?;
+            let name = name.into_value();
+            return Self::parse_function_call(input, tokens, &name)
+                .map(FilterAtom::Function);
+        }
+        let lhs = Self::parse_value_expr(input, tokens)?;
+        let operator = tokens
+            .expect_map(input, "a comparison operator", |token| {
+                match token.into_value() {
+                    FilterToken::Op(op) => Some(op),
                     _ => None,
                 }
             })
-            .map_err(|e| {
-                QuerySyntaxError::from_lex(QueryDialect::Filter, input, e)
+            .map_err(|err| {
+                QuerySyntaxError::from_lex(QueryDialect::Filter, input, err)
             })?;
-
-        if tokens.peek_is_value(&FilterToken::LParen) {
-            Self::parse_function_call(input, tokens, spanned_ident.value())
-                .map(FilterAtom::Function)
-        } else {
-            Self::parse_comparison(input, tokens, spanned_ident.value())
-                .map(FilterAtom::Comparison)
-        }
+        let rhs = Self::parse_value_expr(input, tokens)?;
+        Ok(FilterAtom::Comparison(ComparisonExpr::new(
+            lhs,
+            *operator.value(),
+            rhs,
+        )))
     }
 
     fn syntax_error(
@@ -449,6 +967,12 @@ enum FilterToken {
     RParen,
     #[token(",")]
     Comma,
+    #[token("+")]
+    Plus,
+    #[token("-")]
+    Minus,
+    #[token("*")]
+    Star,
     #[regex(
         "&&|and|\\|\\||or",
         |lex| LogicalOp::try_from(lex.slice()),
@@ -466,7 +990,7 @@ enum FilterToken {
     #[token("null", |_| NoteFieldValue::Null, priority = 3)]
     #[token("Null", |_| NoteFieldValue::Null, priority = 3)]
     Literal(NoteFieldValue),
-    #[regex(r#"[^\s()'",=!<>&|]+"#, |lex| lex.slice().to_owned())]
+    #[regex(r#"[^\s()'",=!<>&|+*-]+"#, |lex| lex.slice().to_owned())]
     Ident(String),
 }
 
@@ -512,18 +1036,15 @@ mod tests {
     }
 
     mod parse {
-        use miette::SourceSpan;
         use pretty_assertions::assert_eq;
         use rstest::rstest;
 
         use super::*;
-        use crate::LexError;
 
         #[rstest]
         #[case::no_operator("rating")]
         #[case::empty_field(" > 5")]
         #[case::empty_value("rating >")]
-        #[case::unquoted_string("status == done")]
         #[case::unknown_function("unknown(tags, \"#book\")")]
         #[case::function_missing_target("contains(tags)")]
         fn rejects_malformed_expressions(#[case] expr: &str) {
@@ -550,27 +1071,14 @@ mod tests {
         }
 
         #[rstest]
-        #[case::nan("rating > NaN", 9, 3)]
-        #[case::positive_infinity("rating > inf", 9, 3)]
-        #[case::negative_infinity("rating > -inf", 9, 4)]
-        fn rejects_non_finite_numeric_literals(
-            #[case] expr: &str,
-            #[case] offset: usize,
-            #[case] length: usize,
-        ) {
-            let result = FilterExpr::parse(expr);
-            assert!(
-                matches!(result, Err(QueryBuilderError::Syntax(_))),
-                "expected syntax error"
-            );
-            if let Err(QueryBuilderError::Syntax(error)) = result {
-                assert_eq!(*error.lex_error, LexError::UnexpectedToken {
-                    span: offset..offset.saturating_add(length),
-                    found: "NaN or infinity".to_owned(),
-                    expected: "a finite numeric literal",
-                });
-                assert_eq!(error.span, SourceSpan::from((offset, length)));
-            }
+        #[case("rating > NaN")]
+        #[case("rating > inf")]
+        #[case("rating > -inf")]
+        fn rejects_non_finite_numeric_literals(#[case] expr: &str) {
+            assert!(matches!(
+                FilterExpr::parse(expr),
+                Err(QueryBuilderError::Syntax(_))
+            ));
         }
 
         #[test]
@@ -1071,6 +1579,118 @@ mod tests {
                 ComparisonExpr::classify_literal(NoteFieldValue::Null),
                 NoteFieldValue::Null
             );
+        }
+    }
+
+    #[test]
+    fn query_date_arithmetic_matches_calendar_application_and_written_order() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let rows = rows_for_files(temp.path(), &[
+            ("jan.md", "---\nwhen: 2026-01-31\n---"),
+            ("feb.md", "---\nwhen: 2026-02-15\n---"),
+        ]);
+        let shifted = rows
+            .clone()
+            .filter("when + dur(\"1 month\") == \"2026-02-28\"")
+            .expect("valid filter");
+        assert_eq!(names(&shifted), vec!["jan"]);
+        let compound = rows
+            .filter("date_add(when, dur(\"1mo 1d\")) == \"2026-03-01\"")
+            .expect("valid filter");
+        assert_eq!(names(&compound), vec!["jan"]);
+    }
+
+    #[test]
+    fn query_temporal_values_support_difference_components_and_scaling() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let rows = rows_for_files(temp.path(), &[
+            ("jan.md", "---\nwhen: 2026-01-31\n---"),
+            ("feb.md", "---\nwhen: 2026-02-15\n---"),
+        ]);
+        assert_eq!(
+            names(
+                &rows
+                    .clone()
+                    .filter("when - \"2026-01-31\" == dur(\"15d\")")
+                    .expect("date difference")
+            ),
+            vec!["feb"],
+        );
+        assert_eq!(
+            names(
+                &rows
+                    .clone()
+                    .filter("date_diff(when, \"2026-01-31\", \"days\") == 15")
+                    .expect("date_diff")
+            ),
+            vec!["feb"],
+        );
+        assert_eq!(
+            names(
+                &rows
+                    .clone()
+                    .filter("date_component(when, \"month\") == 2")
+                    .expect("date_component")
+            ),
+            vec!["feb"],
+        );
+        assert_eq!(
+            names(
+                &rows
+                    .filter(
+                        "date_add(when, dur(\"1 day\") * -2) == \"2026-02-13\""
+                    )
+                    .expect("duration scaling")
+            ),
+            vec!["feb"],
+        );
+    }
+    #[test]
+    fn query_arithmetic_uses_written_order_and_handles_null_and_wrong_types() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let rows = rows_for(temp.path(), "---\nwhen: 2026-01-31\n---");
+        for expression in [
+            "dur(\"1d\") + dur(\"2d\") * 2 == dur(\"6d\")",
+            "dur(\"5d\") - dur(\"2d\") == dur(\"3d\")",
+            "when - dur(\"1d\") == \"2026-01-30\"",
+            "date_add(when, 1, \"months\") == \"2026-02-28\"",
+            "date_add(when, 1, \"mo\") == \"2026-02-28\"",
+            "date_component(when, \"week\") == 5",
+            "date_component(when, \"weekday\") == 6",
+            "date_add(null, dur(\"1d\")) == null",
+            "date_add(3, dur(\"1d\")) == null",
+        ] {
+            assert_eq!(
+                names(&rows.clone().filter(expression).expect(expression)),
+                vec!["note"],
+                "{expression}"
+            );
+        }
+        for expression in [
+            "dur(\"1d\") + dur(\"2d\") * 2 == dur(\"5d\")",
+            "date_add(when, 0.5, \"months\") == \"2026-01-31\"",
+            "date_add(missing, dur(\"1d\")) == \"2026-02-01\"",
+        ] {
+            assert!(
+                rows.clone().filter(expression).expect(expression).is_empty(),
+                "{expression}"
+            );
+        }
+    }
+
+    #[test]
+    fn query_registry_rejects_invalid_static_arguments_and_unlisted_value_forms()
+     {
+        for expression in [
+            "date_component(\"2026-01-31\", \"week99\") == 5",
+            "date_add(\"2026-01-31\", 1, \"fortnights\") == \"2026-02-01\"",
+            "date_diff(\"2026-01-31\", \"2026-02-01\", \"nonsense\") == 1",
+            "dur(\"not a duration\") == dur(\"1d\")",
+            "unknown(\"2026-01-31\") == 1",
+            "date_add(\"2026-01-31\", 1, \"day\" and true) == null",
+            "date_add((\"2026-01-31\"), dur(\"1d\")) == null",
+        ] {
+            assert!(FilterExpr::parse(expression).is_err(), "{expression}");
         }
     }
 }

@@ -427,14 +427,6 @@ impl DurationValue {
     ///   [`DurationUnit::Year`]): calendar application semantics.
     /// - [`Some`] with only sub-day units, or [`None`] (synthesized from
     ///   seconds): fixed-magnitude semantics.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "part of DurationValue surface; called in tests and by \
-                      future classify/temporal callers"
-        )
-    )]
     #[inline]
     #[must_use]
     pub(crate) fn parts(&self) -> Option<&[(f64, DurationUnit)]> {
@@ -980,9 +972,10 @@ impl DurationUnit {
     /// Fixed seconds per unit for duration magnitude identity.
     ///
     /// The sole unit-ratio table in the crate. Calendar units (Day, Week,
-    /// Month, Year) get nominal fixed ratios here for value identity and
-    /// magnitude ordering only; their date-shifting behavior belongs to the
-    /// date module's calendar owner.
+    /// Month, Year) get nominal fixed ratios here for value identity,
+    /// magnitude ordering, and fractional-remainder application; their
+    /// whole-count date-shifting behavior belongs to the date module's
+    /// calendar owner.
     #[must_use]
     pub(crate) const fn fixed_seconds(self) -> f64 {
         match self {
@@ -1081,17 +1074,26 @@ impl TryFrom<DurationSeconds> for TimeDelta {
     #[inline]
     fn try_from(seconds: DurationSeconds) -> Result<Self, Self::Error> {
         let total = seconds.0;
+        if !total.is_finite() {
+            return Err(DurationError::NonFiniteSeconds);
+        }
         let whole = total.trunc();
         let frac = total.fract();
-        let (secs, nanos) = if frac < 0.0 {
+        let (mut secs, nanos) = if frac < 0.0 {
             (whole - 1.0, (frac + 1.0) * 1_000_000_000.0)
         } else {
             (whole, frac * 1_000_000_000.0)
         };
-        secs.to_i64()
-            .zip(nanos.round().to_u32())
-            .and_then(|(s, n)| Self::new(s, n))
-            .ok_or(DurationError::NonFiniteSeconds)
+        let mut nanos_rounded =
+            nanos.round().to_i64().ok_or(DurationError::NonFiniteSeconds)?;
+        if nanos_rounded >= 1_000_000_000 {
+            secs += 1.0;
+            nanos_rounded = nanos_rounded.saturating_sub(1_000_000_000);
+        }
+        let secs_i64 = secs.to_i64().ok_or(DurationError::NonFiniteSeconds)?;
+        let nanos_u32 = u32::try_from(nanos_rounded)
+            .map_err(|_| DurationError::NonFiniteSeconds)?;
+        Self::new(secs_i64, nanos_u32).ok_or(DurationError::NonFiniteSeconds)
     }
 }
 

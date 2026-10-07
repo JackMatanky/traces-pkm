@@ -301,3 +301,39 @@ fn lists_pipeline_rejects_task_list_formatter_on_non_task_rows() {
         "message: {message}"
     );
 }
+
+/// Query and template arithmetic share the calendar owner for a clipped month.
+#[test]
+fn query_date_arithmetic_agrees_with_template_calendar_shift() {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let project = TestProject::trusted(temp.path().join("project"));
+    project.write_note("notes/jan.md", "---\nwhen: 2026-01-31\n---\n");
+    project.write_note("notes/feb.md", "---\nwhen: 2026-02-15\n---\n");
+    project.write_template(
+        "calendar.md",
+        r#"{{ query.from("notes/").where('when + dur("1 month") == "2026-02-28"') | length }}|{{ "2026-01-31" | date_add(1, unit="months") }}"#,
+    );
+    let config = project.config();
+    let service =
+        TemplateService::new(&config, Arc::new(PresetDialogProvider::new()))
+            .expect("valid template service");
+    let input = TemplatePathInput::parse(std::path::Path::new("calendar"))
+        .expect("valid template input");
+
+    let written = service
+        .render_to_file(
+            &input,
+            None,
+            WriteMode::Commit(CommitPolicy::CreateNew),
+        )
+        .expect("render temporal comparison");
+    let path = match written {
+        WriteOutcome::Written(path) => Some(path),
+        WriteOutcome::Previewed(_) => None,
+    }
+    .expect("commit mode must write");
+    assert_eq!(
+        std::fs::read_to_string(path).expect("read report"),
+        "1|2026-02-28"
+    );
+}
