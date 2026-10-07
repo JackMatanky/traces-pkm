@@ -42,7 +42,8 @@ use minijinja::{
 
 use super::error::{TemplateEngineResult, invalid_operation};
 use crate::{
-    DEFAULT_DATE_FORMAT, DateTimeValue, DateValue, DurationUnit, UNIT_HINT,
+    DEFAULT_DATE_FORMAT, DateTimeValue, DateValue, DurationSeconds,
+    DurationUnit, DurationValue, UNIT_HINT,
     date::{
         DateDiff, DateError, DateFormat, DateTimeFormat, Precision,
         RecognizedDate,
@@ -66,6 +67,7 @@ impl DateOps {
     #[inline]
     pub(super) fn register(self, env: &mut Environment<'static>) {
         env.add_filter("date_format", date_format);
+        env.add_filter("durationformat", durationformat);
         env.add_filter("timestamp", timestamp);
         env.add_filter("date_add", date_add);
         env.add_filter("date_sub", date_sub);
@@ -276,21 +278,253 @@ fn parse_date(s: &str) -> Result<NaiveDateTime, Error> {
     parse_recognized(s).map(|rec| rec.wall_or_utc())
 }
 
-/// `{{ value | date_format(format_string) }}` re-formats a piped date/time
-/// string with an arbitrary strftime specifier.
+/// `{{ value | date_format(format_string) }}` formats a piped date/time string
+/// according to either a strftime pattern (containing `%`) or common
+/// moment-dialect tokens (`YYYY MM DD HH mm ss`, `Do`/`S`,
+/// `dddd`/`ddd`/`MMM`/`MMMM`, bracket literals like `[Daily]`).
 ///
-/// Prefixed as `date_format`, not just `format`, to avoid colliding with
-/// minijinja's built-in printf-style `format` filter.
+/// Documented strftime grammar is [`chrono::format::strftime`]. `%Z` prints
+/// only a UTC offset, `%S` may render `60` for a leap second, and week numbers
+/// use `%V`/`%G` (ISO), never `%U`/`%W`. Chrono advises against `%+`, which
+/// is never emitted.
 ///
 /// # Errors
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
 ///   string; see [`parse_date`].
-/// - [`ErrorKind::InvalidOperation`] if `format` is not a valid strftime
-///   specifier; see [`format_with`].
+/// - [`ErrorKind::InvalidOperation`] if `format` is an invalid strftime pattern
+///   or contains an unsupported moment token.
 fn date_format(value: &str, format: &str) -> TemplateEngineResult<String> {
     let datetime = parse_date(value)?;
-    format_with(datetime.format(format), format)
+    let pattern = translate_pattern(format, datetime)?;
+    format_with(datetime.format(&pattern), format)
+}
+
+/// Translates `format` to a strftime pattern.
+///
+/// If `format` contains `%`, it is treated as a strftime pattern and passed
+/// through. Otherwise, it is translated from common moment-dialect tokens:
+/// bracket literals (`[Daily]`), `YYYY MM DD HH mm ss` family, `Do`/`S`
+/// ordinals, and `dddd`/`ddd`/`MMM`/`MMMM`.
+fn translate_pattern(
+    format: &str,
+    datetime: NaiveDateTime,
+) -> TemplateEngineResult<String> {
+    if format.contains('%') {
+        return Ok(format.to_owned());
+    }
+    translate_moment_dialect(format, datetime)
+}
+
+const MOMENT_TOKENS: &[(&str, &str)] = &[
+    ("YYYY", "%Y"),
+    ("YY", "%y"),
+    ("MMMM", "%B"),
+    ("MMM", "%b"),
+    ("MM", "%m"),
+    ("M", "%-m"),
+    ("dddd", "%A"),
+    ("ddd", "%a"),
+    ("DD", "%d"),
+    ("D", "%-d"),
+    ("HH", "%H"),
+    ("H", "%-H"),
+    ("hh", "%I"),
+    ("h", "%-I"),
+    ("mm", "%M"),
+    ("m", "%-M"),
+    ("ss", "%S"),
+    ("s", "%-S"),
+    ("SSS", "%3f"),
+    ("SS", "%2f"),
+    ("S", "%1f"),
+];
+
+const DURATION_HUMAN_UNITS: &[(&str, &str, f64)] = &[
+    ("year", "years", 31_536_000.0),
+    ("month", "months", 2_592_000.0),
+    ("week", "weeks", 604_800.0),
+    ("day", "days", 86_400.0),
+    ("hour", "hours", 3_600.0),
+    ("minute", "minutes", 60.0),
+    ("second", "seconds", 1.0),
+];
+
+/// Returns the English ordinal suffix (`"st"`, `"nd"`, `"rd"`, `"th"`) for
+/// `day`.
+fn ordinal_suffix(day: u32) -> &'static str {
+    match day {
+        11..=13 => "th",
+        _ => match day % 10 {
+            1 => "st",
+            2 => "nd",
+            3 => "rd",
+            _ => "th",
+        },
+    }
+}
+
+/// Translates a moment-dialect pattern into a strftime format string.
+fn translate_moment_dialect(
+    pattern: &str,
+    datetime: NaiveDateTime,
+) -> TemplateEngineResult<String> {
+    use std::fmt::Write as _;
+
+    use chrono::Datelike as _;
+
+    let mut result = String::with_capacity(pattern.len().saturating_mul(2));
+    let bytes = pattern.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+
+    while i < len {
+        let Some(&current_byte) = bytes.get(i) else {
+            break;
+        };
+        if current_byte == b'[' {
+            i = i.saturating_add(1);
+            let start = i;
+            while i < len && bytes.get(i) != Some(&b']') {
+                i = i.saturating_add(1);
+            }
+            let literal = pattern.get(start..i).unwrap_or_default();
+            if bytes.get(i) == Some(&b']') {
+                i = i.saturating_add(1);
+            }
+            for ch in literal.chars() {
+                if ch == '%' {
+                    result.push_str("%%");
+                } else {
+                    result.push(ch);
+                }
+            }
+        } else if pattern.get(i..).is_some_and(|tail| tail.starts_with("Do")) {
+            i = i.saturating_add(2);
+            let day = datetime.day();
+            let _ = write!(result, "{day}{}", ordinal_suffix(day));
+        } else if current_byte.is_ascii_alphabetic() {
+            let mut matched = false;
+            let tail = pattern.get(i..).unwrap_or_default();
+            for &(tok, spec) in MOMENT_TOKENS {
+                if tail.starts_with(tok) {
+                    result.push_str(spec);
+                    i = i.saturating_add(tok.len());
+                    matched = true;
+                    break;
+                }
+            }
+            if !matched {
+                let start = i;
+                let ch = current_byte;
+                while i < len && bytes.get(i) == Some(&ch) {
+                    i = i.saturating_add(1);
+                }
+                let token = pattern.get(start..i).unwrap_or_default();
+                return Err(Error::new(
+                    ErrorKind::InvalidOperation,
+                    format!(
+                        "unsupported moment-dialect token `{token}` in \
+                         pattern `{pattern}`; supported tokens are YYYY, YY, \
+                         MMMM, MMM, MM, M, dddd, ddd, Do, DD, D, HH, H, hh, \
+                         h, mm, m, ss, s, SSS, SS, S, and [bracketed literals]"
+                    ),
+                ));
+            }
+        } else {
+            let ch = pattern
+                .get(i..)
+                .and_then(|tail| tail.chars().next())
+                .unwrap_or(' ');
+            i = i.saturating_add(ch.len_utf8());
+            if ch == '%' {
+                result.push_str("%%");
+            } else {
+                result.push(ch);
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+/// `{{ value | durationformat }}` renders a duration in human-readable compound
+/// format (e.g. `"3 days, 4 hours"`).
+fn durationformat(value: Value) -> TemplateEngineResult<String> {
+    let dv = if let Some(s) = value.as_str() {
+        DurationValue::parse(s).map_err(|source| {
+            invalid_operation(format!("invalid duration {s:?}"), source)
+        })?
+    } else if let Ok(f) = f64::try_from(value) {
+        DurationSeconds::try_from(f).map(DurationValue::from_seconds).map_err(
+            |source| {
+                invalid_operation(
+                    format!("out-of-range duration seconds {f}"),
+                    source,
+                )
+            },
+        )?
+    } else {
+        return Err(Error::new(
+            ErrorKind::InvalidOperation,
+            "durationformat expects a duration string or number",
+        ));
+    };
+    Ok(format_human_duration(&dv))
+}
+
+/// Renders a [`DurationValue`] in human-readable compound format.
+fn format_human_duration(dv: &DurationValue) -> String {
+    let total_secs = dv.to_seconds().as_f64();
+    if total_secs == 0.0 {
+        return "0 seconds".to_owned();
+    }
+    let is_negative = total_secs < 0.0;
+    let mut rem = total_secs.abs();
+
+    let mut parts = Vec::new();
+    for &(singular, plural, unit_secs) in DURATION_HUMAN_UNITS {
+        if rem >= unit_secs {
+            let count = (rem / unit_secs).floor();
+            rem = count.mul_add(-unit_secs, rem);
+            #[expect(
+                clippy::as_conversions,
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "unit count is non-negative and fits u64"
+            )]
+            let count_u64 = count as u64;
+            if count_u64 == 1 {
+                parts.push(format!("1 {singular}"));
+            } else {
+                parts.push(format!("{count_u64} {plural}"));
+            }
+        }
+    }
+
+    if parts.is_empty() {
+        #[expect(
+            clippy::as_conversions,
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "sub-second residual fits u64"
+        )]
+        let ms = (rem * 1000.0).round() as u64;
+        match ms.cmp(&1) {
+            std::cmp::Ordering::Equal => parts.push("1 millisecond".to_owned()),
+            std::cmp::Ordering::Greater => {
+                parts.push(format!("{ms} milliseconds"));
+            }
+            std::cmp::Ordering::Less => return "0 seconds".to_owned(),
+        }
+    }
+
+    let joined = parts.join(", ");
+    if is_negative {
+        format!("-{joined}")
+    } else {
+        joined
+    }
 }
 
 /// `{{ value | timestamp }}` converts a piped date/time string to Unix seconds.
@@ -681,9 +915,6 @@ fn date_error(error: DateError) -> Error {
             ..
         }
         | DateError::InvalidYearDigits {
-            ..
-        }
-        | DateError::InvalidPattern {
             ..
         } => date_out_of_range_error(),
     }
@@ -1138,6 +1369,136 @@ mod tests {
                     minijinja::context!(),
                 )
                 .expect_err("invalid format specifier fails cleanly");
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+        }
+        #[rstest]
+        #[case::moment_iso_date("2026-07-29", "YYYY-MM-DD", "2026-07-29")]
+        #[case::bracket_literal(
+            "2026-07-29",
+            "[Daily] YYYY-MM-DD",
+            "Daily 2026-07-29"
+        )]
+        #[case::ordinal_day("2026-07-29", "Do MMMM YYYY", "29th July 2026")]
+        #[case::weekday_and_month(
+            "2026-07-29",
+            "dddd, MMMM Do, YYYY",
+            "Wednesday, July 29th, 2026"
+        )]
+        #[case::short_weekday_month(
+            "2026-07-29",
+            "ddd, MMM D, YY",
+            "Wed, Jul 29, 26"
+        )]
+        #[case::time_tokens("2026-07-29T14:30:05", "HH:mm:ss", "14:30:05")]
+        #[case::time_fractional(
+            "2026-07-29T14:30:05.123",
+            "HH:mm:ss.SSS",
+            "14:30:05.123"
+        )]
+        fn formats_moment_tokens(
+            #[case] input: &str,
+            #[case] format: &str,
+            #[case] expected: &str,
+        ) {
+            TzGuard::set("UTC");
+
+            let rendered = env()
+                .render_str(
+                    &format!(r#"{{{{ value | date_format("{format}") }}}}"#),
+                    minijinja::context! { value => input },
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered, expected);
+        }
+
+        #[test]
+        fn rejects_unsupported_moment_token_with_token_and_dialect_name() {
+            let error = env()
+                .render_str(
+                    r#"{{ "2026-07-29" | date_format("YYYY Q") }}"#,
+                    minijinja::context!(),
+                )
+                .expect_err("unsupported moment token fails cleanly");
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+            let msg = error.to_string();
+            assert!(msg.contains("unsupported moment-dialect token `Q`"));
+            assert!(msg.contains("supported tokens are"));
+        }
+
+        #[test]
+        fn format_bindings_never_emit_percent_plus() {
+            let sample_pattern = "YYYY-MM-DD HH:mm:ss [Daily]";
+            let dt = chrono::NaiveDate::from_ymd_opt(2026, 7, 29)
+                .unwrap()
+                .and_hms_opt(14, 30, 0)
+                .unwrap();
+            let translated = translate_pattern(sample_pattern, dt).unwrap();
+            assert!(!translated.contains("%+"));
+        }
+    }
+
+    mod durationformat {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::*;
+
+        #[rstest]
+        #[case::compound_days_hours("3d 4h", "3 days, 4 hours")]
+        #[case::single_day("1d", "1 day")]
+        #[case::single_hour("1h", "1 hour")]
+        #[case::minutes_seconds("1m 30s", "1 minute, 30 seconds")]
+        #[case::zero_duration("0s", "0 seconds")]
+        #[case::negative_duration("-3d 4h", "-3 days, 4 hours")]
+        fn formats_compound_durations(
+            #[case] input: &str,
+            #[case] expected: &str,
+        ) {
+            let rendered = env()
+                .render_str(
+                    &format!(r#"{{{{ "{input}" | durationformat }}}}"#),
+                    minijinja::context!(),
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered, expected);
+        }
+
+        #[test]
+        fn formats_duration_from_numeric_seconds() {
+            let rendered = env()
+                .render_str(
+                    r"{{ 86400 | durationformat }}",
+                    minijinja::context!(),
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered, "1 day");
+        }
+
+        #[test]
+        fn formats_sub_second_duration_as_milliseconds() {
+            let rendered = env()
+                .render_str(
+                    r#"{{ "500ms" | durationformat }}"#,
+                    minijinja::context!(),
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered, "500 milliseconds");
+        }
+
+        #[test]
+        fn rejects_invalid_duration_value() {
+            let error = env()
+                .render_str(
+                    r#"{{ "not a duration" | durationformat }}"#,
+                    minijinja::context!(),
+                )
+                .expect_err("invalid duration fails");
 
             assert_eq!(error.kind(), ErrorKind::InvalidOperation);
         }
