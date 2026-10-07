@@ -44,7 +44,7 @@ mod metadata;
 mod model;
 mod parser;
 
-pub(crate) use field::NoteFieldType;
+pub(crate) use field::{NoteFieldType, normalize_zero};
 pub use field::{NoteFieldValue, NoteFieldValueRef};
 pub use heading::Heading;
 pub use links::{Link, LinkTarget, LinkType};

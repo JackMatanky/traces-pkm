@@ -258,7 +258,7 @@ impl NoteFieldValueRef<'_> {
             (Self::Null, Self::Null) => Ordering::Equal,
             (Self::Bool(a), Self::Bool(b)) => a.cmp(b),
             (Self::Number(a), Self::Number(b)) => {
-                crate::normalize_zero(*a).total_cmp(&crate::normalize_zero(*b))
+                normalize_zero(*a).total_cmp(&normalize_zero(*b))
             }
             (Self::Duration(a), Self::Duration(b)) => a.cmp(b),
             (Self::Date(a), Self::Date(b)) => a.cmp(b),
@@ -459,6 +459,14 @@ impl Ord for NoteFieldValueRef<'_> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.compare(other)
     }
+}
+
+/// Normalizes `-0.0` to `0.0` before `total_cmp` comparisons so signed zero
+/// does not affect numeric ordering.
+#[inline]
+#[must_use]
+pub(crate) fn normalize_zero(n: f64) -> f64 {
+    n + 0.0
 }
 
 /// Sorted key lists first (`Vec<&str>: Ord` already gives exactly the list
