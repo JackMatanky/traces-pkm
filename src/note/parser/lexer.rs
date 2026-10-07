@@ -68,9 +68,6 @@ where
     prefix.chars().next_back()
 }
 
-/// Byte length of an ISO `YYYY-MM-DD` date, such as `2026-01-01`.
-const ISO_DATE_LEN: usize = 10;
-
 /// Switch controlling whether task field emoji shorthands are recognized.
 ///
 /// Used as [`ItemToken`]'s logos `extras` value so [`scan_fields`] chooses its
@@ -244,24 +241,18 @@ fn task_date_callback(
         .find(|&(_, ch)| !matches!(ch, ' ' | '\t'))
         .map_or(remainder.len(), |(offset, _)| offset);
     let after_ws = remainder.get(ws_end..).unwrap_or_default();
-    let Some(candidate) = after_ws.get(..ISO_DATE_LEN) else {
-        return Filter::Skip;
-    };
-    if !DateValue::is_iso_shape(candidate) {
-        return Filter::Skip;
-    }
-    let Ok(value) = DateValue::parse_iso(candidate) else {
+    let Some((rec, consumed)) = DateValue::parse_prefix(after_ws) else {
         return Filter::Skip;
     };
     if after_ws
-        .get(ISO_DATE_LEN..)
+        .get(consumed..)
         .and_then(|tail| tail.chars().next())
         .is_some_and(char::is_alphanumeric)
     {
         return Filter::Skip;
     }
-    lex.bump(ws_end.saturating_add(ISO_DATE_LEN));
-    Filter::Emit(TaskDate::new(kind, value))
+    lex.bump(ws_end.saturating_add(consumed));
+    Filter::Emit(TaskDate::new(kind, rec.date()))
 }
 
 /// Parses a Markdown tag following the leading `#` character.
@@ -620,13 +611,9 @@ mod tests {
         #[case::full_unit("[duration:: 7 hours]", "7 hours")]
         #[case::abbreviated_unit("[duration:: 4hr]", "4hr")]
         #[case::adjacent_units("[duration:: 4h15m]", "4h15m")]
-        #[case::comma_separated_units(
-            "[duration:: 4 hours, 15 minutes]",
-            "4 hours, 15 minutes"
-        )]
-        #[case::mixed_abbreviated_units(
-            "[duration:: 4 yrs, 6 wks, 9 mins, 3 s]",
-            "4 yrs, 6 wks, 9 mins, 3 s"
+        #[case::space_separated_units(
+            "[duration:: 4 hours 15 minutes]",
+            "4 hours 15 minutes"
         )]
         fn parses_dataview_duration_value(
             #[case] input: &str,
@@ -639,6 +626,34 @@ mod tests {
             assert_eq!(
                 fields.first().map(|(_, v)| v),
                 Some(&NoteFieldValue::Duration(expected_dv))
+            );
+        }
+
+        #[rstest]
+        #[case::two_durations(
+            "[duration:: 4 hours, 15 minutes]",
+            &["4 hours", "15 minutes"]
+        )]
+        #[case::four_durations(
+            "[duration:: 4 yrs, 6 wks, 9 mins, 3 s]",
+            &["4 yrs", "6 wks", "9 mins", "3 s"]
+        )]
+        fn parses_comma_separated_inline_durations_as_list(
+            #[case] input: &str,
+            #[case] expected: &[&str],
+        ) {
+            let fields = extract_fields(input);
+            let expected_items: Box<[NoteFieldValue]> = expected
+                .iter()
+                .map(|s| {
+                    NoteFieldValue::Duration(
+                        DurationValue::parse(s).expect("valid duration"),
+                    )
+                })
+                .collect();
+            assert_eq!(
+                fields.first().map(|(_, v)| v),
+                Some(&NoteFieldValue::List(expected_items))
             );
         }
         #[rstest]

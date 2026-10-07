@@ -110,10 +110,8 @@ impl NoteFieldValue {
         match self {
             Self::Date(value) => Some(value.into_inner()),
             Self::DateTime(value) => Some(value.date().into_inner()),
-            Self::String(s) => s
-                .get(..10)
-                .and_then(|prefix| DateValue::parse_iso(prefix).ok())
-                .map(DateValue::into_inner),
+            Self::String(s) => DateValue::parse_prefix(s)
+                .map(|(rec, _)| rec.date().into_inner()),
             _ => None,
         }
     }
@@ -528,7 +526,7 @@ impl From<FieldValueRef<'_>> for NoteFieldValue {
                     Self::Null
                 } else if let Some(link) = Link::parse_wikilink(trimmed) {
                     Self::Link(link)
-                } else if let Ok(dv) = DurationValue::parse(trimmed) {
+                } else if let Some(Ok(dv)) = DurationValue::classify(trimmed) {
                     Self::Duration(dv)
                 } else {
                     Self::String(s.into_owned())
@@ -840,8 +838,17 @@ mod tests {
         }
 
         #[test]
-        fn as_date_returns_none_for_a_string_shorter_than_an_iso_date() {
+        fn as_date_extracts_the_calendar_date_from_a_year_month_string() {
             let str_val = NoteFieldValue::String("2026-09".to_owned());
+            assert_eq!(
+                str_val.as_date(),
+                chrono::NaiveDate::from_ymd_opt(2026, 9, 1)
+            );
+        }
+
+        #[test]
+        fn as_date_returns_none_for_a_string_shorter_than_year_month() {
+            let str_val = NoteFieldValue::String("2026".to_owned());
             assert_eq!(str_val.as_date(), None);
         }
 
@@ -864,6 +871,20 @@ mod tests {
                 NoteFieldValue::String("not-a-date".to_owned()).as_date(),
                 None
             );
+        }
+        #[test]
+        fn pins_string_duration_filter_equality_directionality() {
+            let dur_val = DurationValue::parse("1h").expect("valid duration");
+            let str_field = NoteFieldValue::String("1h".to_owned());
+            let dur_field = NoteFieldValue::Duration(dur_val);
+
+            // string_field == dur("1h") is true because String arm matches any
+            // as_str
+            assert!(str_field.as_ref().is_equal_to_literal(&dur_field));
+
+            // duration_field == "1h" is false because Duration arm requires
+            // Duration literal
+            assert!(!dur_field.as_ref().is_equal_to_literal(&str_field));
         }
     }
 

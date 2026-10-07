@@ -67,17 +67,257 @@ pub(crate) const DEFAULT_DATETIME_FORMAT: &str = "%Y-%m-%dT%H:%M:%S";
 /// let year_month: DateValue = "2026-07".parse().expect("reduced precision");
 /// assert_eq!(year_month.to_string(), "2026-07-01");
 /// ```
+/// Precision of a recognized date or date-time string.
+#[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) enum Precision {
+    /// Year-month precision (`YYYY-MM`).
+    YearMonth,
+    /// Date-only precision (`YYYY-MM-DD`).
+    Date,
+    /// Date-time precision (`YYYY-MM-DD[T ]HH:MM[:SS[...]]`).
+    DateTime,
+}
+
+impl Precision {
+    /// Returns `true` if this precision carries a time-of-day component.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn has_time(self) -> bool {
+        matches!(self, Self::DateTime)
+    }
+
+    /// Returns the strftime pattern for formatting at this precision.
+    #[inline]
+    #[must_use]
+    pub(crate) fn format_pattern(self, wall: NaiveDateTime) -> &'static str {
+        use chrono::Timelike as _;
+        match self {
+            Self::YearMonth => "%Y-%m",
+            Self::Date => DEFAULT_DATE_FORMAT,
+            Self::DateTime => {
+                if wall.nanosecond() == 0 {
+                    DEFAULT_DATETIME_FORMAT
+                } else {
+                    "%Y-%m-%dT%H:%M:%S%.f"
+                }
+            }
+        }
+    }
+}
+
+/// A recognized date value, either a civil date or an instant date-time.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum RecognizedDateValue {
+    /// Civil date value.
+    Date(DateValue),
+    /// Instant date-time value.
+    DateTime(DateTimeValue),
+}
+
+/// A recognized date expression carrying its parsed value and precision.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RecognizedDate {
+    /// The recognized date or date-time value.
+    pub(crate) value: RecognizedDateValue,
+    /// The precision of the recognized input.
+    pub(crate) precision: Precision,
+}
+
+impl RecognizedDate {
+    /// Returns the date portion as a [`DateValue`].
+    #[inline]
+    #[must_use]
+    pub(crate) fn date(&self) -> DateValue {
+        match self.value {
+            RecognizedDateValue::Date(d) => d,
+            RecognizedDateValue::DateTime(dt) => dt.date(),
+        }
+    }
+
+    /// Returns the local wall clock, falling back to UTC if the offset cannot
+    /// be applied.
+    #[inline]
+    #[must_use]
+    pub(crate) fn wall_or_utc(&self) -> NaiveDateTime {
+        match self.value {
+            RecognizedDateValue::Date(d) => {
+                d.0.and_hms_opt(0, 0, 0).unwrap_or(NaiveDateTime::MIN)
+            }
+            RecognizedDateValue::DateTime(dt) => dt.wall_or_utc(),
+        }
+    }
+
+    /// Returns the UTC instant for this recognized date.
+    #[inline]
+    #[must_use]
+    pub(crate) fn instant(&self) -> DateTime<Utc> {
+        match self.value {
+            RecognizedDateValue::Date(d) => DateTimeValue::from(d).into_inner(),
+            RecognizedDateValue::DateTime(dt) => dt.into_inner(),
+        }
+    }
+
+    /// Converts this recognized date into a [`DatePoint`].
+    #[inline]
+    #[must_use]
+    pub(crate) fn point(&self) -> DatePoint {
+        DatePoint::from_recognized(self)
+    }
+}
+
+/// A calendar date without timezone or time-of-day ([`NaiveDate`]).
+///
+/// Wraps a [`NaiveDate`] representing a civil calendar date (`YYYY-MM-DD` or
+/// `YYYY-MM`). Parsing funnels through `classify`; deserialization uses the
+/// same parser.
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct DateValue(NaiveDate);
 
+/// Returns `true` if `bytes` begins with a date-like prefix.
+fn has_date_like_prefix(bytes: &[u8]) -> bool {
+    if bytes.len() >= 5
+        && bytes.get(0..2).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+        && bytes.get(2) == Some(&b'-')
+    {
+        return true;
+    }
+    if bytes.len() >= 5
+        && bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+        && bytes.get(4) == Some(&b'-')
+    {
+        return true;
+    }
+    false
+}
+
+/// Returns `true` if `s`'s first four bytes are ASCII digits.
+fn has_four_digit_year(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+}
+
+/// Returns `true` if `s`'s first 10 bytes have the shape `YYYY-MM-DD`.
+#[cfg(test)]
+fn is_iso_shape(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    bytes.len() >= 10
+        && bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+        && bytes.get(4) == Some(&b'-')
+        && bytes.get(5..7).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+        && bytes.get(7) == Some(&b'-')
+        && bytes.get(8..10).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+}
+
 impl DateValue {
-    /// Parses an ISO-8601 date string (`YYYY-MM-DD` or `YYYY-MM`) using
-    /// [`DateFormat::ALL`].
+    /// Classifies `s` as a date or date-time expression: `None` if it does
+    /// not match an accepted date/time shape, `Some(Err)` on parse failure,
+    /// or `Some(Ok)` on valid input with its recognized precision.
     ///
-    /// Surrounding whitespace is ignored. The year guard runs before the format
-    /// cascade, so a short year fails as [`DateError::InvalidYearDigits`]
-    /// rather than as a shape mismatch.
+    /// # Errors
+    ///
+    /// - [`DateError::InvalidYearDigits`] if a date-like input does not begin
+    ///   with 4 ASCII digits.
+    /// - [`DateError::Unparseable`] if no accepted format shape matches.
+    /// - [`DateError::LocalZoneLookup`] if the process's local timezone lookup
+    ///   fails for a naive datetime.
+    #[must_use]
+    pub(crate) fn classify(
+        s: &str,
+    ) -> Option<Result<RecognizedDate, DateError>> {
+        let trimmed = s.trim();
+        let bytes = trimmed.as_bytes();
+        if bytes.is_empty() || !has_date_like_prefix(bytes) {
+            return None;
+        }
+
+        if !has_four_digit_year(trimmed) {
+            return Some(Err(DateError::InvalidYearDigits {
+                input: trimmed.into(),
+            }));
+        }
+
+        match DateTimeFormat::parse_any(trimmed) {
+            Ok(ParsedDateTimeShape::Rfc3339(instant)) => {
+                Some(Ok(RecognizedDate {
+                    value: RecognizedDateValue::DateTime(DateTimeValue(
+                        instant,
+                    )),
+                    precision: Precision::DateTime,
+                }))
+            }
+            Ok(ParsedDateTimeShape::LocalNaive(wall)) => {
+                match local_naive_to_utc(wall) {
+                    Ok(instant) => Some(Ok(RecognizedDate {
+                        value: RecognizedDateValue::DateTime(DateTimeValue(
+                            instant,
+                        )),
+                        precision: Precision::DateTime,
+                    })),
+                    Err(err) => Some(Err(err)),
+                }
+            }
+            Err(datetime_err) => match DateFormat::parse_any(trimmed) {
+                Ok((date, precision)) => Some(Ok(RecognizedDate {
+                    value: RecognizedDateValue::Date(Self(date)),
+                    precision,
+                })),
+                Err(date_err) => {
+                    let source = if trimmed.len() > 10
+                        && matches!(
+                            trimmed.as_bytes().get(10),
+                            Some(b'T' | b' ')
+                        ) {
+                        datetime_err
+                    } else {
+                        date_err
+                    };
+                    Some(Err(DateError::Unparseable {
+                        input: trimmed.into(),
+                        source,
+                    }))
+                }
+            },
+        }
+    }
+
+    /// Parses a date prefix from `s`, returning the recognized date and the
+    /// number of consumed bytes.
+    ///
+    /// Checks 10-byte (`YYYY-MM-DD`) then 7-byte (`YYYY-MM`) prefixes.
+    #[must_use]
+    pub(crate) fn parse_prefix(s: &str) -> Option<(RecognizedDate, usize)> {
+        let bytes = s.as_bytes();
+        if bytes.len() >= 8 && bytes.get(7) == Some(&b'-') {
+            if bytes.len() >= 10
+                && let Some(prefix10) = s.get(..10)
+                && let Some(Ok(rec)) = Self::classify(prefix10)
+                && matches!(rec.precision, Precision::Date)
+            {
+                return Some((rec, 10));
+            }
+            return None;
+        }
+
+        if bytes.len() >= 10
+            && let Some(prefix10) = s.get(..10)
+            && let Some(Ok(rec)) = Self::classify(prefix10)
+            && matches!(rec.precision, Precision::Date)
+        {
+            return Some((rec, 10));
+        }
+        if bytes.len() >= 7
+            && let Some(prefix7) = s.get(..7)
+            && let Some(Ok(rec)) = Self::classify(prefix7)
+            && matches!(rec.precision, Precision::YearMonth)
+        {
+            return Some((rec, 7));
+        }
+        None
+    }
+
+    /// Parses an ISO-8601 date string (`YYYY-MM-DD` or `YYYY-MM`) using
+    /// the recognition layer.
     ///
     /// # Errors
     ///
@@ -86,54 +326,17 @@ impl DateValue {
     /// - [`DateError::Unparseable`] if no accepted shape matches.
     pub(crate) fn parse_iso(s: &str) -> Result<Self, DateError> {
         let trimmed = s.trim();
-        if !Self::has_four_digit_year(trimmed) {
+        if !has_four_digit_year(trimmed) {
             return Err(DateError::InvalidYearDigits {
                 input: trimmed.into(),
             });
         }
-        let [first, rest @ ..] = DateFormat::ALL;
-        let mut result = first.parse(trimmed);
-        for format in rest {
-            if result.is_ok() {
-                break;
-            }
-            result = format.parse(trimmed);
-        }
-        result.map(Self).map_err(|source| DateError::Unparseable {
-            input: trimmed.into(),
-            source,
-        })
-    }
-
-    /// Returns `true` if `s`'s first four bytes are ASCII digits.
-    ///
-    /// Guards chrono's lenient `%Y`, which silently accepts a short year
-    /// (`"26-08-22"` parses as year 26 CE). What follows the digits is
-    /// deliberately unchecked: `"2026/08/22"` must reach the cascade and fail
-    /// as [`DateError::Unparseable`], not as [`DateError::InvalidYearDigits`].
-    #[must_use]
-    pub(crate) fn has_four_digit_year(s: &str) -> bool {
-        let bytes = s.as_bytes();
-        bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-    }
-
-    /// Returns `true` if `s`'s first 10 bytes have the shape `YYYY-MM-DD`
-    /// (digits and hyphens in the right positions).
-    ///
-    /// Non-allocating pre-check for note-parser call sites; it does not
-    /// validate calendar values (`"9999-99-99"` passes but fails the real
-    /// parse). [`DateValue::parse_iso`] is always authoritative.
-    #[must_use]
-    pub(crate) fn is_iso_shape(s: &str) -> bool {
-        let bytes = s.as_bytes();
-        bytes.len() >= 10
-            && bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-            && bytes.get(4) == Some(&b'-')
-            && bytes.get(5..7).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-            && bytes.get(7) == Some(&b'-')
-            && bytes
-                .get(8..10)
-                .is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+        DateFormat::parse_any(trimmed).map(|(date, _)| Self(date)).map_err(
+            |source| DateError::Unparseable {
+                input: trimmed.into(),
+                source,
+            },
+        )
     }
 
     /// Formats this date as `YYYY-MM-DD`.
@@ -399,31 +602,20 @@ impl DateTimeValue {
     ///   while resolving a naive input.
     pub(crate) fn parse_iso(s: &str) -> Result<Self, DateError> {
         let trimmed = s.trim();
-        if !DateValue::has_four_digit_year(trimmed) {
+        if !has_four_digit_year(trimmed) {
             return Err(DateError::InvalidYearDigits {
                 input: trimmed.into(),
             });
         }
-        let [first, rest @ ..] = DateTimeFormat::ALL;
-        let mut matched = first;
-        let mut result = first.parse(trimmed);
-        for format in rest {
-            if result.is_ok() {
-                break;
+        let shape = DateTimeFormat::parse_any(trimmed).map_err(|source| {
+            DateError::Unparseable {
+                input: trimmed.into(),
+                source,
             }
-            matched = format;
-            result = format.parse(trimmed);
-        }
-        let parsed = result.map_err(|source| DateError::Unparseable {
-            input: trimmed.into(),
-            source,
         })?;
-        let instant = if matches!(matched, DateTimeFormat::Rfc3339) {
-            parsed
-        } else {
-            // The shape pass attached UTC as a placeholder; recover the wall
-            // clock (an identity round-trip) and resolve it locally.
-            local_naive_to_utc(parsed.naive_utc())?
+        let instant = match shape {
+            ParsedDateTimeShape::Rfc3339(instant) => instant,
+            ParsedDateTimeShape::LocalNaive(wall) => local_naive_to_utc(wall)?,
         };
         Ok(Self(instant))
     }
@@ -803,6 +995,10 @@ impl DateFormat {
     /// Returns the strftime pattern for this format, or `None` for
     /// [`Self::YearMonth`] which parses year and month components directly.
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "tested in format-pattern tests")
+    )]
     pub(crate) const fn pattern(self) -> Option<&'static str> {
         match self {
             Self::Full => Some(DEFAULT_DATE_FORMAT),
@@ -810,33 +1006,40 @@ impl DateFormat {
         }
     }
 
-    /// Attempts to parse `s` according to this format.
-    ///
-    /// [`Self::YearMonth`] splits `"YYYY-MM"` itself (chrono's bare `%Y-%m`
-    /// needs a day, so it fails with `NotEnough`) and consults that pattern
-    /// only to obtain a [`chrono::ParseError`] for rejected input such as
-    /// `"2026-13"` or `"2026-7"`.
-    ///
-    /// # Errors
-    ///
-    /// - [`chrono::ParseError`] if `s` does not match this format's expected
-    ///   shape.
-    pub(crate) fn parse(
+    /// Attempts to parse `s` across all recognized date formats in priority
+    /// order.
+    pub(crate) fn parse_any(
+        s: &str,
+    ) -> Result<(NaiveDate, Precision), chrono::ParseError> {
+        let [first, rest @ ..] = Self::ALL;
+        let mut result = first.parse_precision(s);
+        for format in rest {
+            if result.is_ok() {
+                break;
+            }
+            result = format.parse_precision(s);
+        }
+        result
+    }
+
+    fn parse_precision(
         self,
         s: &str,
-    ) -> Result<NaiveDate, chrono::ParseError> {
-        match self.pattern() {
-            Some(pat) => NaiveDate::parse_from_str(s, pat),
-            None => Self::parse_year_month(s)
-                .map_or_else(|| NaiveDate::parse_from_str(s, "%Y-%m"), Ok),
+    ) -> Result<(NaiveDate, Precision), chrono::ParseError> {
+        match self {
+            Self::Full => {
+                let pat = DEFAULT_DATE_FORMAT;
+                NaiveDate::parse_from_str(s, pat).map(|d| (d, Precision::Date))
+            }
+            Self::YearMonth => match Self::parse_year_month(s) {
+                Some(d) => Ok((d, Precision::YearMonth)),
+                None => NaiveDate::parse_from_str(s, "%Y-%m")
+                    .map(|d| (d, Precision::YearMonth)),
+            },
         }
     }
 
     /// Parses `"YYYY-MM"`, defaulting the day to 1.
-    ///
-    /// Splits and parses both components directly, requiring exactly 4 year
-    /// digits and exactly 2 month digits (chrono's bare `%Y-%m` fails with
-    /// `NotEnough`).
     fn parse_year_month(s: &str) -> Option<NaiveDate> {
         let (year_str, month_str) = s.split_once('-')?;
         if year_str.len() != 4 || month_str.len() != 2 {
@@ -860,6 +1063,8 @@ pub(crate) enum DateTimeFormat {
     IsoTSeconds,
     /// `T`-separated minute-only precision: `2026-07-29T14:30`.
     IsoTMinute,
+    /// Space-separated with fractional seconds: `2026-07-29 14:30:00.123`.
+    IsoSpaceFractional,
     /// Space-separated with whole seconds: `2026-07-29 14:30:00`.
     IsoSpaceSeconds,
     /// Space-separated minute-only precision: `2026-07-29 14:30`.
@@ -869,11 +1074,12 @@ pub(crate) enum DateTimeFormat {
 impl DateTimeFormat {
     /// Formats tried in order by [`DateTimeValue::parse_iso`] (most
     /// specific/unambiguous first).
-    pub(crate) const ALL: [Self; 6] = [
+    pub(crate) const ALL: [Self; 7] = [
         Self::Rfc3339,
         Self::IsoTFractional,
         Self::IsoTSeconds,
         Self::IsoTMinute,
+        Self::IsoSpaceFractional,
         Self::IsoSpaceSeconds,
         Self::IsoSpaceMinute,
     ];
@@ -887,62 +1093,128 @@ impl DateTimeFormat {
             Self::IsoTFractional => Some("%Y-%m-%dT%H:%M:%S%.f"),
             Self::IsoTSeconds => Some("%Y-%m-%dT%H:%M:%S"),
             Self::IsoTMinute => Some("%Y-%m-%dT%H:%M"),
+            Self::IsoSpaceFractional => Some("%Y-%m-%d %H:%M:%S%.f"),
             Self::IsoSpaceSeconds => Some("%Y-%m-%d %H:%M:%S"),
             Self::IsoSpaceMinute => Some("%Y-%m-%d %H:%M"),
         }
     }
 
-    /// Attempts to parse `s` according to this format's shape.
-    ///
-    /// Shape matching only: a naive input carries a UTC placeholder that
-    /// [`DateTimeValue::parse_iso`] resolves through [`local_naive_to_utc`]
-    /// after the cascade. The local zone is never consulted here.
-    ///
-    /// # Errors
-    ///
-    /// - [`chrono::ParseError`] if `s` does not match this format's expected
-    ///   shape.
-    pub(crate) fn parse(
+    /// Attempts to parse `s` across all recognized date-time formats in
+    /// priority order.
+    pub(crate) fn parse_any(
+        s: &str,
+    ) -> Result<ParsedDateTimeShape, chrono::ParseError> {
+        let [first, rest @ ..] = Self::ALL;
+        let mut result = first.parse_shape(s);
+        for format in rest {
+            if result.is_ok() {
+                break;
+            }
+            result = format.parse_shape(s);
+        }
+        result
+    }
+
+    /// Parses according to this format, returning a parsed datetime shape.
+    fn parse_shape(
         self,
         s: &str,
-    ) -> Result<DateTime<Utc>, chrono::ParseError> {
+    ) -> Result<ParsedDateTimeShape, chrono::ParseError> {
         match self.pattern() {
-            None => {
-                DateTime::parse_from_rfc3339(s).map(|dt| dt.with_timezone(&Utc))
-            }
+            None => DateTime::parse_from_rfc3339(s)
+                .map(|dt| ParsedDateTimeShape::Rfc3339(dt.with_timezone(&Utc))),
             Some(pat) => NaiveDateTime::parse_from_str(s, pat)
-                .map(|naive| naive.and_utc()),
+                .map(ParsedDateTimeShape::LocalNaive),
         }
     }
 }
+/// The parsed shape of a date-time string before local-zone resolution.
+#[derive(Copy, Clone, Debug)]
+pub(crate) enum ParsedDateTimeShape {
+    /// Explicit RFC 3339 instant.
+    Rfc3339(DateTime<Utc>),
+    /// Local naive datetime that must resolve through [`local_naive_to_utc`].
+    LocalNaive(NaiveDateTime),
+}
 
-/// A point in time carrying both civil wall clock and UTC instant, plus whether
-/// the input carried a time component.
+/// A point in time carrying both civil wall clock and UTC instant, plus its
+/// recognized precision.
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct DatePoint {
     /// Civil wall-clock reading.
     pub(crate) wall: NaiveDateTime,
     /// Stored UTC instant.
     pub(crate) instant: DateTime<Utc>,
-    /// Whether the parsed input carried a time component; selects the
-    /// fixed-unit measurement frame in [`DatePoint::diff`].
-    pub(crate) has_time: bool,
+    /// Precision of the original recognized input.
+    pub(crate) precision: Precision,
 }
 
 impl DatePoint {
-    /// Constructs a point from its wall clock, UTC instant, and time-component
-    /// flag.
+    /// Constructs a point from its wall clock, UTC instant, and precision.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "part of DatePoint constructor surface; production uses \
+                      from_recognized"
+        )
+    )]
     pub(crate) const fn new(
         wall: NaiveDateTime,
         instant: DateTime<Utc>,
-        has_time: bool,
+        precision: Precision,
     ) -> Self {
         Self {
             wall,
             instant,
-            has_time,
+            precision,
+        }
+    }
+
+    /// Constructs a [`DatePoint`] from a [`RecognizedDate`].
+    #[inline]
+    #[must_use]
+    pub(crate) fn from_recognized(rec: &RecognizedDate) -> Self {
+        Self {
+            wall: rec.wall_or_utc(),
+            instant: rec.instant(),
+            precision: rec.precision,
+        }
+    }
+
+    /// Returns `true` if this point carries a time-of-day component.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn has_time(&self) -> bool {
+        self.precision.has_time()
+    }
+
+    /// Shifts this date point by `n` `unit`s, owning the civil vs instant
+    /// frame policy.
+    pub(crate) fn shift(
+        self,
+        n: i64,
+        unit: DurationUnit,
+    ) -> Result<Self, DateError> {
+        if self.has_time() {
+            let dt = DateTimeValue(self.instant).shift(n, unit)?;
+            let wall = dt.local_wall().ok_or(DateError::OutOfRange)?;
+            Ok(Self {
+                wall,
+                instant: dt.into_inner(),
+                precision: self.precision,
+            })
+        } else {
+            let shifted_wall = shift_wall(self.wall, n, unit)?;
+            let shifted_date = DateValue(shifted_wall.date());
+            let instant = DateTimeValue::from(shifted_date).into_inner();
+            Ok(Self {
+                wall: shifted_wall,
+                instant,
+                precision: self.precision,
+            })
         }
     }
 
@@ -967,7 +1239,7 @@ impl DatePoint {
         to: Self,
         unit: DurationUnit,
     ) -> Result<DateDiff, DateError> {
-        let both_datetimes = self.has_time && to.has_time;
+        let both_datetimes = self.has_time() && to.has_time();
         match unit {
             DurationUnit::Year => Ok(DateDiff::Whole(signed_years_since(
                 self.wall.date(),
@@ -1140,7 +1412,7 @@ fn seconds_delta(part_secs: f64) -> Result<TimeDelta, DateError> {
 /// # Errors
 ///
 /// - [`DateError::OutOfRange`] if the shift overflows representable bounds.
-pub(crate) fn shift_wall(
+fn shift_wall(
     wall: NaiveDateTime,
     n: i64,
     unit: DurationUnit,
@@ -1533,9 +1805,9 @@ mod tests {
 
         #[test]
         fn detects_the_iso_shape_byte_pattern() {
-            assert!(DateValue::is_iso_shape("2026-07-29"));
-            assert!(!DateValue::is_iso_shape("2026-7-29"));
-            assert!(!DateValue::is_iso_shape("2026/07/29"));
+            assert!(is_iso_shape("2026-07-29"));
+            assert!(!is_iso_shape("2026-7-29"));
+            assert!(!is_iso_shape("2026/07/29"));
         }
 
         #[rstest]
@@ -1544,6 +1816,7 @@ mod tests {
         #[case::has_fractional_seconds("2026-07-29T14:30:00.123")]
         #[case::t_separated_with_seconds("2026-07-29T14:30:00")]
         #[case::t_separated_minute_only("2026-07-29T14:30")]
+        #[case::space_separated_fractional("2026-07-29 14:30:00.123")]
         #[case::space_separated_with_seconds("2026-07-29 14:30:00")]
         #[case::space_separated_minute_only("2026-07-29 14:30")]
         fn accepts_every_datetime_shape(#[case] input: &str) {
@@ -1580,7 +1853,7 @@ mod tests {
         #[case::empty("")]
         #[case::non_digit_year("abcd-01-01")]
         fn rejects_a_missing_four_digit_year(#[case] input: &str) {
-            assert!(!DateValue::has_four_digit_year(input));
+            assert!(!has_four_digit_year(input));
         }
 
         #[test]
@@ -1589,7 +1862,7 @@ mod tests {
             // a longer numeric prefix still passes this guard and is rejected
             // later, by the format cascade, as Unparseable rather than
             // InvalidYearDigits.
-            assert!(DateValue::has_four_digit_year("20265-01-01"));
+            assert!(has_four_digit_year("20265-01-01"));
             assert!(matches!(
                 DateValue::parse_iso("20265-01-01"),
                 Err(DateError::Unparseable { .. })
@@ -1658,6 +1931,10 @@ mod tests {
                 Some("%Y-%m-%dT%H:%M:%S")
             );
             assert_eq!(
+                DateTimeFormat::IsoSpaceFractional.pattern(),
+                Some("%Y-%m-%d %H:%M:%S%.f")
+            );
+            assert_eq!(
                 DateTimeFormat::IsoSpaceMinute.pattern(),
                 Some("%Y-%m-%d %H:%M")
             );
@@ -1667,6 +1944,131 @@ mod tests {
         fn date_format_pattern_maps_each_variant_to_its_strftime_spec() {
             assert_eq!(DateFormat::Full.pattern(), Some(DEFAULT_DATE_FORMAT));
             assert_eq!(DateFormat::YearMonth.pattern(), None);
+        }
+    }
+
+    mod classify {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn returns_none_for_non_temporal_text() {
+            assert!(DateValue::classify("hello").is_none());
+            assert!(DateValue::classify("").is_none());
+            assert!(DateValue::classify("2026").is_none());
+            assert!(DateValue::classify("2026/08/22").is_none());
+            assert!(DateValue::classify("20265-01-01").is_none());
+        }
+
+        #[test]
+        fn returns_some_err_for_shape_matching_but_invalid_input() {
+            let res1 =
+                DateValue::classify("2026-13").expect("shape gate passes");
+            assert!(matches!(res1, Err(DateError::Unparseable { .. })));
+
+            let res2 =
+                DateValue::classify("26-08-22").expect("shape gate passes");
+            assert!(matches!(res2, Err(DateError::InvalidYearDigits { .. })));
+
+            let res3 = DateValue::classify("2026-07-29Tinvalid")
+                .expect("shape gate passes");
+            assert!(matches!(res3, Err(DateError::Unparseable { .. })));
+        }
+
+        #[test]
+        fn returns_some_ok_with_appropriate_precision() {
+            TzGuard::keep();
+
+            let ym =
+                DateValue::classify("2026-07").expect("parses").expect("valid");
+            assert_eq!(ym.precision, Precision::YearMonth);
+            assert_eq!(ym.date(), DateValue::parse_iso("2026-07-01").unwrap());
+
+            let d = DateValue::classify("2026-07-29")
+                .expect("parses")
+                .expect("valid");
+            assert_eq!(d.precision, Precision::Date);
+            assert_eq!(d.date(), DateValue::parse_iso("2026-07-29").unwrap());
+
+            let dt = DateValue::classify("2026-07-29T14:30:00")
+                .expect("parses")
+                .expect("valid");
+            assert_eq!(dt.precision, Precision::DateTime);
+
+            let dt_space_frac = DateValue::classify("2026-07-29 14:30:00.123")
+                .expect("parses")
+                .expect("valid");
+            assert_eq!(dt_space_frac.precision, Precision::DateTime);
+        }
+
+        #[test]
+        fn demo_contract_year_month_shifts_and_reformats_as_year_month() {
+            let recognized = DateValue::classify("2026-07")
+                .expect("recognized")
+                .expect("valid");
+            assert_eq!(recognized.precision, Precision::YearMonth);
+
+            let shifted_point = recognized
+                .point()
+                .shift(1, DurationUnit::Month)
+                .expect("shifted");
+            assert_eq!(shifted_point.precision, Precision::YearMonth);
+
+            let pat =
+                shifted_point.precision.format_pattern(shifted_point.wall);
+            assert_eq!(pat, "%Y-%m");
+            assert_eq!(shifted_point.wall.format(pat).to_string(), "2026-08");
+        }
+
+        #[test]
+        fn equates_values_at_different_precisions_denoting_the_same_day() {
+            let ym = DateValue::parse_iso("2026-07").expect("valid");
+            let d = DateValue::parse_iso("2026-07-01").expect("valid");
+            assert_eq!(ym, d);
+
+            let ym_rec = DateValue::classify("2026-07").unwrap().unwrap();
+            let d_rec = DateValue::classify("2026-07-01").unwrap().unwrap();
+            assert_eq!(ym_rec.precision, Precision::YearMonth);
+            assert_eq!(d_rec.precision, Precision::Date);
+            assert_eq!(ym_rec.date(), d_rec.date());
+        }
+
+        #[test]
+        fn round_trips_fractional_seconds_through_shift_and_format() {
+            TzGuard::set("UTC");
+
+            let recognized = DateValue::classify("2026-07-29T14:30:00.123")
+                .expect("recognized")
+                .expect("valid");
+            assert_eq!(recognized.precision, Precision::DateTime);
+
+            let shifted = recognized
+                .point()
+                .shift(1, DurationUnit::Hour)
+                .expect("shifted");
+            let pat = shifted.precision.format_pattern(shifted.wall);
+            assert_eq!(
+                shifted.wall.format(pat).to_string(),
+                "2026-07-29T15:30:00.123"
+            );
+        }
+
+        #[test]
+        fn parse_prefix_extracts_date_and_year_month_with_consumed_lengths() {
+            let (d, consumed_d) =
+                DateValue::parse_prefix("2026-07-29T14:30:00").expect("prefix");
+            assert_eq!(consumed_d, 10);
+            assert_eq!(d.precision, Precision::Date);
+            assert_eq!(d.date(), DateValue::parse_iso("2026-07-29").unwrap());
+
+            let (ym, consumed_ym) =
+                DateValue::parse_prefix("2026-07 remainder").expect("prefix");
+            assert_eq!(consumed_ym, 7);
+            assert_eq!(ym.precision, Precision::YearMonth);
+            assert_eq!(ym.date(), DateValue::parse_iso("2026-07-01").unwrap());
+
+            assert!(DateValue::parse_prefix("not a date").is_none());
         }
     }
 
@@ -1981,10 +2383,15 @@ mod tests {
             let dt1 = DateTimeValue::parse_iso("2026-07-29T10:00:00Z").unwrap();
             let dt2 = DateTimeValue::parse_iso("2026-07-29T11:30:00Z").unwrap();
             let point_of = |value: &DateTimeValue, has_time: bool| {
+                let precision = if has_time {
+                    Precision::DateTime
+                } else {
+                    Precision::Date
+                };
                 DatePoint::new(
                     value.wall_or_utc(),
                     value.into_inner(),
-                    has_time,
+                    precision,
                 )
             };
 
@@ -2007,13 +2414,13 @@ mod tests {
             let diff_months = DatePoint::new(
                 d1.and_hms_opt(0, 0, 0).unwrap(),
                 dt1.into_inner(),
-                false,
+                Precision::Date,
             )
             .diff(
                 DatePoint::new(
                     d2.and_hms_opt(0, 0, 0).unwrap(),
                     dt2.into_inner(),
-                    false,
+                    Precision::Date,
                 ),
                 DurationUnit::Month,
             )

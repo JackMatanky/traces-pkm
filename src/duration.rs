@@ -166,55 +166,58 @@ impl DurationValue {
     /// [`UnknownUnit`]: DurationError::UnknownUnit
     /// [`NonFiniteNumber`]: DurationError::NonFiniteNumber
     /// [`NonFiniteSeconds`]: DurationError::NonFiniteSeconds
+    /// Classifies `s` as a duration expression: `None` if `s` cannot start a
+    /// duration, `Some(Err)` on parse failure, or `Some(Ok)` on valid input.
+    ///
+    /// Cheap `O(1)` shape gate upfront: returns `None` without allocation when
+    /// the first byte cannot begin a duration segment.
+    ///
+    /// # Errors
+    ///
+    /// - [`DurationError::Empty`] if `s` is empty or whitespace.
+    /// - [`DurationError::MissingNumber`] if a segment has a unit without a
+    ///   number.
+    /// - [`DurationError::MissingUnit`] if a number appears without a unit.
+    /// - [`DurationError::UnknownUnit`] if a unit is unrecognized.
+    /// - [`DurationError::InvalidNumber`] if a non-leading part carries a
+    ///   negative sign.
+    /// - [`DurationError::MalformedNumber`] if float syntax is invalid.
+    /// - [`DurationError::NonFiniteNumber`] if a literal overflows to infinity.
+    /// - [`DurationError::NonFiniteSeconds`] if the folded total is non-finite.
+    #[must_use]
+    pub(crate) fn classify(s: &str) -> Option<Result<Self, DurationError>> {
+        let trimmed = s.trim();
+        let bytes = trimmed.as_bytes();
+        if bytes.is_empty() || !scan::can_start_duration_segment(bytes, 0) {
+            return None;
+        }
+        Some(Self::parse(trimmed))
+    }
+
+    /// Parses a duration string containing one or more `<number><unit>` parts.
+    ///
+    /// Accepts integers, decimals (`".5h"`), and exponential floats (`"1e3s"`),
+    /// optional leading `+` or `-` on the first part, redundant `+` on
+    /// subsequent parts, and whitespace or comma separators between parts.
+    ///
+    /// # Errors
+    ///
+    /// - [`DurationError::Empty`] if `input` is empty or whitespace.
+    /// - [`DurationError::MissingNumber`] if a segment has a unit without a
+    ///   number.
+    /// - [`DurationError::MissingUnit`] if a number appears without a unit.
+    /// - [`DurationError::UnknownUnit`] if a unit is unrecognized.
+    /// - [`DurationError::InvalidNumber`] if a non-leading part carries a
+    ///   negative sign.
+    /// - [`DurationError::MalformedNumber`] if float syntax is invalid.
+    /// - [`DurationError::NonFiniteNumber`] if a literal overflows to infinity.
+    /// - [`DurationError::NonFiniteSeconds`] if the folded total is non-finite.
     pub(crate) fn parse(input: &str) -> Result<Self, DurationError> {
         let trimmed = input.trim();
         if trimmed.is_empty() {
             return Err(DurationError::Empty);
         }
-
-        let bytes = trimmed.as_bytes();
-        let len = bytes.len();
-        let mut pos = 0;
-        let mut parsed_any = false;
-        let mut is_negative = false;
-        let mut raw_parts = Vec::new();
-
-        while pos < len {
-            Self::skip_separators(bytes, &mut pos);
-            if pos >= len {
-                break;
-            }
-
-            let (number, kind, pos_after_part) =
-                Self::scan_part(bytes, pos, trimmed)?;
-            pos = pos_after_part;
-
-            if number.is_sign_negative() {
-                if parsed_any {
-                    return Err(DurationError::InvalidNumber {
-                        input: trimmed.to_owned(),
-                    });
-                }
-                is_negative = true;
-            }
-
-            raw_parts.push((number.abs(), kind));
-            parsed_any = true;
-        }
-
-        if !parsed_any {
-            return Err(DurationError::Empty);
-        }
-
-        Self::apply_sign(&mut raw_parts, is_negative);
-
-        let total = Self::fold_parts(&raw_parts);
-
-        Ok(Self {
-            raw: trimmed.into(),
-            seconds: DurationSeconds::try_from(total)?,
-            parts: Some(raw_parts.into_boxed_slice()),
-        })
+        Self::scan_duration(trimmed, scan::ScanMode::Whole).map(|(val, _)| val)
     }
 
     /// Parses a duration prefix from `input`, returning the parsed
@@ -222,7 +225,10 @@ impl DurationValue {
     ///
     /// Recognizes the same `<number><unit>` grammar as [`Self::parse`],
     /// including the leading-sign rule: only the first part may carry an
-    /// explicit `-`; a redundant `+` is accepted anywhere. Returns `None` if:
+    /// explicit `-`; a redundant `+` is accepted anywhere. In prefix mode,
+    /// commas are treated as atom delimiters rather than part separators,
+    /// preserving list precedence at inline note boundaries. Returns `None`
+    /// if:
     ///
     /// - The input does not start with a valid duration segment, or no parts
     ///   could be parsed.
@@ -231,13 +237,31 @@ impl DurationValue {
     ///   so far.
     /// - The folded total is not finite.
     pub(crate) fn parse_prefix(input: &str) -> Option<(Self, usize)> {
+        Self::scan_duration(input, scan::ScanMode::Prefix).ok()
+    }
+
+    /// Scans a duration in either whole-input or prefix mode.
+    fn scan_duration(
+        input: &str,
+        mode: scan::ScanMode,
+    ) -> Result<(Self, usize), DurationError> {
         let bytes = input.as_bytes();
         let len = bytes.len();
-        if len == 0 || !Self::can_start_duration_segment(bytes, 0) {
-            return None;
+        let mut pos = 0;
+        match mode {
+            scan::ScanMode::Whole => {
+                scan::skip_separators(bytes, &mut pos);
+                if pos >= len {
+                    return Err(DurationError::Empty);
+                }
+            }
+            scan::ScanMode::Prefix => {
+                if len == 0 || !scan::can_start_duration_segment(bytes, pos) {
+                    return Err(DurationError::Empty);
+                }
+            }
         }
 
-        let mut pos = 0;
         let mut parsed_any = false;
         let mut is_negative = false;
         let mut last_end = 0;
@@ -245,12 +269,14 @@ impl DurationValue {
 
         while pos < len {
             let (number, kind, pos_after_part) =
-                Self::scan_part(bytes, pos, input).ok()?;
+                scan::scan_part(bytes, pos, input)?;
             pos = pos_after_part;
 
             if number.is_sign_negative() {
                 if parsed_any {
-                    return None;
+                    return Err(DurationError::InvalidNumber {
+                        input: input.to_owned(),
+                    });
                 }
                 is_negative = true;
             }
@@ -259,27 +285,41 @@ impl DurationValue {
             parsed_any = true;
             last_end = pos;
 
-            let mut next_pos = pos;
-            Self::skip_separators(bytes, &mut next_pos);
-            if next_pos < len
-                && Self::can_start_duration_segment(bytes, next_pos)
-            {
-                pos = next_pos;
-            } else {
-                break;
+            match mode {
+                scan::ScanMode::Whole => {
+                    scan::skip_separators(bytes, &mut pos);
+                    if pos >= len {
+                        break;
+                    }
+                }
+                scan::ScanMode::Prefix => {
+                    let mut next_pos = pos;
+                    scan::skip_whitespace(bytes, &mut next_pos);
+                    if next_pos < len
+                        && scan::can_start_duration_segment(bytes, next_pos)
+                    {
+                        pos = next_pos;
+                    } else {
+                        break;
+                    }
+                }
             }
         }
 
         if !parsed_any {
-            return None;
+            return Err(DurationError::Empty);
         }
 
-        Self::apply_sign(&mut raw_parts, is_negative);
+        scan::apply_sign(&mut raw_parts, is_negative);
 
         let total = Self::fold_parts(&raw_parts);
-        let seconds = DurationSeconds::try_from(total).ok()?;
-        let raw = input[..last_end].trim().into();
-        Some((
+        let seconds = DurationSeconds::try_from(total)?;
+        let raw = match mode {
+            scan::ScanMode::Whole => input.trim().into(),
+            scan::ScanMode::Prefix => input[..last_end].trim().into(),
+        };
+
+        Ok((
             Self {
                 raw,
                 seconds,
@@ -287,39 +327,6 @@ impl DurationValue {
             },
             last_end,
         ))
-    }
-
-    /// Scans one `<number><unit>` part starting at `pos`, returning the
-    /// magnitude, unit, and end offset.
-    ///
-    /// Shared per-part mechanism of [`Self::parse`] and [`Self::parse_prefix`];
-    /// the loops keep their own continuation, sign, and termination policies.
-    fn scan_part(
-        bytes: &[u8],
-        pos: usize,
-        input: &str,
-    ) -> Result<(f64, DurationUnit, usize), DurationError> {
-        let (number, after_number) = Self::parse_number(bytes, pos, input)?;
-        let mut cursor = after_number;
-        Self::skip_whitespace(bytes, &mut cursor);
-        let (unit, after_unit) = Self::parse_unit(bytes, cursor, input)?;
-        Ok((number, unit, after_unit))
-    }
-
-    /// Negates every magnitude in `parts` when `is_negative` is `true`.
-    ///
-    /// Both parse loops end with this fold: only the first part's sign applies,
-    /// so the retained magnitudes are non-negative until this point (a later
-    /// part may repeat a redundant `+` but never an explicit `-`).
-    fn apply_sign(parts: &mut [(f64, DurationUnit)], is_negative: bool) {
-        let sign = if is_negative {
-            -1.0
-        } else {
-            1.0
-        };
-        for (mag, _) in parts {
-            *mag *= sign;
-        }
     }
 
     /// Folds duration parts in left-to-right order to compute total seconds.
@@ -487,220 +494,6 @@ impl DurationValue {
         self.seconds
     }
 
-    /// Returns `true` if `s` can begin a duration segment: a digit, a `.`
-    /// followed by a digit, or a `+`/`-` followed by a digit or by `.` and a
-    /// digit.
-    ///
-    /// `O(1)`: inspects at most the first three bytes, letting callers skip
-    /// [`Self::parse`]'s allocating error path for text that plainly can't be
-    /// a duration. The character-set rule is shared with [`Self::parse`] and
-    /// [`Self::parse_prefix`].
-    #[must_use]
-    pub(crate) fn can_start(s: &str) -> bool {
-        Self::can_start_duration_segment(s.as_bytes(), 0)
-    }
-
-    /// Returns `true` if `bytes[pos]` can begin a numeric duration token.
-    fn can_start_duration_segment(bytes: &[u8], pos: usize) -> bool {
-        let Some(&b) = bytes.get(pos) else {
-            return false;
-        };
-        if b.is_ascii_digit() {
-            return true;
-        }
-        if b == b'.' {
-            return bytes
-                .get(pos.saturating_add(1))
-                .is_some_and(u8::is_ascii_digit);
-        }
-        if b == b'+' || b == b'-' {
-            return Self::digits_after_sign(
-                bytes.get(pos.saturating_add(1)),
-                bytes.get(pos.saturating_add(2)),
-            );
-        }
-        false
-    }
-
-    /// Returns `true` if the bytes following a `+`/`-` sign begin a valid
-    /// number: a digit, or `.` followed by one.
-    ///
-    /// Single owner of the sign rule shared by
-    /// [`Self::can_start_duration_segment`] and [`Self::parse_number`].
-    fn digits_after_sign(next: Option<&u8>, next_next: Option<&u8>) -> bool {
-        match next {
-            Some(c) if c.is_ascii_digit() => true,
-            Some(b'.') => next_next.is_some_and(u8::is_ascii_digit),
-            _ => false,
-        }
-    }
-
-    /// Advances `pos` past whitespace and commas.
-    fn skip_separators(bytes: &[u8], pos: &mut usize) {
-        let len = bytes.len();
-        while *pos < len {
-            let Some(&b) = bytes.get(*pos) else {
-                break;
-            };
-            if !b.is_ascii_whitespace() && b != b',' {
-                break;
-            }
-            *pos = (*pos).saturating_add(1);
-        }
-    }
-
-    /// Advances `pos` past ASCII whitespace.
-    fn skip_whitespace(bytes: &[u8], pos: &mut usize) {
-        let len = bytes.len();
-        while *pos < len {
-            let Some(&b) = bytes.get(*pos) else {
-                break;
-            };
-            if !b.is_ascii_whitespace() {
-                break;
-            }
-            *pos = (*pos).saturating_add(1);
-        }
-    }
-
-    /// Parses a decimal number starting at `pos`, supporting an optional
-    /// leading `+` or `-` and an optional trailing exponent (`"1e5"`,
-    /// `".5e-3"`), the same float syntax the [`DurationSeconds`]
-    /// [`Display`](fmt::Display) dialect emits for extreme magnitudes.
-    fn parse_number(
-        bytes: &[u8],
-        mut pos: usize,
-        input: &str,
-    ) -> Result<(f64, usize), DurationError> {
-        let num_start = pos;
-        if let Some(&b) = bytes.get(pos)
-            && (b == b'+' || b == b'-')
-        {
-            if !Self::digits_after_sign(
-                bytes.get(pos.saturating_add(1)),
-                bytes.get(pos.saturating_add(2)),
-            ) {
-                return Err(DurationError::InvalidNumber {
-                    input: input.to_owned(),
-                });
-            }
-            pos = pos.saturating_add(1);
-        }
-        let mut has_decimal = false;
-        let mut has_digit = false;
-        while pos < bytes.len() {
-            let Some(&b) = bytes.get(pos) else {
-                break;
-            };
-            if b.is_ascii_digit() {
-                has_digit = true;
-                pos = pos.saturating_add(1);
-            } else if b == b'.' && !has_decimal {
-                has_decimal = true;
-                pos = pos.saturating_add(1);
-            } else {
-                break;
-            }
-        }
-        // An exponent may follow a digit-bearing mantissa. A truncated exponent
-        // (`"1e"`, `"1e+"`) is not consumed: the `e` falls to the unit scanner
-        // and is reported as an unknown unit.
-        if has_digit && matches!(bytes.get(pos), Some(b'e' | b'E')) {
-            let mut exp_pos = pos.saturating_add(1);
-            if matches!(bytes.get(exp_pos), Some(b'+' | b'-')) {
-                exp_pos = exp_pos.saturating_add(1);
-            }
-            if bytes.get(exp_pos).is_some_and(u8::is_ascii_digit) {
-                while bytes.get(exp_pos).is_some_and(u8::is_ascii_digit) {
-                    exp_pos = exp_pos.saturating_add(1);
-                }
-                pos = exp_pos;
-            }
-        }
-        Self::parsed_number(num_start, pos, input)
-    }
-
-    /// Validates and converts a parsed number byte span into `f64`.
-    fn parsed_number(
-        start: usize,
-        end: usize,
-        input: &str,
-    ) -> Result<(f64, usize), DurationError> {
-        if start == end {
-            return Err(DurationError::MissingNumber {
-                input: input.to_owned(),
-            });
-        }
-        // `start`/`end` are byte offsets produced by scanning only single-byte
-        // ASCII (`+`/`-`/`.`/digit/`e`/`E`), so they always land on char
-        // boundaries within `input`: a direct `str` slice can't fail.
-        let Some(text) = input.get(start..end) else {
-            return Err(DurationError::MissingNumber {
-                input: input.to_owned(),
-            });
-        };
-        let number: f64 =
-            text.parse().map_err(|source| DurationError::MalformedNumber {
-                input: input.to_owned(),
-                source,
-            })?;
-        if !number.is_finite() {
-            return Err(DurationError::NonFiniteNumber {
-                input: input.to_owned(),
-            });
-        }
-        Ok((number, end))
-    }
-
-    /// Parses a unit string starting at `pos`.
-    fn parse_unit(
-        bytes: &[u8],
-        mut pos: usize,
-        input: &str,
-    ) -> Result<(DurationUnit, usize), DurationError> {
-        let unit_start = pos;
-        while pos < bytes.len() {
-            let Some(&b) = bytes.get(pos) else {
-                break;
-            };
-            if !b.is_ascii_alphabetic() {
-                break;
-            }
-            pos = pos.saturating_add(1);
-        }
-        Self::parsed_unit(bytes, unit_start, pos, input)
-    }
-
-    /// Validates and converts a parsed unit byte span into [`DurationUnit`].
-    fn parsed_unit(
-        bytes: &[u8],
-        start: usize,
-        end: usize,
-        input: &str,
-    ) -> Result<(DurationUnit, usize), DurationError> {
-        if start == end {
-            return Err(DurationError::MissingUnit {
-                input: input.to_owned(),
-            });
-        }
-        let Some(unit_slice) = bytes.get(start..end) else {
-            return Err(DurationError::MissingUnit {
-                input: input.to_owned(),
-            });
-        };
-        let unit_str = core::str::from_utf8(unit_slice).map_err(|_| {
-            DurationError::UnknownUnit {
-                input: input.to_owned(),
-            }
-        })?;
-        let kind = DurationUnit::parse(unit_str).ok_or_else(|| {
-            DurationError::UnknownUnit {
-                input: input.to_owned(),
-            }
-        })?;
-        Ok((kind, end))
-    }
-
     /// Combines `rhs` with `self`, negating `rhs`'s parts (and seconds, in the
     /// fixed regime) when `negate_rhs` is `true`; the single implementation
     /// behind [`Add`] and [`Sub`].
@@ -747,6 +540,246 @@ impl DurationValue {
                 seconds,
                 parts: None,
             }
+        }
+    }
+}
+/// Stateless scanner routines for duration expressions.
+mod scan {
+    use super::*;
+
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub(super) enum ScanMode {
+        Whole,
+        Prefix,
+    }
+
+    /// Returns `true` if `bytes[pos]` can begin a numeric duration token.
+    pub(super) fn can_start_duration_segment(bytes: &[u8], pos: usize) -> bool {
+        let Some(&b) = bytes.get(pos) else {
+            return false;
+        };
+        if b.is_ascii_digit() {
+            return true;
+        }
+        if b == b'.' {
+            return bytes
+                .get(pos.saturating_add(1))
+                .is_some_and(u8::is_ascii_digit);
+        }
+        if b == b'+' || b == b'-' {
+            return has_digits_after_sign(
+                bytes.get(pos.saturating_add(1)),
+                bytes.get(pos.saturating_add(2)),
+            );
+        }
+        false
+    }
+
+    /// Returns `true` if the bytes following a `+`/`-` sign begin a valid
+    /// number: a digit, or `.` followed by one.
+    pub(super) fn has_digits_after_sign(
+        next: Option<&u8>,
+        next_next: Option<&u8>,
+    ) -> bool {
+        match next {
+            Some(c) if c.is_ascii_digit() => true,
+            Some(b'.') => next_next.is_some_and(u8::is_ascii_digit),
+            _ => false,
+        }
+    }
+
+    /// Advances `pos` past whitespace and commas.
+    pub(super) fn skip_separators(bytes: &[u8], pos: &mut usize) {
+        let len = bytes.len();
+        while *pos < len {
+            let Some(&b) = bytes.get(*pos) else {
+                break;
+            };
+            if !b.is_ascii_whitespace() && b != b',' {
+                break;
+            }
+            *pos = (*pos).saturating_add(1);
+        }
+    }
+
+    /// Advances `pos` past ASCII whitespace.
+    pub(super) fn skip_whitespace(bytes: &[u8], pos: &mut usize) {
+        let len = bytes.len();
+        while *pos < len {
+            let Some(&b) = bytes.get(*pos) else {
+                break;
+            };
+            if !b.is_ascii_whitespace() {
+                break;
+            }
+            *pos = (*pos).saturating_add(1);
+        }
+    }
+
+    /// Scans one `<number><unit>` part starting at `pos`, returning the
+    /// magnitude, unit, and end offset.
+    pub(super) fn scan_part(
+        bytes: &[u8],
+        pos: usize,
+        input: &str,
+    ) -> Result<(f64, DurationUnit, usize), DurationError> {
+        let (number, after_number) = parse_number(bytes, pos, input)?;
+        let mut cursor = after_number;
+        skip_whitespace(bytes, &mut cursor);
+        let (unit, after_unit) = parse_unit(bytes, cursor, input)?;
+        Ok((number, unit, after_unit))
+    }
+
+    /// Parses a decimal number starting at `pos`, supporting an optional
+    /// leading `+` or `-` and an optional trailing exponent (`"1e5"`,
+    /// `".5e-3"`), the same float syntax the [`DurationSeconds`]
+    /// [`Display`](fmt::Display) dialect emits for extreme magnitudes.
+    pub(super) fn parse_number(
+        bytes: &[u8],
+        mut pos: usize,
+        input: &str,
+    ) -> Result<(f64, usize), DurationError> {
+        let num_start = pos;
+        if let Some(&b) = bytes.get(pos)
+            && (b == b'+' || b == b'-')
+        {
+            if !has_digits_after_sign(
+                bytes.get(pos.saturating_add(1)),
+                bytes.get(pos.saturating_add(2)),
+            ) {
+                return Err(DurationError::InvalidNumber {
+                    input: input.to_owned(),
+                });
+            }
+            pos = pos.saturating_add(1);
+        }
+        let mut has_decimal = false;
+        let mut has_digit = false;
+        while pos < bytes.len() {
+            let Some(&b) = bytes.get(pos) else {
+                break;
+            };
+            if b.is_ascii_digit() {
+                has_digit = true;
+                pos = pos.saturating_add(1);
+            } else if b == b'.' && !has_decimal {
+                has_decimal = true;
+                pos = pos.saturating_add(1);
+            } else {
+                break;
+            }
+        }
+        // An exponent may follow a digit-bearing mantissa. A truncated exponent
+        // (`"1e"`, `"1e+"`) is not consumed: the `e` falls to the unit scanner
+        // and is reported as an unknown unit.
+        if has_digit && matches!(bytes.get(pos), Some(b'e' | b'E')) {
+            let mut exp_pos = pos.saturating_add(1);
+            if matches!(bytes.get(exp_pos), Some(b'+' | b'-')) {
+                exp_pos = exp_pos.saturating_add(1);
+            }
+            if bytes.get(exp_pos).is_some_and(u8::is_ascii_digit) {
+                while bytes.get(exp_pos).is_some_and(u8::is_ascii_digit) {
+                    exp_pos = exp_pos.saturating_add(1);
+                }
+                pos = exp_pos;
+            }
+        }
+        parsed_number(num_start, pos, input)
+    }
+
+    /// Validates and converts a parsed number byte span into `f64`.
+    pub(super) fn parsed_number(
+        start: usize,
+        end: usize,
+        input: &str,
+    ) -> Result<(f64, usize), DurationError> {
+        if start == end {
+            return Err(DurationError::MissingNumber {
+                input: input.to_owned(),
+            });
+        }
+        // `start`/`end` are byte offsets produced by scanning only single-byte
+        // ASCII (`+`/`-`/`.`/digit/`e`/`E`), so they always land on char
+        // boundaries within `input`: a direct `str` slice can't fail.
+        let Some(text) = input.get(start..end) else {
+            return Err(DurationError::MissingNumber {
+                input: input.to_owned(),
+            });
+        };
+        let number: f64 =
+            text.parse().map_err(|source| DurationError::MalformedNumber {
+                input: input.to_owned(),
+                source,
+            })?;
+        if !number.is_finite() {
+            return Err(DurationError::NonFiniteNumber {
+                input: input.to_owned(),
+            });
+        }
+        Ok((number, end))
+    }
+
+    /// Parses a unit string starting at `pos`.
+    pub(super) fn parse_unit(
+        bytes: &[u8],
+        mut pos: usize,
+        input: &str,
+    ) -> Result<(DurationUnit, usize), DurationError> {
+        let unit_start = pos;
+        while pos < bytes.len() {
+            let Some(&b) = bytes.get(pos) else {
+                break;
+            };
+            if !b.is_ascii_alphabetic() {
+                break;
+            }
+            pos = pos.saturating_add(1);
+        }
+        parsed_unit(bytes, unit_start, pos, input)
+    }
+
+    /// Validates and converts a parsed unit byte span into [`DurationUnit`].
+    pub(super) fn parsed_unit(
+        bytes: &[u8],
+        start: usize,
+        end: usize,
+        input: &str,
+    ) -> Result<(DurationUnit, usize), DurationError> {
+        if start == end {
+            return Err(DurationError::MissingUnit {
+                input: input.to_owned(),
+            });
+        }
+        let Some(unit_slice) = bytes.get(start..end) else {
+            return Err(DurationError::MissingUnit {
+                input: input.to_owned(),
+            });
+        };
+        let unit_str = core::str::from_utf8(unit_slice).map_err(|_| {
+            DurationError::UnknownUnit {
+                input: input.to_owned(),
+            }
+        })?;
+        let kind = DurationUnit::parse(unit_str).ok_or_else(|| {
+            DurationError::UnknownUnit {
+                input: input.to_owned(),
+            }
+        })?;
+        Ok((kind, end))
+    }
+
+    /// Negates every magnitude in `parts` when `is_negative` is `true`.
+    pub(super) fn apply_sign(
+        parts: &mut [(f64, DurationUnit)],
+        is_negative: bool,
+    ) {
+        let sign = if is_negative {
+            -1.0
+        } else {
+            1.0
+        };
+        for (mag, _) in parts {
+            *mag *= sign;
         }
     }
 }
@@ -1443,7 +1476,13 @@ mod tests {
                 #[rstest]
                 #[case::simple("45m]", 3, "45m", 2_700.0)]
                 #[case::decimal(".5h remainder", 3, ".5h", 1_800.0)]
-                #[case::multi_part("1h, 30m, extra", 7, "1h, 30m", 5_400.0)]
+                #[case::multi_part_whitespace(
+                    "1h 30m, extra",
+                    6,
+                    "1h 30m",
+                    5_400.0
+                )]
+                #[case::comma_stops_atom("1h, 30m, extra", 2, "1h", 3_600.0)]
                 #[case::negative("-15m extra", 4, "-15m", -900.0)]
                 #[case::positive("+15m extra", 4, "+15m", 900.0)]
                 #[case::decimal_after_sign("-.5h rest", 4, "-.5h", -1_800.0)]
@@ -1474,10 +1513,83 @@ mod tests {
                 }
             }
 
-            mod can_start {
+            mod classify {
+                use pretty_assertions::assert_eq;
                 use rstest::rstest;
 
                 use super::*;
+
+                #[test]
+                fn returns_none_for_non_temporal_text() {
+                    assert!(DurationValue::classify("hello").is_none());
+                    assert!(DurationValue::classify("").is_none());
+                    assert!(DurationValue::classify("+").is_none());
+                    assert!(DurationValue::classify(".").is_none());
+                }
+
+                #[test]
+                fn returns_some_err_for_shape_matching_but_invalid_input() {
+                    let res1 = DurationValue::classify("1x")
+                        .expect("starts like duration");
+                    assert!(matches!(
+                        res1,
+                        Err(DurationError::UnknownUnit { .. })
+                    ));
+
+                    let res2 = DurationValue::classify("1")
+                        .expect("starts like duration");
+                    assert!(matches!(
+                        res2,
+                        Err(DurationError::MissingUnit { .. })
+                    ));
+
+                    let res3 = DurationValue::classify("1h 1x")
+                        .expect("starts like duration");
+                    assert!(matches!(
+                        res3,
+                        Err(DurationError::UnknownUnit { .. })
+                    ));
+                }
+
+                #[test]
+                fn returns_some_ok_for_valid_input() {
+                    let res = DurationValue::classify("1h 30m")
+                        .expect("starts like duration");
+                    assert!(res.is_ok());
+                }
+
+                #[test]
+                fn pins_one_h_one_x_divergence_between_classify_and_prefix() {
+                    let classified = DurationValue::classify("1h 1x");
+                    assert!(matches!(
+                        classified,
+                        Some(Err(DurationError::UnknownUnit { .. }))
+                    ));
+
+                    let prefixed = DurationValue::parse_prefix("1h 1x");
+                    assert!(prefixed.is_none());
+                }
+
+                #[test]
+                fn pins_leading_comma_divergence_between_parse_and_prefix() {
+                    let parsed = DurationValue::parse(",1h");
+                    assert!(parsed.is_ok());
+                    assert_eq!(parsed.unwrap().as_str(), ",1h");
+
+                    let prefixed = DurationValue::parse_prefix(",1h");
+                    assert!(prefixed.is_none());
+                }
+
+                #[test]
+                fn pins_trailing_comma_spelling_in_parse_and_prefix() {
+                    let parsed = DurationValue::parse("1h,").unwrap();
+                    assert_eq!(parsed.as_str(), "1h,");
+
+                    let (prefixed, consumed) =
+                        DurationValue::parse_prefix("1h,").unwrap();
+                    assert_eq!(prefixed.as_str(), "1h");
+                    assert_eq!(consumed, 2);
+                }
 
                 #[rstest]
                 #[case::digit("1h")]
@@ -1486,7 +1598,10 @@ mod tests {
                 #[case::minus_sign("-30m")]
                 #[case::sign_with_decimal("+.5h")]
                 fn accepts_valid_start(#[case] input: &str) {
-                    assert!(DurationValue::can_start(input));
+                    assert!(scan::can_start_duration_segment(
+                        input.as_bytes(),
+                        0
+                    ));
                 }
 
                 #[rstest]
@@ -1495,7 +1610,10 @@ mod tests {
                 #[case::lone_sign("+")]
                 #[case::lone_decimal_point(".")]
                 fn rejects_invalid_start(#[case] input: &str) {
-                    assert!(!DurationValue::can_start(input));
+                    assert!(!scan::can_start_duration_segment(
+                        input.as_bytes(),
+                        0
+                    ));
                 }
             }
         }
@@ -2127,6 +2245,60 @@ mod tests {
             #[case::empty("")]
             fn rejects_unit(#[case] input: &str) {
                 assert!(DurationUnit::parse(input).is_none());
+            }
+            #[test]
+            fn parses_all_unit_map_keys_into_their_expected_variants() {
+                for (key, expected_variant) in UNIT_MAP.entries() {
+                    assert_eq!(
+                        DurationUnit::parse(key),
+                        Some(*expected_variant),
+                        "UNIT_MAP entry `{key}` must parse as \
+                         `{expected_variant:?}`"
+                    );
+                }
+            }
+
+            #[test]
+            fn verifies_unit_hint_and_unit_map_are_in_sync() {
+                let mut hint_variants = std::collections::HashSet::new();
+                let quoted_tokens = UNIT_HINT
+                    .split('"')
+                    .enumerate()
+                    .filter(|(i, _)| i % 2 == 1)
+                    .map(|(_, t)| t);
+                for token in quoted_tokens {
+                    let parsed = DurationUnit::parse(token);
+                    assert!(
+                        parsed.is_some(),
+                        "hint spelling `{token}` must resolve in \
+                         DurationUnit::parse"
+                    );
+                    hint_variants.extend(parsed);
+                }
+
+                let all_variants = [
+                    DurationUnit::Millisecond,
+                    DurationUnit::Second,
+                    DurationUnit::Minute,
+                    DurationUnit::Hour,
+                    DurationUnit::Day,
+                    DurationUnit::Week,
+                    DurationUnit::Month,
+                    DurationUnit::Year,
+                ];
+                for variant in all_variants {
+                    assert!(
+                        hint_variants.contains(&variant),
+                        "UNIT_HINT must cover {variant:?}"
+                    );
+                }
+
+                for (key, variant) in UNIT_MAP.entries() {
+                    assert!(
+                        hint_variants.contains(variant),
+                        "UNIT_HINT must cover variant for key `{key}`"
+                    );
+                }
             }
         }
 

@@ -468,25 +468,19 @@ pub(super) enum TextShape {
 impl TextShape {
     /// Inspects free text for a date, date-time, or duration shape.
     ///
-    /// Tries [`DateTimeValue::parse_iso`] before [`DateValue::parse_iso`]: a
-    /// full date-time string always fails `DateValue`'s whole-string match, so
-    /// trying it second never misclassifies. Duration parsing is guarded by
-    /// [`crate::DurationValue::can_start`], an `O(1)` leading-character check,
-    /// so non-duration-shaped text (e.g. a plain title) never pays for
-    /// `DurationValue::parse`'s allocating error path.
+    /// Delegates to [`DateValue::classify`] and
+    /// [`crate::DurationValue::classify`].
     pub(super) fn classify(s: &str) -> Self {
         let trimmed = s.trim();
-        if DateValue::has_four_digit_year(trimmed) {
-            if let Ok(value) = DateTimeValue::parse_iso(s) {
-                return Self::DateTime(value);
-            }
-            if let Ok(value) = DateValue::parse_iso(s) {
-                return Self::Date(value);
-            }
+        if let Some(Ok(rec)) = DateValue::classify(trimmed) {
+            return match rec.value {
+                crate::date::RecognizedDateValue::DateTime(dt) => {
+                    Self::DateTime(dt)
+                }
+                crate::date::RecognizedDateValue::Date(d) => Self::Date(d),
+            };
         }
-        if crate::DurationValue::can_start(trimmed)
-            && let Ok(dv) = crate::DurationValue::parse(s)
-        {
+        if let Some(Ok(dv)) = crate::DurationValue::classify(trimmed) {
             return Self::Duration(dv);
         }
         Self::Plain
