@@ -369,7 +369,9 @@ impl<'a> SortKey<'a> {
         match val {
             NoteFieldValueRef::Null => Self::Null,
             NoteFieldValueRef::Bool(b) => Self::Bool(b),
-            NoteFieldValueRef::Number(n) => Self::Number(normalize_zero(n)),
+            NoteFieldValueRef::Number(n) => {
+                Self::Number(crate::normalize_zero(n))
+            }
             NoteFieldValueRef::DateTime(value) => Self::DateTime(value),
             NoteFieldValueRef::Date(value) => {
                 Self::DateTime(DateTimeValue::from(value))
@@ -429,24 +431,13 @@ impl<'a> SortKey<'a> {
             (_, Self::Null) => Ordering::Greater,
             (Self::Bool(a), Self::Bool(b)) => a.cmp(b),
             (Self::Number(a), Self::Number(b)) => {
-                normalize_zero(*a).total_cmp(&normalize_zero(*b))
+                crate::normalize_zero(*a).total_cmp(&crate::normalize_zero(*b))
             }
             (Self::Duration(a), Self::Duration(b)) => a.cmp(b),
             (Self::DateTime(a), Self::DateTime(b)) => a.cmp(b),
             (Self::Text(a), Self::Text(b)) => a.cmp(b),
             _ => self.rank().cmp(&other.rank()),
         }
-    }
-}
-
-/// `-0.0` and `0.0` both normalize to `0.0` before `total_cmp`, matching
-/// [`NoteFieldValueRef::compare`]'s signed-zero handling so `SortKey::cmp` and
-/// `NoteFieldValueRef::compare` never disagree on a `Number` pair.
-fn normalize_zero(n: f64) -> f64 {
-    if n == 0.0 {
-        0.0
-    } else {
-        n
     }
 }
 

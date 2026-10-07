@@ -161,6 +161,14 @@ pub use test_support::{
     write_schema, write_template,
 };
 
+/// Normalizes `-0.0` to `0.0` before `total_cmp` comparisons so signed zero
+/// does not affect numeric ordering.
+#[inline]
+#[must_use]
+pub(crate) fn normalize_zero(n: f64) -> f64 {
+    n + 0.0
+}
+
 /// Build isolated fixtures for the crate's own `#[cfg(test)]` suites and,
 /// under the `test-utils` feature, for external `tests/`/`benches/`
 /// consumers.

@@ -433,37 +433,6 @@ impl DurationValue {
         self.parts.as_deref()
     }
 
-    /// Returns `true` if this duration contains any calendar application unit
-    /// ([`DurationUnit::Day`], [`DurationUnit::Week`], [`DurationUnit::Month`],
-    /// or [`DurationUnit::Year`]).
-    ///
-    /// Enumerates every [`DurationUnit`] variant without a wildcard arm, so
-    /// adding a unit forces a calendar-versus-fixed decision here.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "part of DurationValue surface; called in tests and by \
-                      future classify/temporal callers"
-        )
-    )]
-    #[inline]
-    #[must_use]
-    pub(crate) fn is_calendar(&self) -> bool {
-        self.parts.as_deref().is_some_and(|parts| {
-            parts.iter().any(|&(_, unit)| match unit {
-                DurationUnit::Day
-                | DurationUnit::Week
-                | DurationUnit::Month
-                | DurationUnit::Year => true,
-                DurationUnit::Millisecond
-                | DurationUnit::Second
-                | DurationUnit::Minute
-                | DurationUnit::Hour => false,
-            })
-        })
-    }
-
     /// Returns the raw duration text.
     #[inline]
     #[must_use]
@@ -2143,35 +2112,6 @@ mod tests {
                     TimeDelta::try_from(overflowed),
                     Err(DurationError::NonFiniteSeconds)
                 ));
-            }
-        }
-
-        mod regime {
-            use super::*;
-
-            #[test]
-            fn regime_witness_distinguishes_calendar_from_fixed_units() {
-                // Calendar units
-                assert!(DurationValue::parse("1d").unwrap().is_calendar());
-                assert!(DurationValue::parse("1w").unwrap().is_calendar());
-                assert!(DurationValue::parse("1mo").unwrap().is_calendar());
-                assert!(DurationValue::parse("1y").unwrap().is_calendar());
-                assert!(DurationValue::parse("1d 2h").unwrap().is_calendar());
-
-                // Sub-day fixed units
-                assert!(!DurationValue::parse("1h").unwrap().is_calendar());
-                assert!(!DurationValue::parse("30m").unwrap().is_calendar());
-                assert!(!DurationValue::parse("45s").unwrap().is_calendar());
-                assert!(!DurationValue::parse("500ms").unwrap().is_calendar());
-                assert!(
-                    !DurationValue::parse("1h 30m 10s").unwrap().is_calendar()
-                );
-
-                // None (synthesized) values are fixed regime
-                let synth = DurationValue::from_seconds(
-                    DurationSeconds::try_from(86_400.0).unwrap(),
-                );
-                assert!(!synth.is_calendar());
             }
         }
     }

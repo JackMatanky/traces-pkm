@@ -1,9 +1,9 @@
 //! Metadata field values parsed from YAML frontmatter and inline field text.
 //!
-//! This module provides [`NoteFieldValue`] and [`NoteFieldValueRef`], the
-//! owned and borrowed representations of strongly typed metadata values
-//! extracted from Markdown notes, including scalars (booleans, numbers,
-//! strings, dates, durations), links, lists, and objects.
+//! This module provides [`NoteFieldValue`] and [`NoteFieldValueRef`], the owned
+//! and borrowed representations of strongly typed metadata values extracted
+//! from Markdown notes, including scalars (booleans, numbers, strings, dates,
+//! durations), links, lists, and objects.
 //!
 //! # Examples
 //!
@@ -89,8 +89,8 @@ impl NoteFieldValue {
 
     /// Returns the parsed calendar date if this value is
     /// [`NoteFieldValue::Date`], [`NoteFieldValue::DateTime`], or a
-    /// [`NoteFieldValue::String`] beginning with a valid `YYYY-MM-DD` ISO
-    /// date, or `None` otherwise.
+    /// [`NoteFieldValue::String`] beginning with a valid `YYYY-MM-DD` ISO date,
+    /// or `None` otherwise.
     ///
     /// # Examples
     ///
@@ -258,7 +258,7 @@ impl NoteFieldValueRef<'_> {
             (Self::Null, Self::Null) => Ordering::Equal,
             (Self::Bool(a), Self::Bool(b)) => a.cmp(b),
             (Self::Number(a), Self::Number(b)) => {
-                normalize_zero(*a).total_cmp(&normalize_zero(*b))
+                crate::normalize_zero(*a).total_cmp(&crate::normalize_zero(*b))
             }
             (Self::Duration(a), Self::Duration(b)) => a.cmp(b),
             (Self::Date(a), Self::Date(b)) => a.cmp(b),
@@ -458,16 +458,6 @@ impl Ord for NoteFieldValueRef<'_> {
     #[inline]
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.compare(other)
-    }
-}
-
-/// `-0.0` and `0.0` both normalize to `0.0` before `total_cmp`, so signed zero
-/// does not affect ordering.
-fn normalize_zero(n: f64) -> f64 {
-    if n == 0.0 {
-        0.0
-    } else {
-        n
     }
 }
 

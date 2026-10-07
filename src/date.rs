@@ -617,14 +617,6 @@ impl<'de> Deserialize<'de> for DateValue {
 pub struct DateTimeValue(DateTime<Utc>);
 
 impl DateTimeValue {
-    /// Returns the current UTC date-time.
-    #[cfg(test)]
-    #[inline]
-    #[must_use]
-    pub(crate) fn now() -> Self {
-        Self(Utc::now())
-    }
-
     /// Parses an RFC 3339 or ISO-8601 date-time string using
     /// [`DateTimeFormat::ALL`].
     ///
@@ -1026,20 +1018,6 @@ pub(crate) enum DateFormat {
 impl DateFormat {
     /// Formats tried in order by [`DateValue::parse_iso`].
     pub(crate) const ALL: [Self; 2] = [Self::Full, Self::YearMonth];
-
-    /// Returns the strftime pattern for this format, or `None` for
-    /// [`Self::YearMonth`] which parses year and month components directly.
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "tested in format-pattern tests")
-    )]
-    pub(crate) const fn pattern(self) -> Option<&'static str> {
-        match self {
-            Self::Full => Some(DEFAULT_DATE_FORMAT),
-            Self::YearMonth => None,
-        }
-    }
 
     /// Attempts to parse `s` across all recognized date formats in priority
     /// order.
@@ -1824,19 +1802,6 @@ mod tests {
         }
     }
 
-    mod constructor {
-        use super::*;
-
-        #[test]
-        fn now_produces_an_instant_close_to_the_system_clock() {
-            let before = Utc::now();
-            let produced = DateTimeValue::now();
-            let after = Utc::now();
-            assert!(produced.into_inner() >= before);
-            assert!(produced.into_inner() <= after);
-        }
-    }
-
     mod formatting {
         use pretty_assertions::assert_eq;
 
@@ -2048,12 +2013,6 @@ mod tests {
                 DateTimeFormat::IsoSpaceMinute.pattern(),
                 Some("%Y-%m-%d %H:%M")
             );
-        }
-
-        #[test]
-        fn date_format_pattern_maps_each_variant_to_its_strftime_spec() {
-            assert_eq!(DateFormat::Full.pattern(), Some(DEFAULT_DATE_FORMAT));
-            assert_eq!(DateFormat::YearMonth.pattern(), None);
         }
     }
 
