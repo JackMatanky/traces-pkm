@@ -19,6 +19,7 @@ This is a **planning-only** effort: no production code is written or modified wh
 **Research-ticket output convention (tracker-specific deviation)**: this repo's local-markdown tracker (`docs/agents/issue-tracker.md`) has no existing git-branch convention for research artifacts. Findings for each research ticket are written to `.scratch/md-pkm-lsp/research/<slug>.md` (plain files in this effort's directory) instead of a throwaway `research/<name>` git branch, and linked from the ticket's `## Answer`.
 
 **Standing constraints** (apply to every ticket):
+
 - Filesystem Markdown is the authoritative persistent source of truth; unsaved editor buffers must be reflected in live language intelligence without requiring disk writes.
 - Reuse existing Traces semantics/services (Index, Query, Schema, Template, Config) rather than building parallel LSP-only models.
 - LSP protocol DTOs and client-specific concerns stay at the protocol boundary; they never define core semantics.
@@ -40,7 +41,10 @@ This is a **planning-only** effort: no production code is written or modified wh
 
 **Generalized rule** for every future ticket resolution that involves picking a crate, library, or technology (tickets 10's filesystem-watcher choice, 11's `ropey`/tree-sitter mention, 33's `rayon` mention, and any other not-yet-specified pick): answer both "what does the source/API demand" (rust-docs-mcp, crate source) *and* "what does the ecosystem actually reach for and why" (web search for current tutorials, comparison posts, practitioner discussion) as two separate, explicitly-scoped questions — never let one stand in for the other. A minor, secondary caveat: the Obsidian-plugin digests (`docs/digests/obsidian_*`) underlying ticket 08's research are ~3 months older than the LSP-reference digests (~hours old) — the Obsidian plugin ecosystem moves fast; the broad architectural patterns found (EditorSuggest-based completion, no LSP precedent for any of the four) are unlikely to have changed, but a specific implementation detail from that research should be re-verified against the live plugin source before being treated as load-bearing.
 
+**Target editors** (user-stated 2026-10-07): **Zed is a primary target** — completion/client-behavior research must treat Zed as first-class, not an open question or a footnote. Prior ticket-24 research swept VS Code, Neovim core, nvim-cmp, and Helix for client behavior and left Zed's fan-out/resolve-timing unverified (now closed by `research/units/24-zed-client-reality.md`); any future client-behavior question must include Zed in the verified set. VS Code and Neovim remain first-class as before; Helix remains the de-facto sparse-client floor.
+
 **Grounded baseline facts already established** (from direct repo investigation, so later tickets should treat these as given rather than re-deriving them):
+
 - Traces is a **single Cargo package** *today*, not a workspace; one binary (`traces-pkm`, `src/main.rs`) wrapping `pub mod cli`. Starting state only — see the standing constraint above; ticket 34 decides whether this changes.
 - The **entire codebase is synchronous** *today* — no tokio/async-std dependency, no `async fn` anywhere in `src/`. Starting state only — see the standing constraint above; ticket 09 decides whether this changes.
 - Every CLI invocation is a **fresh, short-lived process**: load config → run one command → exit. No daemon, no filesystem watcher, no long-running state anywhere today.
@@ -103,6 +107,7 @@ This is a **planning-only** effort: no production code is written or modified wh
 ## Ticket index (for orientation only — the frontier is authoritative; query `.scratch/md-pkm-lsp/issues/` for open/unblocked/unclaimed tickets)
 
 ### Research (resolved during charting — see Decisions so far)
+
 - [Research: Markdown Oxide capabilities & architecture (`01-research-markdown-oxide`)](issues/01-research-markdown-oxide.md)
 - [Research: Marksman capabilities & architecture (`02-research-marksman`)](issues/02-research-marksman.md)
 - [Research: rumdl capability boundary and coexistence hooks (`03-research-rumdl-boundary`)](issues/03-research-rumdl-boundary.md)
@@ -113,6 +118,7 @@ This is a **planning-only** effort: no production code is written or modified wh
 - [Research: Obsidian Dataview / Templater / Metadata Menu semantics for feature parity+extension (`08-research-dataview-templater-metadatamenu-parity`)](issues/08-research-dataview-templater-metadatamenu-parity.md)
 
 ### Architecture
+
 - [LSP framework/transport crate & runtime model (`09-lsp-framework-and-runtime-model`)](issues/09-lsp-framework-and-runtime-model.md)
 - [Analysis host architecture & integration with IndexerService/QueryService/SchemaService (`10-analysis-host-and-index-integration`)](issues/10-analysis-host-and-index-integration.md)
 - [Source span/position model for the Note AST (`11-source-span-and-position-model`)](issues/11-source-span-and-position-model.md)
@@ -121,6 +127,7 @@ This is a **planning-only** effort: no production code is written or modified wh
 - [Live editor buffer vs filesystem overlay model (`14-live-buffer-vs-filesystem-overlay`)](issues/14-live-buffer-vs-filesystem-overlay.md)
 
 ### Feature/semantic scope
+
 - [Links & references: wikilinks, aliases, heading/block refs, embeds, backlinks, images (`15-links-and-references-model`)](issues/15-links-and-references-model.md)
 - [Tags & hierarchical tags LSP intelligence (`16-tags-and-hierarchical-tags`)](issues/16-tags-and-hierarchical-tags.md)
 - [Footnotes & callouts (`17-footnotes-and-callouts`)](issues/17-footnotes-and-callouts.md)
@@ -132,6 +139,7 @@ This is a **planning-only** effort: no production code is written or modified wh
 - [Task & other PKM-specific semantics (`23-task-and-pkm-semantics`)](issues/23-task-and-pkm-semantics.md)
 
 ### Generic LSP capability
+
 - [Completion architecture: context detection & dispatch (`24-completion-architecture`)](issues/24-completion-architecture.md)
 - [Diagnostics architecture: sourcing, publishing, and rumdl non-overlap (`25-diagnostics-architecture`)](issues/25-diagnostics-architecture.md)
 - [Definition, references, hover, rename & workspace-edit behavior (`26-definition-references-hover-rename`)](issues/26-definition-references-hover-rename.md)
@@ -139,11 +147,13 @@ This is a **planning-only** effort: no production code is written or modified wh
 - [File operations: note rename/move/delete cascading link updates (`28-file-operations-and-cascading-edits`)](issues/28-file-operations-and-cascading-edits.md)
 
 ### Client, workspace & coexistence
+
 - [Client capability negotiation & graceful degradation (`29-client-capability-negotiation`)](issues/29-client-capability-negotiation.md)
 - [Multi-root / multi-workspace behavior vs the single Project Root model (`30-multi-root-vs-project-root`)](issues/30-multi-root-vs-project-root.md)
 - [Config integration: .traces/config.toml vs LSP initializationOptions/workspace configuration (`31-config-integration`)](issues/31-config-integration.md)
 - [rumdl coexistence: explicit capability-ownership boundary (`32-rumdl-coexistence-boundary`)](issues/32-rumdl-coexistence-boundary.md)
 
 ### Cross-cutting
+
 - [Performance targets & strategy (`33-performance-targets-and-strategy`)](issues/33-performance-targets-and-strategy.md)
 - [Crate/binary packaging & integration into the Traces build (`34-crate-and-binary-packaging`)](issues/34-crate-and-binary-packaging.md)

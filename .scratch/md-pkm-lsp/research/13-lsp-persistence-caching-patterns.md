@@ -1,6 +1,6 @@
 # LSP Persistence & Caching Patterns — Research
 
-Resolves ticket [13-persistence-caching-strategy](../issues/13-persistence-caching-strategy.md).
+Resolves ticket [13-persistence-caching-strategy](../issues/13-lsp-persistence-and-caching-strategy.md).
 
 Sources: `docs/digests/lsp_rvben-rumdl-digest.txt` (rumdl LSP), `docs/digests/lsp_artempyanykh-marksman-digest.txt` (Marksman), `docs/digests/lsp_feel-ix-343-markdown-oxide-src-digest.txt` (Markdown Oxide), `src/index/store.rs`, `src/index/delta.rs`, `src/index/sync.rs`, `src/index/service.rs`, existing research in `.scratch/md-pkm-lsp/research/`.
 
