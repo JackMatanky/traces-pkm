@@ -89,11 +89,6 @@ mod yaml;
 pub use config::{Config, ConfigService, TaskConfig, TrustRequest};
 #[cfg(not(any(test, feature = "test-utils")))]
 pub(crate) use config::{Config, ConfigService, TaskConfig, TrustRequest};
-#[expect(
-    unused_imports,
-    reason = "crate-level datetime format constant, consumed by config \
-              consolidation in ticket 08"
-)]
 pub(crate) use date::{DEFAULT_DATE_FORMAT, DEFAULT_DATETIME_FORMAT};
 pub use date::{DateError, DateTimeValue, DateValue};
 pub(crate) use delimiter::DelimiterType;

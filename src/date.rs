@@ -958,8 +958,12 @@ impl From<DateTimeValue> for DateTime<Utc> {
 /// zone: a zone-free civil date has no instant until a reader's zone supplies
 /// one.
 ///
-/// A lookup failure falls back to UTC midnight (chrono does the same for a
-/// broken zone); the crate's fallible entry points surface it as
+/// On zone-lookup failure, this promotion degrades to the neutral UTC frame
+/// (civil date read as UTC — deterministic and shift-free) instead of surfacing
+/// [`DateError::LocalZoneLookup`], because the infallible conversion is
+/// consumed by equality, sort-key, and ordering paths that cannot propagate an
+/// error, while `TryFrom` would duplicate that fallback at each of them.
+/// All fallible entry points surface broken local-zone lookups as
 /// [`DateError::LocalZoneLookup`] instead.
 impl From<DateValue> for DateTimeValue {
     #[inline]
@@ -991,7 +995,7 @@ impl Serialize for DateTimeValue {
         S: Serializer,
     {
         serializer
-            .serialize_str(&self.0.to_rfc3339_opts(SecondsFormat::Secs, true))
+            .serialize_str(&self.0.to_rfc3339_opts(SecondsFormat::AutoSi, true))
     }
 }
 
@@ -2809,6 +2813,17 @@ mod tests {
             let json =
                 serde_json::to_string(&fixed_datetime()).expect("serializable");
             assert_eq!(json, "\"2026-07-29T14:30:05Z\"");
+        }
+
+        #[test]
+        fn round_trips_sub_second_datetime_through_json_with_autosi() {
+            let dt = DateTimeValue::parse_iso("2026-07-29T14:30:00.123Z")
+                .expect("valid instant");
+            let json = serde_json::to_string(&dt).expect("serializable");
+            assert_eq!(json, "\"2026-07-29T14:30:00.123Z\"");
+            let restored: DateTimeValue =
+                serde_json::from_str(&json).expect("deserializable");
+            assert_eq!(restored, dt);
         }
 
         #[test]
