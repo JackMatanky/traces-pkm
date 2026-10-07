@@ -13,8 +13,6 @@ links:
   kind: relatesto
 - target: 6
   kind: relatesto
-- target: 9
-  kind: relatesto
 ---
 
 # 8. Source Expression Grammar for Query Selection
