@@ -155,6 +155,18 @@ impl FileMeta {
         self.created_at
     }
 
+    /// Returns the calendar date for this file, with filename-derived date
+    /// winning over `created_at` (the Dataview rule).
+    #[must_use]
+    pub(crate) fn day(&self) -> Option<crate::DateValue> {
+        if let Some((rec, _)) =
+            crate::DateValue::parse_prefix(self.name().as_str())
+        {
+            return Some(rec.date());
+        }
+        self.created_at.map(crate::DateValue::from)
+    }
+
     /// Returns the raw filesystem modification timestamp.
     #[inline]
     #[must_use]

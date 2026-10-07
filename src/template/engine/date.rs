@@ -45,14 +45,31 @@ use crate::{
     DEFAULT_DATE_FORMAT, DateTimeValue, DateValue, DurationSeconds,
     DurationUnit, DurationValue, UNIT_HINT,
     date::{
-        DateDiff, DateError, DateFormat, DateTimeFormat, Precision,
+        DateDiff, DateError, DateFormat, DatePoint, DateTimeFormat, Precision,
         RecognizedDate,
     },
 };
-/// Method names `date` exposes, for [`DateOps::enumerate`].
-const METHODS: &[&str] =
-    &["now", "today", "tomorrow", "yesterday", "from_timestamp"];
 
+const METHODS: &[&str] = &[
+    "now",
+    "today",
+    "tomorrow",
+    "yesterday",
+    "from_timestamp",
+    "start_of_week",
+    "sow",
+    "end_of_week",
+    "eow",
+    "start_of_month",
+    "som",
+    "end_of_month",
+    "eom",
+    "start_of_year",
+    "soy",
+    "end_of_year",
+    "eoy",
+    "weekday",
+];
 /// Backs the `date` namespace object. Stateless; see the module docs.
 #[derive(Debug)]
 pub(super) struct DateOps;
@@ -77,8 +94,18 @@ impl DateOps {
         env.add_filter("sub_months", sub_months);
         env.add_filter("add_years", add_years);
         env.add_filter("sub_years", sub_years);
+        env.add_filter("start_of_week", start_of_week);
+        env.add_filter("sow", start_of_week);
+        env.add_filter("end_of_week", end_of_week);
+        env.add_filter("eow", end_of_week);
         env.add_filter("start_of_month", start_of_month);
+        env.add_filter("som", start_of_month);
         env.add_filter("end_of_month", end_of_month);
+        env.add_filter("eom", end_of_month);
+        env.add_filter("start_of_year", start_of_year);
+        env.add_filter("soy", start_of_year);
+        env.add_filter("end_of_year", end_of_year);
+        env.add_filter("eoy", end_of_year);
         env.add_filter("weekday", weekday);
         env.add_filter("date_diff", date_diff);
         env.add_test("is_past", is_past);
@@ -88,56 +115,411 @@ impl DateOps {
     }
 }
 
-/// Returns the current instant's local wall-clock date-time.
-///
-/// Goes through the crate's canonical UTC-to-local conversion (see
-/// [`DateTimeValue::wall_or_utc`]) rather than [`chrono::Local::now`]
-/// directly, so `date.now()`/`.today()`/`.tomorrow()`/`.yesterday()` share
-/// the exact zone-resolution path every other human-facing filter in this
-/// module uses.
-fn local_now() -> NaiveDateTime {
-    DateTimeValue::from(Utc::now()).wall_or_utc()
+fn local_point() -> DatePoint {
+    let utc_now = Utc::now();
+    let wall = DateTimeValue::from(utc_now).wall_or_utc();
+    DatePoint::new(wall, utc_now, Precision::DateTime)
+}
+
+fn today_point() -> DatePoint {
+    let local = local_point();
+    DatePoint::new(
+        local.wall.date().and_hms_opt(0, 0, 0).unwrap_or(local.wall),
+        DateTimeValue::from(DateValue::from(local.wall.date())).into_inner(),
+        Precision::Date,
+    )
+}
+
+#[expect(
+    clippy::excessive_nesting,
+    reason = "character parsing loop builds ISO component offsets"
+)]
+fn translate_iso_offset(input: &str) -> String {
+    let trimmed = input.trim();
+    let (lead_neg, rest) = if let Some(s) = trimmed.strip_prefix('-') {
+        (true, s)
+    } else {
+        (false, trimmed)
+    };
+    if let Some(rest) =
+        rest.strip_prefix('P').or_else(|| rest.strip_prefix('p'))
+    {
+        let (int_neg, rest) = if let Some(s) = rest.strip_prefix('-') {
+            (true, s)
+        } else {
+            (false, rest)
+        };
+        let is_neg = lead_neg ^ int_neg;
+        let prefix = if is_neg {
+            "-"
+        } else {
+            ""
+        };
+        let mut out = String::new();
+        let (date_part, time_part) =
+            match rest.split_once('T').or_else(|| rest.split_once('t')) {
+                Some((d, t)) => (d, Some(t)),
+                None => (rest, None),
+            };
+        let mut parse_parts = |part: &str, is_time: bool| {
+            let mut num_buf = String::new();
+            for ch in part.chars() {
+                if ch.is_ascii_digit() || ch == '.' || ch == '-' {
+                    num_buf.push(ch);
+                } else if ch.is_ascii_alphabetic() {
+                    let unit_str = match (ch.to_ascii_uppercase(), is_time) {
+                        ('Y', false) => "y",
+                        ('M', false) => "mo",
+                        ('W', false) => "w",
+                        ('D', false) => "d",
+                        ('H', true) => "h",
+                        ('M', true) => "m",
+                        ('S', true) => "s",
+                        _ => "",
+                    };
+                    if !unit_str.is_empty() && !num_buf.is_empty() {
+                        if !out.is_empty() {
+                            out.push(' ');
+                        }
+                        out.push_str(prefix);
+                        out.push_str(&num_buf);
+                        out.push_str(unit_str);
+                    }
+                    num_buf.clear();
+                } else {
+                    num_buf.clear();
+                }
+            }
+        };
+        parse_parts(date_part, false);
+        if let Some(t) = time_part {
+            parse_parts(t, true);
+        }
+        if !out.is_empty() {
+            return out;
+        }
+    }
+    input.to_owned()
+}
+
+fn apply_offset_to_point(
+    point: DatePoint,
+    offset_val: &Value,
+) -> TemplateEngineResult<DatePoint> {
+    if let Some(n) = offset_val.as_i64() {
+        return point.shift(n, DurationUnit::Day).map_err(date_error);
+    }
+    if let Some(s) = offset_val.as_str() {
+        let translated = translate_iso_offset(s);
+        let duration = DurationValue::parse(&translated).map_err(|_| {
+            invalid_operation(
+                format!("invalid duration offset {s:?}"),
+                DateError::OutOfRange,
+            )
+        })?;
+        let shifted = if point.has_time() {
+            let dt = DateTimeValue::from(point.instant)
+                .apply(&duration)
+                .map_err(date_error)?;
+            let wall = dt.local_wall().ok_or_else(date_out_of_range_error)?;
+            DatePoint {
+                wall,
+                instant: dt.into_inner(),
+                precision: point.precision,
+            }
+        } else {
+            let date = DateValue::from(point.wall.date())
+                .apply(&duration)
+                .map_err(date_error)?;
+            let wall = date
+                .into_inner()
+                .and_hms_opt(0, 0, 0)
+                .ok_or_else(date_out_of_range_error)?;
+            let instant = DateTimeValue::from(date).into_inner();
+            DatePoint {
+                wall,
+                instant,
+                precision: point.precision,
+            }
+        };
+        return Ok(shifted);
+    }
+    Err(invalid_operation(
+        format!(
+            "expected integer days or duration string for offset, got \
+             {offset_val:?}"
+        ),
+        DateError::OutOfRange,
+    ))
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "accepts format, offset, reference, and reference_format options"
+)]
+fn resolve_shorthand(
+    base_point: DatePoint,
+    transform: impl FnOnce(DatePoint) -> Result<DatePoint, DateError>,
+    format: Option<&str>,
+    offset: Option<Value>,
+    reference: Option<&str>,
+    reference_format: Option<&str>,
+    kwargs: &Kwargs,
+) -> TemplateEngineResult<String> {
+    let format = format
+        .or(kwargs.get::<Option<&str>>("format")?)
+        .unwrap_or(DEFAULT_DATE_FORMAT);
+    let offset = offset.or(kwargs.get::<Option<Value>>("offset")?);
+    let reference = reference.or(kwargs.get::<Option<&str>>("reference")?);
+    let reference_format =
+        reference_format.or(kwargs.get::<Option<&str>>("reference_format")?);
+    kwargs.assert_all_used()?;
+
+    let mut point = if let Some(ref_text) = reference {
+        if let Some(ref_fmt) = reference_format {
+            let recognized =
+                DateValue::parse_with(ref_text, ref_fmt).map_err(date_error)?;
+            recognized.point()
+        } else {
+            let recognized = parse_recognized(ref_text)?;
+            recognized.point()
+        }
+    } else {
+        base_point
+    };
+    point = transform(point).map_err(date_error)?;
+
+    if let Some(off_val) = offset {
+        point = apply_offset_to_point(point, &off_val)?;
+    }
+
+    let pat = translate_pattern(format, point.wall)?;
+    format_with(point.wall.format(&pat), format)
+}
+
+fn parse_weekday_num(n: i64) -> TemplateEngineResult<chrono::Weekday> {
+    match n {
+        0 | 1 => Ok(chrono::Weekday::Mon),
+        2 => Ok(chrono::Weekday::Tue),
+        3 => Ok(chrono::Weekday::Wed),
+        4 => Ok(chrono::Weekday::Thu),
+        5 => Ok(chrono::Weekday::Fri),
+        6 => Ok(chrono::Weekday::Sat),
+        7 => Ok(chrono::Weekday::Sun),
+        _ => Err(invalid_operation(
+            format!(
+                "weekday index {n} is out of range (expected 0..=7 under ISO \
+                 Monday convention)"
+            ),
+            DateError::OutOfRange,
+        )),
+    }
 }
 
 impl Object for DateOps {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "dispatches all date shorthands and aliases"
+    )]
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         match key.as_str()? {
             "now" => Some(Value::from_function(
-                |kwargs: Kwargs| -> TemplateEngineResult<String> {
-                    let format = format_kwarg(&kwargs)?;
-                    // `write!` into a `String` propagates a formatting failure
-                    // as `Err`; `.to_string()` would instead panic on the same
-                    // input, since its blanket impl `.expect()`s a successful
-                    // `Display::fmt`, and Chrono's `DelayedFormat` returns
-                    // `Err`, not a panic of its own, for an invalid specifier
-                    // such as `%Q`.
-                    format_with(local_now().format(format), format)
+                |format: Option<&str>,
+                 offset: Option<Value>,
+                 reference: Option<&str>,
+                 reference_format: Option<&str>,
+                 kwargs: Kwargs|
+                 -> TemplateEngineResult<String> {
+                    resolve_shorthand(
+                        local_point(),
+                        Ok,
+                        format,
+                        offset,
+                        reference,
+                        reference_format,
+                        &kwargs,
+                    )
                 },
             )),
             "today" => Some(Value::from_function(
-                |kwargs: Kwargs| -> TemplateEngineResult<String> {
-                    let format = format_kwarg(&kwargs)?;
-                    format_with(local_now().date().format(format), format)
+                |format: Option<&str>,
+                 offset: Option<Value>,
+                 reference: Option<&str>,
+                 reference_format: Option<&str>,
+                 kwargs: Kwargs|
+                 -> TemplateEngineResult<String> {
+                    resolve_shorthand(
+                        today_point(),
+                        Ok,
+                        format,
+                        offset,
+                        reference,
+                        reference_format,
+                        &kwargs,
+                    )
                 },
             )),
             "tomorrow" => Some(Value::from_function(
-                |kwargs: Kwargs| -> TemplateEngineResult<String> {
-                    let format = format_kwarg(&kwargs)?;
-                    let date = DateValue::from(local_now().date())
-                        .shift(1, DurationUnit::Day)
-                        .map_err(date_error)?
-                        .into_inner();
-                    format_with(date.format(format), format)
+                |format: Option<&str>,
+                 offset: Option<Value>,
+                 reference: Option<&str>,
+                 reference_format: Option<&str>,
+                 kwargs: Kwargs|
+                 -> TemplateEngineResult<String> {
+                    resolve_shorthand(
+                        today_point(),
+                        |pt| pt.shift(1, DurationUnit::Day),
+                        format,
+                        offset,
+                        reference,
+                        reference_format,
+                        &kwargs,
+                    )
                 },
             )),
             "yesterday" => Some(Value::from_function(
-                |kwargs: Kwargs| -> TemplateEngineResult<String> {
-                    let format = format_kwarg(&kwargs)?;
-                    let date = DateValue::from(local_now().date())
-                        .shift(-1, DurationUnit::Day)
-                        .map_err(date_error)?
-                        .into_inner();
-                    format_with(date.format(format), format)
+                |format: Option<&str>,
+                 offset: Option<Value>,
+                 reference: Option<&str>,
+                 reference_format: Option<&str>,
+                 kwargs: Kwargs|
+                 -> TemplateEngineResult<String> {
+                    resolve_shorthand(
+                        today_point(),
+                        |pt| pt.shift(-1, DurationUnit::Day),
+                        format,
+                        offset,
+                        reference,
+                        reference_format,
+                        &kwargs,
+                    )
+                },
+            )),
+            "start_of_week" | "sow" => Some(Value::from_function(
+                |format: Option<&str>,
+                 offset: Option<Value>,
+                 reference: Option<&str>,
+                 reference_format: Option<&str>,
+                 kwargs: Kwargs|
+                 -> TemplateEngineResult<String> {
+                    resolve_shorthand(
+                        today_point(),
+                        |pt| pt.week_boundary(false),
+                        format,
+                        offset,
+                        reference,
+                        reference_format,
+                        &kwargs,
+                    )
+                },
+            )),
+            "end_of_week" | "eow" => Some(Value::from_function(
+                |format: Option<&str>,
+                 offset: Option<Value>,
+                 reference: Option<&str>,
+                 reference_format: Option<&str>,
+                 kwargs: Kwargs|
+                 -> TemplateEngineResult<String> {
+                    resolve_shorthand(
+                        today_point(),
+                        |pt| pt.week_boundary(true),
+                        format,
+                        offset,
+                        reference,
+                        reference_format,
+                        &kwargs,
+                    )
+                },
+            )),
+            "start_of_month" | "som" => Some(Value::from_function(
+                |format: Option<&str>,
+                 offset: Option<Value>,
+                 reference: Option<&str>,
+                 reference_format: Option<&str>,
+                 kwargs: Kwargs|
+                 -> TemplateEngineResult<String> {
+                    resolve_shorthand(
+                        today_point(),
+                        |pt| pt.month_boundary(false),
+                        format,
+                        offset,
+                        reference,
+                        reference_format,
+                        &kwargs,
+                    )
+                },
+            )),
+            "end_of_month" | "eom" => Some(Value::from_function(
+                |format: Option<&str>,
+                 offset: Option<Value>,
+                 reference: Option<&str>,
+                 reference_format: Option<&str>,
+                 kwargs: Kwargs|
+                 -> TemplateEngineResult<String> {
+                    resolve_shorthand(
+                        today_point(),
+                        |pt| pt.month_boundary(true),
+                        format,
+                        offset,
+                        reference,
+                        reference_format,
+                        &kwargs,
+                    )
+                },
+            )),
+            "start_of_year" | "soy" => Some(Value::from_function(
+                |format: Option<&str>,
+                 offset: Option<Value>,
+                 reference: Option<&str>,
+                 reference_format: Option<&str>,
+                 kwargs: Kwargs|
+                 -> TemplateEngineResult<String> {
+                    resolve_shorthand(
+                        today_point(),
+                        |pt| pt.year_boundary(false),
+                        format,
+                        offset,
+                        reference,
+                        reference_format,
+                        &kwargs,
+                    )
+                },
+            )),
+            "end_of_year" | "eoy" => Some(Value::from_function(
+                |format: Option<&str>,
+                 offset: Option<Value>,
+                 reference: Option<&str>,
+                 reference_format: Option<&str>,
+                 kwargs: Kwargs|
+                 -> TemplateEngineResult<String> {
+                    resolve_shorthand(
+                        today_point(),
+                        |pt| pt.year_boundary(true),
+                        format,
+                        offset,
+                        reference,
+                        reference_format,
+                        &kwargs,
+                    )
+                },
+            )),
+            "weekday" => Some(Value::from_function(
+                |n: i64,
+                 format: Option<&str>,
+                 reference: Option<&str>,
+                 reference_format: Option<&str>,
+                 kwargs: Kwargs|
+                 -> TemplateEngineResult<String> {
+                    let target = parse_weekday_num(n)?;
+                    resolve_shorthand(
+                        today_point(),
+                        move |pt| pt.weekday_point(target),
+                        format,
+                        None,
+                        reference,
+                        reference_format,
+                        &kwargs,
+                    )
                 },
             )),
             "from_timestamp" => Some(Value::from_function(
@@ -550,6 +932,38 @@ fn month_boundary(value: &str, end: bool) -> TemplateEngineResult<String> {
     format_with(shifted.wall.format(pat), pat)
 }
 
+/// Returns the first or last day of the input's week at its original precision.
+fn week_boundary(value: &str, end: bool) -> TemplateEngineResult<String> {
+    let recognized = parse_recognized(value)?;
+    let shifted = recognized.point().week_boundary(end).map_err(date_error)?;
+    let pat = shifted.precision.format_pattern(shifted.wall);
+    format_with(shifted.wall.format(pat), pat)
+}
+
+/// Returns the first or last day of the input's year at its original precision.
+fn year_boundary(value: &str, end: bool) -> TemplateEngineResult<String> {
+    let recognized = parse_recognized(value)?;
+    let shifted = recognized.point().year_boundary(end).map_err(date_error)?;
+    let pat = shifted.precision.format_pattern(shifted.wall);
+    format_with(shifted.wall.format(pat), pat)
+}
+
+fn start_of_week(value: &str) -> TemplateEngineResult<String> {
+    week_boundary(value, false)
+}
+
+fn end_of_week(value: &str) -> TemplateEngineResult<String> {
+    week_boundary(value, true)
+}
+
+fn start_of_year(value: &str) -> TemplateEngineResult<String> {
+    year_boundary(value, false)
+}
+
+fn end_of_year(value: &str) -> TemplateEngineResult<String> {
+    year_boundary(value, true)
+}
+
 /// `{{ value | date_add(n, unit="days") }}` adds `n` `unit`s to a piped
 /// date/time string.
 ///
@@ -751,18 +1165,34 @@ fn end_of_month(value: &str) -> TemplateEngineResult<String> {
 }
 
 /// `{{ value | weekday }}` returns `0` for Monday through `6` for Sunday.
-///
-/// Chrono's own [`Weekday::number_from_sunday`] is Sunday-first, so this filter
-/// remaps to Monday-first order.
-///
-/// # Errors
-///
-/// - [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
-///   string; see [`parse_date`].
-///
-/// [`Weekday::number_from_sunday`]: chrono::Weekday::number_from_sunday
-fn weekday(value: &str) -> TemplateEngineResult<u32> {
-    Ok(parse_date(value)?.weekday().num_days_from_monday())
+/// When `n` is supplied, returns the formatted date of that weekday in
+/// `value`'s week.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "minijinja Function trait extracts trailing Kwargs argument by \
+              value"
+)]
+fn weekday(
+    value: &str,
+    n: Option<i64>,
+    kwargs: Kwargs,
+) -> TemplateEngineResult<Value> {
+    let recognized = parse_recognized(value)?;
+    if let Some(target_num) = n {
+        let format = format_kwarg(&kwargs)?;
+        let target_weekday = parse_weekday_num(target_num)?;
+        let shifted = recognized
+            .point()
+            .weekday_point(target_weekday)
+            .map_err(date_error)?;
+        let pat = translate_pattern(format, shifted.wall)?;
+        Ok(Value::from(format_with(shifted.wall.format(&pat), format)?))
+    } else {
+        kwargs.assert_all_used()?;
+        Ok(Value::from(
+            recognized.wall_or_utc().weekday().num_days_from_monday(),
+        ))
+    }
 }
 
 /// `{{ value | date_diff(other, unit="days") }}` returns the signed difference

@@ -37,7 +37,7 @@ use std::{borrow::Cow, fmt, str::FromStr, time::SystemTime};
 use chrono::{
     DateTime, Datelike as _, Days, FixedOffset, Local, MappedLocalTime, Months,
     NaiveDate, NaiveDateTime, NaiveTime, Offset as _, SecondsFormat, TimeDelta,
-    TimeZone as _, Utc,
+    TimeZone as _, Utc, Weekday,
 };
 use num_traits::ToPrimitive as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -337,6 +337,64 @@ impl DateValue {
                 source,
             },
         )
+    }
+
+    /// Parses `text` according to `fmt` (`chrono::format::strftime` grammar).
+    ///
+    /// # Errors
+    ///
+    /// - [`DateError::Unparseable`] if `fmt` is an invalid format pattern or
+    ///   does not match `text`.
+    /// - [`DateError::LocalZoneLookup`] if a parsed naive datetime cannot be
+    ///   resolved in the local zone.
+    pub(crate) fn parse_with(
+        text: &str,
+        fmt: &str,
+    ) -> Result<RecognizedDate, DateError> {
+        let trimmed_text = text.trim();
+        let trimmed_fmt = fmt.trim();
+
+        if let Ok(dt) = DateTime::parse_from_str(trimmed_text, trimmed_fmt) {
+            return Ok(RecognizedDate {
+                value: RecognizedDateValue::DateTime(DateTimeValue(
+                    dt.with_timezone(&Utc),
+                )),
+                precision: Precision::DateTime,
+            });
+        }
+
+        if let Ok(naive_dt) =
+            NaiveDateTime::parse_from_str(trimmed_text, trimmed_fmt)
+        {
+            let instant = local_naive_to_utc(naive_dt)?;
+            return Ok(RecognizedDate {
+                value: RecognizedDateValue::DateTime(DateTimeValue(instant)),
+                precision: Precision::DateTime,
+            });
+        }
+
+        if trimmed_fmt == "%Y-%m"
+            && let Ok(d) = NaiveDate::parse_from_str(
+                &format!("{trimmed_text}-01"),
+                "%Y-%m-%d",
+            )
+        {
+            return Ok(RecognizedDate {
+                value: RecognizedDateValue::Date(Self(d)),
+                precision: Precision::YearMonth,
+            });
+        }
+
+        match NaiveDate::parse_from_str(trimmed_text, trimmed_fmt) {
+            Ok(naive_d) => Ok(RecognizedDate {
+                value: RecognizedDateValue::Date(Self(naive_d)),
+                precision: Precision::Date,
+            }),
+            Err(source) => Err(DateError::Unparseable {
+                input: trimmed_text.into(),
+                source,
+            }),
+        }
     }
 
     /// Formats this date as `YYYY-MM-DD`.
@@ -1200,6 +1258,79 @@ impl DatePoint {
             local_naive_to_utc(wall)?
         } else {
             DateTimeValue::from(DateValue(date)).into_inner()
+        };
+        Ok(Self {
+            wall,
+            instant,
+            precision: self.precision,
+        })
+    }
+
+    /// Moves to the first (Monday) or last (Sunday) day of this point's ISO
+    /// week in its civil frame, preserving its time-of-day and precision.
+    pub(crate) fn week_boundary(self, end: bool) -> Result<Self, DateError> {
+        let date = self.wall.date();
+        let iso = date.iso_week();
+        let target_weekday = if end {
+            Weekday::Sun
+        } else {
+            Weekday::Mon
+        };
+        let new_date =
+            NaiveDate::from_isoywd_opt(iso.year(), iso.week(), target_weekday)
+                .ok_or(DateError::OutOfRange)?;
+        let wall = new_date.and_time(self.wall.time());
+        let instant = if self.has_time() {
+            local_naive_to_utc(wall)?
+        } else {
+            DateTimeValue::from(DateValue(new_date)).into_inner()
+        };
+        Ok(Self {
+            wall,
+            instant,
+            precision: self.precision,
+        })
+    }
+
+    /// Moves to the first (Jan 1) or last (Dec 31) day of this point's calendar
+    /// year in its civil frame, preserving its time-of-day and precision.
+    pub(crate) fn year_boundary(self, end: bool) -> Result<Self, DateError> {
+        let date = self.wall.date();
+        let new_date = if end {
+            NaiveDate::from_ymd_opt(date.year(), 12, 31)
+        } else {
+            NaiveDate::from_ymd_opt(date.year(), 1, 1)
+        }
+        .ok_or(DateError::OutOfRange)?;
+        let wall = new_date.and_time(self.wall.time());
+        let instant = if self.has_time() {
+            local_naive_to_utc(wall)?
+        } else {
+            DateTimeValue::from(DateValue(new_date)).into_inner()
+        };
+        Ok(Self {
+            wall,
+            instant,
+            precision: self.precision,
+        })
+    }
+
+    /// Moves to the specified ISO weekday in this point's ISO week, preserving
+    /// its time-of-day and precision.
+    pub(crate) fn weekday_point(
+        self,
+        target: Weekday,
+    ) -> Result<Self, DateError> {
+        let date = self.wall.date();
+        let iso = date.iso_week();
+        let new_date =
+            NaiveDate::from_isoywd_opt(iso.year(), iso.week(), target)
+                .ok_or(DateError::OutOfRange)?;
+        let wall = new_date.and_time(self.wall.time());
+        let instant = if self.has_time() {
+            local_naive_to_utc(wall)?
+        } else {
+            DateTimeValue::from(DateValue(new_date)).into_inner()
         };
         Ok(Self {
             wall,
@@ -2766,6 +2897,119 @@ mod tests {
             assert_eq!(
                 serde_json::to_string(&note.datetime).expect("serializable"),
                 "\"2026-07-29T14:30:00Z\""
+            );
+        }
+    }
+
+    mod parse_with_and_boundaries {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn parse_with_parses_matching_date_and_datetime_formats() {
+            TzGuard::set("UTC");
+            let parsed_date = DateValue::parse_with("2026-07-29", "%Y-%m-%d")
+                .expect("valid date");
+            assert_eq!(parsed_date.precision, Precision::Date);
+            assert_eq!(
+                parsed_date.date(),
+                DateValue::parse_iso("2026-07-29").unwrap()
+            );
+
+            let parsed_custom = DateValue::parse_with("29/07/2026", "%d/%m/%Y")
+                .expect("valid custom date");
+            assert_eq!(
+                parsed_custom.date(),
+                DateValue::parse_iso("2026-07-29").unwrap()
+            );
+
+            let parsed_dt = DateValue::parse_with(
+                "2026-07-29 14:30:00",
+                "%Y-%m-%d %H:%M:%S",
+            )
+            .expect("valid datetime");
+            assert_eq!(parsed_dt.precision, Precision::DateTime);
+            assert_eq!(
+                parsed_dt.instant(),
+                DateTimeValue::parse_iso("2026-07-29T14:30:00Z")
+                    .unwrap()
+                    .into_inner()
+            );
+
+            let parsed_ym = DateValue::parse_with("2026-07", "%Y-%m")
+                .expect("valid year-month");
+            assert_eq!(parsed_ym.precision, Precision::YearMonth);
+            assert_eq!(
+                parsed_ym.date(),
+                DateValue::parse_iso("2026-07-01").unwrap()
+            );
+        }
+
+        #[test]
+        fn parse_with_rejects_bad_format_pattern_or_mismatched_text() {
+            assert!(DateValue::parse_with("2026-07-29", "%Q").is_err());
+            assert!(DateValue::parse_with("not-a-date", "%Y-%m-%d").is_err());
+            assert!(DateValue::parse_with("2026-07-29", "%d/%m/%Y").is_err());
+        }
+
+        #[test]
+        fn week_boundary_returns_iso_monday_spanning_month_boundaries() {
+            let sunday = DateValue::parse_iso("2026-02-01").unwrap();
+            let pt = DatePoint::new(
+                sunday.into_inner().and_hms_opt(0, 0, 0).unwrap(),
+                DateTimeValue::from(sunday).into_inner(),
+                Precision::Date,
+            );
+            let sow = pt.week_boundary(false).expect("sow");
+            let eow = pt.week_boundary(true).expect("eow");
+            assert_eq!(
+                sow.wall.date(),
+                DateValue::parse_iso("2026-01-26").unwrap().into_inner()
+            );
+            assert_eq!(
+                eow.wall.date(),
+                DateValue::parse_iso("2026-02-01").unwrap().into_inner()
+            );
+        }
+
+        #[test]
+        fn year_boundary_returns_first_and_last_day_of_year() {
+            let date = DateValue::parse_iso("2026-07-29").unwrap();
+            let pt = DatePoint::new(
+                date.into_inner().and_hms_opt(0, 0, 0).unwrap(),
+                DateTimeValue::from(date).into_inner(),
+                Precision::Date,
+            );
+            let soy = pt.year_boundary(false).expect("soy");
+            let eoy = pt.year_boundary(true).expect("eoy");
+            assert_eq!(
+                soy.wall.date(),
+                DateValue::parse_iso("2026-01-01").unwrap().into_inner()
+            );
+            assert_eq!(
+                eoy.wall.date(),
+                DateValue::parse_iso("2026-12-31").unwrap().into_inner()
+            );
+        }
+
+        #[test]
+        fn weekday_point_maps_to_target_weekday_in_iso_week() {
+            let wednesday = DateValue::parse_iso("2026-07-29").unwrap();
+            let pt = DatePoint::new(
+                wednesday.into_inner().and_hms_opt(0, 0, 0).unwrap(),
+                DateTimeValue::from(wednesday).into_inner(),
+                Precision::Date,
+            );
+            let mon = pt.weekday_point(Weekday::Mon).expect("mon");
+            let sun = pt.weekday_point(Weekday::Sun).expect("sun");
+            assert_eq!(
+                mon.wall.date(),
+                DateValue::parse_iso("2026-07-27").unwrap().into_inner()
+            );
+            assert_eq!(
+                sun.wall.date(),
+                DateValue::parse_iso("2026-08-02").unwrap().into_inner()
             );
         }
     }
