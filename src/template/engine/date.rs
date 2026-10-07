@@ -2058,38 +2058,50 @@ mod tests {
 
     mod iso_offset {
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
 
-        #[test]
-        fn translates_valid_iso_offsets() {
-            assert_eq!(translate_iso_offset("P1M").unwrap(), "1mo");
-            assert_eq!(translate_iso_offset("P-1M").unwrap(), "-1mo");
-            assert_eq!(translate_iso_offset("-P1M").unwrap(), "-1mo");
-            assert_eq!(translate_iso_offset("P1DT2H").unwrap(), "1d 2h");
-            assert_eq!(translate_iso_offset("-P1DT2H").unwrap(), "-1d 2h");
-            assert_eq!(translate_iso_offset("PT30M").unwrap(), "30m");
+        #[rstest]
+        #[case::positive_month("P1M", "1mo")]
+        #[case::negative_month_after_p("P-1M", "-1mo")]
+        #[case::negative_month_before_p("-P1M", "-1mo")]
+        #[case::positive_compound_date_time("P1DT2H", "1d 2h")]
+        #[case::negative_compound_date_time("-P1DT2H", "-1d 2h")]
+        #[case::time_only_minutes("PT30M", "30m")]
+        fn translates_valid_iso_offsets(
+            #[case] input: &str,
+            #[case] expected: &str,
+        ) {
+            let translated =
+                translate_iso_offset(input).expect("translation succeeds");
+            assert_eq!(translated, expected);
         }
 
         #[test]
         fn borrows_standard_durations_without_allocation() {
             let standard = "1d 2h";
-            let translated = translate_iso_offset(standard).unwrap();
+            let translated =
+                translate_iso_offset(standard).expect("borrow succeeds");
             assert!(matches!(translated, Cow::Borrowed(_)));
             assert_eq!(translated, "1d 2h");
         }
 
-        #[test]
-        fn rejects_malformed_iso_offsets() {
-            for invalid in [
-                "P1Q2D", "P1M2H", "PT1D", "PD", "P1", "P", "PT", "P1DT",
-                "P1Mfoo",
-            ] {
-                assert!(
-                    translate_iso_offset(invalid).is_err(),
-                    "expected {invalid:?} to fail"
-                );
-            }
+        #[rstest]
+        #[case::unknown_date_unit("P1Q2D")]
+        #[case::time_unit_in_date_part("P1M2H")]
+        #[case::date_unit_in_time_part("PT1D")]
+        #[case::unit_without_number("PD")]
+        #[case::number_without_unit("P1")]
+        #[case::empty_p_prefix("P")]
+        #[case::empty_pt_prefix("PT")]
+        #[case::trailing_time_separator_without_components("P1DT")]
+        #[case::trailing_unconsumed_text("P1Mfoo")]
+        fn rejects_malformed_iso_offsets(#[case] invalid: &str) {
+            assert!(
+                translate_iso_offset(invalid).is_err(),
+                "expected {invalid:?} to fail"
+            );
         }
     }
 

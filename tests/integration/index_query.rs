@@ -419,3 +419,182 @@ fn sorts_pages_descending_by_text_field() {
         Path::new("alpha.md"),
     ]);
 }
+/// Proves query filter evaluation of date arithmetic (`date + duration`,
+/// `date - duration`, `date - date` -> duration) and duration scaling
+/// across real indexed notes.
+#[test]
+fn filters_pages_using_temporal_arithmetic_and_duration_scaling() {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let project = TestProject::trusted(temp.path().join("project"));
+    project.write_note("note_a.md", "---\ndue: 2026-07-29\n---\n");
+    project.write_note("note_b.md", "---\ndue: 2026-08-15\n---\n");
+    let index = Arc::new(project.build_index());
+    let service = QueryService::new("class");
+
+    // date + duration
+    let plus_query = QueryBuilder::pages(SourceSelector::All)
+        .filter("due + dur(\"17d\") == \"2026-08-15\"")
+        .expect("valid plus query");
+    let plus_rows = service.run(&index, plus_query);
+    assert_eq!(plus_rows.len(), 1);
+    assert_eq!(
+        plus_rows.get(0).expect("row").file().path(),
+        Path::new("note_a.md")
+    );
+
+    // date - duration
+    let minus_query = QueryBuilder::pages(SourceSelector::All)
+        .filter("due - dur(\"17d\") == \"2026-07-29\"")
+        .expect("valid minus query");
+    let minus_rows = service.run(&index, minus_query);
+    assert_eq!(minus_rows.len(), 1);
+    assert_eq!(
+        minus_rows.get(0).expect("row").file().path(),
+        Path::new("note_b.md")
+    );
+
+    // duration scaling: duration * number
+    let scale_query = QueryBuilder::pages(SourceSelector::All)
+        .filter("dur(\"1d\") * 17 == dur(\"17d\")")
+        .expect("valid scale query");
+    let scale_rows = service.run(&index, scale_query);
+    assert_eq!(scale_rows.len(), 2);
+    // date - date -> duration
+    let diff_query = QueryBuilder::pages(SourceSelector::All)
+        .filter("due - \"2026-07-29\" == dur(\"17d\")")
+        .expect("valid diff query");
+    let diff_rows = service.run(&index, diff_query);
+    assert_eq!(diff_rows.len(), 1);
+    assert_eq!(
+        diff_rows.get(0).expect("row").file().path(),
+        Path::new("note_b.md")
+    );
+}
+
+/// Proves query temporal registry functions (`date_add`, `date_diff`,
+/// `date_component`) evaluate with reference semantics across indexed notes.
+#[test]
+fn filters_pages_using_temporal_registry_functions() {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let project = TestProject::trusted(temp.path().join("project"));
+    project.write_note("note_a.md", "---\ndue: 2026-07-29\n---\n");
+    project.write_note("note_b.md", "---\ndue: 2026-08-15\n---\n");
+    let index = Arc::new(project.build_index());
+    let service = QueryService::new("class");
+
+    // date_add with unit name
+    let add_query = QueryBuilder::pages(SourceSelector::All)
+        .filter("date_add(due, 17, \"days\") == \"2026-08-15\"")
+        .expect("valid date_add query");
+    let add_rows = service.run(&index, add_query);
+    assert_eq!(add_rows.len(), 1);
+    assert_eq!(
+        add_rows.get(0).expect("row").file().path(),
+        Path::new("note_a.md")
+    );
+
+    // date_diff forward difference: target - start
+    let fwd_diff = QueryBuilder::pages(SourceSelector::All)
+        .filter("date_diff(\"2026-07-29\", due, \"days\") == 17")
+        .expect("valid date_diff query");
+    let fwd_rows = service.run(&index, fwd_diff);
+    assert_eq!(fwd_rows.len(), 1);
+    assert_eq!(
+        fwd_rows.get(0).expect("row").file().path(),
+        Path::new("note_b.md")
+    );
+
+    // date_diff backward difference: target - start
+    let bwd_diff = QueryBuilder::pages(SourceSelector::All)
+        .filter("date_diff(due, \"2026-07-29\", \"days\") == -17")
+        .expect("valid date_diff query");
+    let bwd_rows = service.run(&index, bwd_diff);
+    assert_eq!(bwd_rows.len(), 1);
+    assert_eq!(
+        bwd_rows.get(0).expect("row").file().path(),
+        Path::new("note_b.md")
+    );
+
+    // date_component: month, weekday (ISO 1=Mon, 3=Wed), ISO week
+    let comp_query = QueryBuilder::pages(SourceSelector::All)
+        .filter(
+            "date_component(due, \"month\") == 7 and date_component(due, \
+             \"weekday\") == 3 and date_component(due, \"week\") == 31",
+        )
+        .expect("valid date_component query");
+    let comp_rows = service.run(&index, comp_query);
+    assert_eq!(comp_rows.len(), 1);
+    assert_eq!(
+        comp_rows.get(0).expect("row").file().path(),
+        Path::new("note_a.md")
+    );
+}
+
+/// Proves bucketing helpers (`sow`, `eow`, `som`, `eom`, `soy`, `eoy`)
+/// partition notes into periods across indexed frontmatter.
+#[test]
+fn filters_pages_using_temporal_bucketing_helpers() {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let project = TestProject::trusted(temp.path().join("project"));
+    project.write_note("note_a.md", "---\ndue: 2026-07-29\n---\n");
+    let index = Arc::new(project.build_index());
+    let service = QueryService::new("class");
+
+    for expr in [
+        "sow(due) == \"2026-07-27\"",
+        "eow(due) == \"2026-08-02\"",
+        "som(due) == \"2026-07-01\"",
+        "eom(due) == \"2026-07-31\"",
+        "soy(due) == \"2026-01-01\"",
+        "eoy(due) == \"2026-12-31\"",
+    ] {
+        let query = QueryBuilder::pages(SourceSelector::All)
+            .filter(expr)
+            .expect("valid bucketing filter");
+        let rows = service.run(&index, query);
+        assert_eq!(rows.len(), 1, "failed on {expr}");
+    }
+}
+
+/// Proves static validation catches invalid temporal arguments at query build
+/// time.
+#[test]
+fn filters_pages_reject_static_invalid_temporal_arguments() {
+    for invalid in [
+        "date_component(due, \"not_a_component\") == 1",
+        "date_add(due, 1, \"fortnights\") == \"2026-08-01\"",
+        "date_diff(due, \"2026-08-01\", \"invalid_unit\") == 1",
+        "dur(\"not a duration\") == dur(\"1d\")",
+    ] {
+        let err = QueryBuilder::pages(SourceSelector::All)
+            .filter(invalid)
+            .expect_err("must reject invalid static temporal arg");
+        assert!(matches!(err, QueryBuilderError::Syntax(_)), "{invalid}");
+    }
+}
+
+/// Proves missing fields and null values in temporal operations evaluate
+/// gracefully to null and do not match inequality comparisons.
+#[test]
+fn filters_pages_handle_null_and_missing_temporal_operands() {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let project = TestProject::trusted(temp.path().join("project"));
+    project.write_note("note_null.md", "---\ndue: null\n---\n");
+    project.write_note("note_missing.md", "---\ntitle: Missing\n---\n");
+    let index = Arc::new(project.build_index());
+    let service = QueryService::new("class");
+
+    // null + duration produces null, which cannot satisfy inequality
+    let inequality_query = QueryBuilder::pages(SourceSelector::All)
+        .filter("date_add(due, dur(\"1d\")) > \"2026-01-01\"")
+        .expect("valid filter");
+    let rows = service.run(&index, inequality_query);
+    assert!(rows.is_empty(), "null must never satisfy inequality");
+
+    // null comparison with null equality matches both null and missing notes
+    let null_eq_query = QueryBuilder::pages(SourceSelector::All)
+        .filter("date_add(due, dur(\"1d\")) == null")
+        .expect("valid filter");
+    let null_eq_rows = service.run(&index, null_eq_query);
+    assert_eq!(null_eq_rows.len(), 2);
+}

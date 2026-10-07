@@ -299,13 +299,6 @@ impl DateValue {
             return None;
         }
 
-        if bytes.len() >= 10
-            && let Some(prefix10) = s.get(..10)
-            && let Some(Ok(rec)) = Self::classify(prefix10)
-            && matches!(rec.precision, Precision::Date)
-        {
-            return Some((rec, 10));
-        }
         if bytes.len() >= 7
             && let Some(prefix7) = s.get(..7)
             && let Some(Ok(rec)) = Self::classify(prefix7)
@@ -374,15 +367,10 @@ impl DateValue {
         }
 
         if trimmed_fmt == "%Y-%m"
-            && let Ok(d) = NaiveDate::parse_from_str(
-                &format!("{trimmed_text}-01"),
-                "%Y-%m-%d",
-            )
+            && let Some(Ok(rec)) = Self::classify(trimmed_text)
+            && matches!(rec.precision, Precision::YearMonth)
         {
-            return Ok(RecognizedDate {
-                value: RecognizedDateValue::Date(Self(d)),
-                precision: Precision::YearMonth,
-            });
+            return Ok(rec);
         }
 
         match NaiveDate::parse_from_str(trimmed_text, trimmed_fmt) {
@@ -1198,6 +1186,13 @@ impl DatePoint {
 
     /// Shifts this date point by `n` `unit`s, owning the civil vs instant
     /// frame policy.
+    ///
+    /// # Errors
+    ///
+    /// - [`DateError::OutOfRange`] if arithmetic overflows chrono's
+    ///   representable range.
+    /// - [`DateError::LocalZoneLookup`] if resolving a local wall time to UTC
+    ///   fails.
     pub(crate) fn shift(
         self,
         n: i64,
@@ -1225,6 +1220,13 @@ impl DatePoint {
 
     /// Moves to the first or last day of this point's month in its civil frame,
     /// preserving its time-of-day and precision.
+    ///
+    /// # Errors
+    ///
+    /// - [`DateError::OutOfRange`] if the target date is outside chrono's
+    ///   representable range.
+    /// - [`DateError::LocalZoneLookup`] if resolving the target local wall time
+    ///   to UTC fails.
     pub(crate) fn month_boundary(self, end: bool) -> Result<Self, DateError> {
         let date = self
             .wall
@@ -1250,6 +1252,13 @@ impl DatePoint {
 
     /// Moves to the first (Monday) or last (Sunday) day of this point's ISO
     /// week in its civil frame, preserving its time-of-day and precision.
+    ///
+    /// # Errors
+    ///
+    /// - [`DateError::OutOfRange`] if the target date is outside chrono's
+    ///   representable range.
+    /// - [`DateError::LocalZoneLookup`] if resolving the target local wall time
+    ///   to UTC fails.
     pub(crate) fn week_boundary(self, end: bool) -> Result<Self, DateError> {
         let date = self.wall.date();
         let iso = date.iso_week();
@@ -1276,6 +1285,13 @@ impl DatePoint {
 
     /// Moves to the first (Jan 1) or last (Dec 31) day of this point's calendar
     /// year in its civil frame, preserving its time-of-day and precision.
+    ///
+    /// # Errors
+    ///
+    /// - [`DateError::OutOfRange`] if the target date is outside chrono's
+    ///   representable range.
+    /// - [`DateError::LocalZoneLookup`] if resolving the target local wall time
+    ///   to UTC fails.
     pub(crate) fn year_boundary(self, end: bool) -> Result<Self, DateError> {
         let date = self.wall.date();
         let new_date = if end {

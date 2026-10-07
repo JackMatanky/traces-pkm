@@ -225,8 +225,8 @@ fn wrapped_field_callback(
 
 /// Parses a task emoji shorthand into a [`TaskDate`].
 ///
-/// Emits a [`TaskDate`] when followed by optional inline whitespace and a
-/// 10-byte ISO date (`YYYY-MM-DD`). Skips when `lex.extras` is
+/// Emits a [`TaskDate`] when followed by optional inline whitespace and an
+/// ISO date atom (`YYYY-MM-DD` or `YYYY-MM`). Skips when `lex.extras` is
 /// [`TaskFieldEmojis::Exclude`].
 fn task_date_callback(
     lex: &mut Lexer<'_, ItemToken>,

@@ -446,7 +446,7 @@ fn evaluate_registry_call(
         {
             return Some(NoteFieldValue::Null);
         }
-        let diff = date_point(date2)?.diff(date_point(date1)?, unit).ok()?;
+        let diff = date_point(date1)?.diff(date_point(date2)?, unit).ok()?;
         return Some(NoteFieldValue::Number(match diff {
             DateDiff::Whole(n) => num_traits::ToPrimitive::to_f64(&n)?,
             DateDiff::Exact(n) => n,
@@ -1735,8 +1735,17 @@ mod tests {
             names(
                 &rows
                     .clone()
-                    .filter("date_diff(when, \"2026-01-31\", \"days\") == 15")
-                    .expect("date_diff")
+                    .filter("date_diff(\"2026-01-31\", when, \"days\") == 15")
+                    .expect("forward date_diff")
+            ),
+            vec!["feb"],
+        );
+        assert_eq!(
+            names(
+                &rows
+                    .clone()
+                    .filter("date_diff(when, \"2026-01-31\", \"days\") == -15")
+                    .expect("backward date_diff")
             ),
             vec!["feb"],
         );
@@ -1810,21 +1819,25 @@ mod tests {
     }
 
     #[test]
-    fn query_week_bucketing_helpers_return_iso_start_and_end_of_week() {
+    fn query_sow_returns_iso_start_of_week() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let rows = rows_for_files(temp.path(), &[
             ("sun.md", "---\nwhen: 2026-02-01\n---"),
             ("wed.md", "---\nwhen: 2026-07-29\n---"),
         ]);
         assert_eq!(
-            names(
-                &rows
-                    .clone()
-                    .filter("sow(when) == \"2026-01-26\"")
-                    .expect("sow")
-            ),
+            names(&rows.filter("sow(when) == \"2026-01-26\"").expect("sow")),
             vec!["sun"],
         );
+    }
+
+    #[test]
+    fn query_eow_returns_iso_end_of_week() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let rows = rows_for_files(temp.path(), &[
+            ("sun.md", "---\nwhen: 2026-02-01\n---"),
+            ("wed.md", "---\nwhen: 2026-07-29\n---"),
+        ]);
         assert_eq!(
             names(&rows.filter("eow(when) == \"2026-02-01\"").expect("eow")),
             vec!["sun"],
@@ -1832,7 +1845,7 @@ mod tests {
     }
 
     #[test]
-    fn query_month_bucketing_helpers_return_start_and_end_of_month() {
+    fn query_som_returns_first_day_of_month() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let rows = rows_for_files(temp.path(), &[
             ("sun.md", "---\nwhen: 2026-02-01\n---"),
@@ -1850,12 +1863,20 @@ mod tests {
         assert_eq!(
             names(
                 &rows
-                    .clone()
                     .filter("start_of_month(when) == \"2026-07-01\"")
                     .expect("start_of_month")
             ),
             vec!["wed"],
         );
+    }
+
+    #[test]
+    fn query_eom_returns_last_day_of_month() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let rows = rows_for_files(temp.path(), &[
+            ("sun.md", "---\nwhen: 2026-02-01\n---"),
+            ("wed.md", "---\nwhen: 2026-07-29\n---"),
+        ]);
         assert_eq!(
             names(
                 &rows
@@ -1876,21 +1897,25 @@ mod tests {
     }
 
     #[test]
-    fn query_year_bucketing_helpers_return_start_and_end_of_year() {
+    fn query_soy_returns_first_day_of_year() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let rows = rows_for_files(temp.path(), &[
             ("sun.md", "---\nwhen: 2026-02-01\n---"),
             ("wed.md", "---\nwhen: 2026-07-29\n---"),
         ]);
         assert_eq!(
-            names(
-                &rows
-                    .clone()
-                    .filter("soy(when) == \"2026-01-01\"")
-                    .expect("soy")
-            ),
+            names(&rows.filter("soy(when) == \"2026-01-01\"").expect("soy")),
             vec!["sun", "wed"],
         );
+    }
+
+    #[test]
+    fn query_eoy_returns_last_day_of_year() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let rows = rows_for_files(temp.path(), &[
+            ("sun.md", "---\nwhen: 2026-02-01\n---"),
+            ("wed.md", "---\nwhen: 2026-07-29\n---"),
+        ]);
         assert_eq!(
             names(&rows.filter("eoy(when) == \"2026-12-31\"").expect("eoy")),
             vec!["sun", "wed"],
@@ -1898,7 +1923,7 @@ mod tests {
     }
 
     #[test]
-    fn query_date_function_evaluates_parse_with_and_iso_literals() {
+    fn query_date_function_evaluates_parse_with_format() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let rows = rows_for_files(temp.path(), &[
             ("sun.md", "---\nwhen: 2026-02-01\n---"),
@@ -1907,12 +1932,20 @@ mod tests {
         assert_eq!(
             names(
                 &rows
-                    .clone()
                     .filter("date(\"29/07/2026\", \"%d/%m/%Y\") == when")
                     .expect("date parse_with")
             ),
             vec!["wed"],
         );
+    }
+
+    #[test]
+    fn query_date_function_evaluates_iso_literal() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let rows = rows_for_files(temp.path(), &[
+            ("sun.md", "---\nwhen: 2026-02-01\n---"),
+            ("wed.md", "---\nwhen: 2026-07-29\n---"),
+        ]);
         assert_eq!(
             names(
                 &rows
