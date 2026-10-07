@@ -18,50 +18,39 @@ import datetime
 import pathlib
 import sys
 
-# Ensure _core is discoverable
-sys.path.insert(0, str(pathlib.Path(__file__).parent))
-import _core
+from support import models, report_io, runner
 
 
 def collect_tool_capabilities(
     workspace_root: pathlib.Path, mise_detected: bool
-) -> dict[str, _core.ToolProbeStatus]:
+) -> dict[str, models.ToolProbeStatus]:
     """Probe all registered analysis tools in the central tool catalogue."""
-    tools_result: dict[str, _core.ToolProbeStatus] = {}
-    for tool_key, spec in _core.TOOL_SPECS.items():
-        command_name: str = spec["command"] or tool_key
-        install_hint: str | None = spec.get("install_hint")
-        tools_result[tool_key] = _core.probe_tool(
-            command_name,
+    return {
+        tool_key: runner.probe_tool(
+            spec.command,
             mise_detected,
             workspace_root,
-            version_arg=_core.VERSION_TAGS["default_flag"],
-            install_hint=install_hint,
+            version_arg=runner.VERSION_TAGS["default_flag"],
+            install_hint=spec.install_hint,
         )
-    return tools_result
+        for tool_key, spec in runner.TOOL_SPECS.items()
+    }
 
 
 def main() -> None:
-    workspace_root: pathlib.Path = pathlib.Path.cwd()
-    mise_detected: bool
-    mise_config: str | None
-    mise_detected, mise_config = _core.detect_mise(workspace_root)
+    env: models.EnvironmentContext = runner.resolve_environment()
+    workspace_root: pathlib.Path = pathlib.Path(env.workspace_root)
 
-    tools_result: dict[str, _core.ToolProbeStatus] = collect_tool_capabilities(
-        workspace_root, mise_detected
+    tools_result: dict[str, models.ToolProbeStatus] = collect_tool_capabilities(
+        workspace_root, env.mise_detected
     )
 
-    report = _core.ProbeReport(
+    report = models.ProbeReport(
         timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        environment=_core.EnvironmentContext(
-            mise_detected=mise_detected,
-            mise_config=mise_config,
-            python_version=sys.version.split()[0],
-            workspace_root=str(workspace_root.resolve()),
-        ),
+        environment=env,
         tools=tools_result,
     )
-    print(report.model_dump_json(indent=2))
+    report_io.output_report(report)
 
 
 if __name__ == "__main__":

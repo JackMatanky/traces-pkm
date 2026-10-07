@@ -18,37 +18,64 @@ from __future__ import annotations
 
 import pathlib
 import sys
+from typing import NamedTuple
 
-# Ensure _core is discoverable
-sys.path.insert(0, str(pathlib.Path(__file__).parent))
-import _core
+from support import models, runner
 
-# Table formatting schema: (Column Label, baseline_metrics JSON key, Evidence Source)
-DIFF_METRIC_SCHEMA: tuple[tuple[str, str, str], ...] = (
-    ("Source Lines of Code (SLoC)", "total_sloc", "rust_design/gather"),
-    (
+
+class MetricDimensionSpec(NamedTuple):
+    """Specification of an architectural metric row in the markdown report table."""
+
+    label: str
+    attribute: str
+    source: str
+
+
+# Table formatting schema linked directly to BaselineMetrics attributes and ToolSpec evidence sources
+DIFF_METRIC_SCHEMA: tuple[MetricDimensionSpec, ...] = (
+    MetricDimensionSpec(
+        "Source Lines of Code (SLoC)", "total_sloc", "rust_design/gather"
+    ),
+    MetricDimensionSpec(
         "Doc Comment Lines (Anti-Gaming)",
         "total_comment_lines",
         "rust_design/gather",
     ),
-    ("Public API Footprint (IKL)", "public_api_item_count", "cargo-public-api"),
-    (
+    MetricDimensionSpec(
+        "Public API Footprint (IKL)",
+        "public_api_item_count",
+        runner.TOOL_SPECS["cargo_public_api"].default_evidence_name
+        or "cargo-public-api",
+    ),
+    MetricDimensionSpec(
         "Elevated CRAP Functions (>8.0)",
         "elevated_crap_functions_count",
-        "cargo-crap",
+        runner.TOOL_SPECS["cargo_crap"].default_evidence_name or "cargo-crap",
     ),
-    ("High CRAP Functions (>15.0)", "high_crap_functions_count", "cargo-crap"),
-    ("Maintainability Hotspots", "maintainability_hotspots_count", "messrust"),
-    ("Cyclic Dependency Edges", "cyclic_dependencies_count", "cargo-modules"),
-    (
+    MetricDimensionSpec(
+        "High CRAP Functions (>15.0)",
+        "high_crap_functions_count",
+        runner.TOOL_SPECS["cargo_crap"].default_evidence_name or "cargo-crap",
+    ),
+    MetricDimensionSpec(
+        "Maintainability Hotspots",
+        "maintainability_hotspots_count",
+        runner.TOOL_SPECS["messrust"].default_evidence_name or "messrust",
+    ),
+    MetricDimensionSpec(
+        "Cyclic Dependency Edges",
+        "cyclic_dependencies_count",
+        runner.TOOL_SPECS["cargo_modules"].default_evidence_name or "cargo-modules",
+    ),
+    MetricDimensionSpec(
         "Duplicate Crate Versions",
         "duplicate_dependencies_count",
-        "cargo tree -d",
+        runner.TOOL_SPECS["cargo_tree"].default_evidence_name or "cargo tree -d",
     ),
-    (
+    MetricDimensionSpec(
         "Graph Edge Density (Coupling)",
         "graph_edges_count",
-        "codegraph / rustgraph",
+        runner.TOOL_SPECS["codegraph"].default_evidence_name or "codegraph / rustgraph",
     ),
 )
 
@@ -72,35 +99,31 @@ def calc_metric_delta(base: int | float, final: int | float) -> tuple[str, str]:
 
 
 def format_markdown_diff_row(
-    label: str,
-    key: str,
-    source: str,
-    baseline_metrics: _core.BaselineMetrics,
-    final_metrics: _core.BaselineMetrics,
+    spec: MetricDimensionSpec,
+    baseline_metrics: models.BaselineMetrics,
+    final_metrics: models.BaselineMetrics,
 ) -> str:
     """Format a single Markdown table row with computed deltas."""
-    b_val: int | float = getattr(baseline_metrics, key, 0)
-    f_val: int | float = getattr(final_metrics, key, 0)
+    b_val: int | float = getattr(baseline_metrics, spec.attribute, 0)
+    f_val: int | float = getattr(final_metrics, spec.attribute, 0)
     diff_str: str
     pct_str: str
     diff_str, pct_str = calc_metric_delta(b_val, f_val)
-    delta_col: str = (
-        f"{diff_str} ({pct_str})" if pct_str != "N/A" else f"{diff_str}"
-    )
-    return f"| {label} | {b_val} | {f_val} | {delta_col} | {source} |"
+    delta_col: str = f"{diff_str} ({pct_str})" if pct_str != "N/A" else f"{diff_str}"
+    return f"| {spec.label} | {b_val} | {f_val} | {delta_col} | {spec.source} |"
 
 
 def generate_diff_table(
-    base_data: _core.ArchitecturalBaselineReport,
-    final_data: _core.ArchitecturalBaselineReport,
+    base_data: models.ArchitecturalBaselineReport,
+    final_data: models.ArchitecturalBaselineReport,
 ) -> str:
     """Generate the full Markdown baseline comparison table."""
-    b_m: _core.BaselineMetrics = base_data.baseline_metrics
-    f_m: _core.BaselineMetrics = final_data.baseline_metrics
+    b_m: models.BaselineMetrics = base_data.baseline_metrics
+    f_m: models.BaselineMetrics = final_data.baseline_metrics
 
     rows: list[str] = [TABLE_HEADER]
-    for label, key, source in DIFF_METRIC_SCHEMA:
-        rows.append(format_markdown_diff_row(label, key, source, b_m, f_m))
+    for spec in DIFF_METRIC_SCHEMA:
+        rows.append(format_markdown_diff_row(spec, b_m, f_m))
     return "\n".join(rows)
 
 
@@ -122,10 +145,10 @@ def main() -> None:
         )
         sys.exit(2)
 
-    base_report = _core.ArchitecturalBaselineReport.model_validate_json(
+    base_report = models.ArchitecturalBaselineReport.model_validate_json(
         base_p.read_text(encoding="utf-8")
     )
-    final_report = _core.ArchitecturalBaselineReport.model_validate_json(
+    final_report = models.ArchitecturalBaselineReport.model_validate_json(
         final_p.read_text(encoding="utf-8")
     )
 
