@@ -29,7 +29,7 @@ To ensure deterministic execution across diverse host environments, follow this 
 ```text
 +-------------------------------------------------------------------------------+
 | Tier 1: Automated Script (Preferred)                                          |
-| Run `uv run scripts/rust_design.py gather`                                    |
+| Run `uv run .agents/skills/rust-design/scripts/gather.py <target> [out]`      |
 | Multi-tool execution, SLoC counting, and normalized JSON output               |
 +-------------------------------------------------------------------------------+
                                   | (if script/uv absent)
@@ -51,7 +51,7 @@ To ensure deterministic execution across diverse host environments, follow this 
 +-------------------------------------------------------------------------------+
 ```
 
-1. **Tier 1 (Automated Helper):** Execute `uv run scripts/rust_design.py gather --path <target> --out <dest>`. The script auto-detects `mise`, probes `PATH`, extracts SLoC and comment counts, executes available analyzers, queries `codegraph` / `rustgraph`, and normalizes output.
+1. **Tier 1 (Automated Helper):** Execute `uv run .agents/skills/rust-design/scripts/gather.py <target> [dest]`. The script auto-detects `mise`, probes `PATH`, extracts SLoC and comment counts, executes available analyzers, queries `codegraph` / `rustgraph`, and normalizes output into condensed JSON.
 2. **Tier 2 (Environment Task Runners):** If the helper cannot run, inspect project task runners (`mise`, `just`, `cargo make`). Execute configured aliases (e.g. `modules:tree`, `mess`, `crap`) directly.
 3. **Tier 3 (Universal Standard Cargo):** If third-party analyzers are unavailable, fall back to built-in `cargo` commands (`cargo check`, `cargo test`, `cargo clippy`, `cargo tree`). Mark missing analyzer metrics explicitly as `not measured (tool unavailable)` rather than omitting or fabricating them.
 
@@ -91,7 +91,7 @@ Before anything else, resolve external crate semantics through authoritative cra
 
 At module scope and above, obtain these views before declaring a design audit complete:
 
-1. **Structure & Topology:** Run `scripts/rust_design.py gather` (or `cargo-modules tree` alongside CodeGraph/rustgraph). Confirm material edges in source.
+1. **Structure & Topology:** Run `uv run .agents/skills/rust-design/scripts/gather.py <target> [out]` (or `cargo-modules tree` alongside CodeGraph/rustgraph). Confirm material edges in source.
 2. **Callers & Ownership:** Use LSP definitions/references and inspect source for intended entry paths, bypasses, visibility, state, and policy. If a tool misses a known caller, use another query rather than treating an empty result as proof.
 3. **Hotspots, Duplication, & Risk:** Inspect CRAP risks, complexity hotspots, and token clones. Classify each material finding by production or test location within the audited scope. Identify tests entering each intended seam.
 

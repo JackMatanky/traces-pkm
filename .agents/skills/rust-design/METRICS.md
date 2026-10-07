@@ -174,10 +174,10 @@ Size metrics must measure **Source Lines of Code (SLoC)**: non-comment, non-blan
 
 ### Change Risk Anti-Pattern (`CRAP`)
 
-Measures the risk of changing a function by combining cyclomatic complexity with test coverage:
 $$\text{CRAP}(f) = \text{comp}(f)^2 \cdot (1 - \text{cov}(f))^3 + \text{comp}(f)$$
 
-- Functions with $\text{CRAP} > 30$ are considered high-risk candidates requiring seam tests before refactoring. Gathered via `cargo-crap`.
+- **Elevated Risk ($\text{CRAP} > 8.0$):** Notable complexity or testing deficiency; early warning for seam decomposition.
+- **High Risk ($\text{CRAP} > 15.0$):** Primary refactoring and regression hazard; requires dedicated tests entering the intended seam before restructuring. Gathered via `cargo-crap`.
 
 ### Public API Footprint (`IKL_pub`)
 

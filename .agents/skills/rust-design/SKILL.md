@@ -56,7 +56,7 @@ All generated analysis, intermediate scout outputs, and final reports are stored
 
 ```text
 .design/YYYY-MM-DD-<mode>-<target-slug>/
-├── baseline.json        # Output from `uv run scripts/rust_design.py gather`
+├── baseline.json        # Output from `uv run .agents/skills/rust-design/scripts/gather.py`
 ├── report.md            # Authoritative Architectural Report
 ├── scouts/              # Findings from 6 read-only lens subagents
 │   ├── lens1-seams.md
@@ -78,12 +78,12 @@ Maintain this checklist in the scratchpad across every execution:
 
 ```markdown
 ### Workflow Execution Checklist
-- [ ] 1. True Baseline: Run `uv run scripts/rust_design.py gather` and freeze True Architectural Baseline into `.design/YYYY-MM-DD-<mode>-<target>/baseline.json`.
-- [ ] 2. Layout & Cohesion Analysis: Evaluate file SLoC, intra-file reference clusters, and import asymmetry.
-- [ ] 3. Multi-Lens Scouting: Dispatch read-only scouts across the 6 architectural lenses (record outputs in `scouts/`).
-- [ ] 4. Candidate Screening: Disposition all high-severity hotspots, CRAP risks, and cycles. (Branch: If any material finding lacks a disposition, return to Step 3).
-- [ ] 5. Deepen / Model: Formulate recursive depth transformations; verify public API stability via `cargo-public-api`.
-- [ ] 6. Verification & Grader Audit: Verify seam behavior; run independent grader against Done Criteria; emit `report.md`.
+- [ ] 1. Establish Current Design & Baseline: Run `uv run .agents/skills/rust-design/scripts/gather.py <target> .design/.../baseline.json`.
+- [ ] 2. Discover Candidates via Multi-Lens Scouting: Dispatch 6 read-only scouts (record in `scouts/`); screen consequential candidates.
+- [ ] 3. Deepen Candidates & Recursive Decomposition: Apply Recursive Depth Test, depth propagation, and Deletion Dividend.
+- [ ] 4. Model Design in Rust: Translate semantics into concrete types, parse-don't-validate, typestates.
+- [ ] 5. Verify Implementation: Run test suites, verify API stability, compute deltas with `diff.py`.
+- [ ] 6. Boundary Verification & Adversarial Grader Audit: Verify child/parent boundaries, run independent grader, emit `report.md`.
 ```
 
 ---
@@ -129,10 +129,10 @@ Size metrics must measure **Source Lines of Code (SLoC)**: non-comment, non-blan
 Execute the automated analysis helper to freeze the True Architectural Baseline:
 
 ```bash
-uv run scripts/rust_design.py gather --path <target-path> --out .design/YYYY-MM-DD-<mode>-<target-slug>/baseline.json
+uv run .agents/skills/rust-design/scripts/gather.py <target-path> .design/YYYY-MM-DD-<mode>-<target-slug>/baseline.json
 ```
 
-If `scripts/rust_design.py` is absent, follow the Three-Tier Fallback Ladder in [`TOOLING.md`](TOOLING.md): inspect task runners (`mise`, `just`), or fall back to standard Cargo toolchain commands.
+If the automated helper is absent, follow the Three-Tier Fallback Ladder in [`TOOLING.md`](TOOLING.md): inspect task runners (`mise`, `just`), or fall back to standard Cargo toolchain commands.
 
 Map the target's responsibility, callers, interface, dependencies, important state, invariants, policy, visibility, tests, and parent/child relationships. Inspect tests entering each intended seam.
 
@@ -228,16 +228,20 @@ When code is modified:
 
 1. Verify required behavior through the intended seam using project test suites.
 2. Verify public API stability: run `cargo public-api` diff checking to prove zero accidental breaking changes.
-3. Calculate before-and-after SLoC and doc comment line deltas via `scripts/rust_design.py gather`.
+3. Calculate before-and-after SLoC and doc comment line deltas via:
+
+   ```bash
+   uv run .agents/skills/rust-design/scripts/gather.py <target-path> .design/YYYY-MM-DD-implement-<target-slug>/final.json
+   uv run .agents/skills/rust-design/scripts/diff.py .design/.../baseline.json .design/.../final.json
+   ```
+
 4. Enforce the Comment Preservation Rule: doc comments must not be stripped or compressed.
 5. Store the final verified patch in `.design/YYYY-MM-DD-implement-<target-slug>/patch.diff`.
-
 **Complete when:**
-
-1. Intended behaviour has been verified through tests entering the seam.
-2. Public API diff is verified and clean.
-3. SLoC deltas and comment preservation are documented.
-4. Superseded structure is deleted or accounted for in the Deletion Dividend ledger.
+6. Intended behaviour has been verified through tests entering the seam.
+7. Public API diff is verified and clean.
+8. SLoC deltas and comment preservation are documented.
+9. Superseded structure is deleted or accounted for in the Deletion Dividend ledger.
 
 ---
 
@@ -274,10 +278,11 @@ Every execution formats its final output under these mandatory Markdown headings
 ## 2. True Architectural Baseline vs. Proposed / Final State
 | Metric Dimension | Baseline | Proposed / Observed | Delta | Evidence Source |
 | :--- | :--- | :--- | :--- | :--- |
-| Source Lines of Code (SLoC) | 1,850 SLoC | 1,480 SLoC | -370 (-20%) | `rust_design.py` (stripped) |
+| Source Lines of Code (SLoC) | 1,850 SLoC | 1,480 SLoC | -370 (-20%) | `gather.py` (stripped) |
 | Doc Comment Lines (Anti-Gaming) | 420 lines | 445 lines | +25 (+6%) | Preserved & expanded |
 | Public API Footprint (IKL) | 34 items | 14 items | -20 (-59%) | `cargo-public-api` |
-| High CRAP Functions (>30) | 2 functions | 0 functions | -2 (-100%) | `cargo-crap` |
+| Elevated CRAP Functions (>8.0) | 5 functions | 1 function | -4 (-80%) | `cargo-crap` |
+| High CRAP Functions (>15.0) | 2 functions | 0 functions | -2 (-100%) | `cargo-crap` |
 | Maintainability Hotspots | 3 high-risk | 0 high-risk | -3 (-100%) | `messrust` |
 | Cyclic Dependency Edges | 0 cycles | 0 cycles | 0 | `cargo-modules` |
 | Duplicate Crate Versions | 1 duplicate | 0 duplicates | -1 | `cargo tree -d` |
