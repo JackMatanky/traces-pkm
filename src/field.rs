@@ -827,14 +827,16 @@ impl<'a> FieldStringValue<'a> {
         coercion: DateTimeCoercion,
     ) -> FieldValueRef<'a> {
         if coercion == DateTimeCoercion::Classify
-            && DateValue::has_four_digit_year(self.0.trim())
+            && let Some(Ok(rec)) = DateValue::classify(&self.0)
         {
-            if let Ok(value) = DateTimeValue::parse_iso(&self.0) {
-                return FieldValueRef::DateTime(value);
-            }
-            if let Ok(value) = DateValue::parse_iso(&self.0) {
-                return FieldValueRef::Date(value);
-            }
+            return match rec.value {
+                crate::date::RecognizedDateValue::DateTime(dt) => {
+                    FieldValueRef::DateTime(dt)
+                }
+                crate::date::RecognizedDateValue::Date(d) => {
+                    FieldValueRef::Date(d)
+                }
+            };
         }
         FieldValueRef::String(self.0)
     }

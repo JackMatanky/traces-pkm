@@ -16,11 +16,11 @@
 //!   built-in `format` filter.
 //! - Tests: `is_past`, `is_future`, and `is_leap_year` inspect a piped value.
 //!
-//! Date/time string parsing funnels through [`ParsedDate::parse`] and
+//! Date/time string parsing funnels through [`DateValue::classify`] via
 //! [`parse_date`]. A full datetime is tried first, falling back to a bare ISO
 //! date (`YYYY-MM-DD` or reduced-precision `YYYY-MM`) at midnight. Arithmetic
-//! filters re-serialize at the input's original precision via
-//! [`format_precise`].
+//! filters re-serialize at the input's original precision via the calendar
+//! owner.
 //!
 //! # Clock doctrine
 //!
@@ -42,11 +42,12 @@ use minijinja::{
 
 use super::error::{TemplateEngineResult, invalid_operation};
 use crate::{
-    DEFAULT_DATE_FORMAT, DEFAULT_DATETIME_FORMAT, DateTimeValue, DateValue,
-    DurationUnit, UNIT_HINT,
-    date::{DateDiff, DateError, DatePoint, shift_wall},
+    DEFAULT_DATE_FORMAT, DateTimeValue, DateValue, DurationUnit, UNIT_HINT,
+    date::{
+        DateDiff, DateError, DateFormat, DateTimeFormat, Precision,
+        RecognizedDate,
+    },
 };
-
 /// Method names `date` exposes, for [`DateOps::enumerate`].
 const METHODS: &[&str] =
     &["now", "today", "tomorrow", "yesterday", "from_timestamp"];
@@ -165,92 +166,40 @@ impl Object for DateOps {
     }
 }
 
-/// Whether the input carried only a date or a date plus time.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum DatePrecision {
-    Date,
-    DateTime,
-}
-
-impl DatePrecision {
-    const fn format(self) -> &'static str {
-        match self {
-            Self::Date => DEFAULT_DATE_FORMAT,
-            Self::DateTime => DEFAULT_DATETIME_FORMAT,
-        }
-    }
-}
-
-/// A successfully parsed date/time string.
+/// Parses `s` as a date or date-time expression via [`DateValue::classify`].
 ///
-/// `point` is the calendar-owner view of the input: the human-facing civil
-/// datetime (`wall`), the stored UTC instant, and whether the input carried
-/// a time component. Every arithmetic filter shifts or measures through
-/// [`DatePoint`], and re-serializes at the original precision via
-/// [`format_precise`].
-struct ParsedDate {
-    point: DatePoint,
-}
-
-impl ParsedDate {
-    /// Parses `s` as a date/time string via [`DateTimeValue::parse_iso`],
-    /// falling back to [`DateValue::parse_iso`] at midnight.
-    ///
-    /// A naive datetime resolves through the core module's local-zone DST
-    /// resolver; an explicit-offset input converts directly to its instant; a
-    /// date-only input stays civil, its instant being local-zone midnight.
-    ///
-    /// # Errors
-    ///
-    /// - [`ErrorKind::InvalidOperation`] if `s` matches neither parser. The
-    ///   underlying [`DateError`] is attached as the error's source so render
-    ///   diagnostics keep the full parse-failure chain.
-    /// - [`ErrorKind::InvalidOperation`] if the local wall clock of a parsed
-    ///   instant overflows [`NaiveDateTime`]'s range.
-    fn parse(s: &str) -> TemplateEngineResult<Self> {
-        match DateTimeValue::parse_iso(s) {
-            Ok(value) => {
-                let instant = value.into_inner();
-                let wall = DateTimeValue::from(instant)
-                    .local_wall()
-                    .ok_or_else(date_out_of_range_error)?;
-                Ok(Self {
-                    point: DatePoint::new(wall, instant, true),
-                })
-            }
-            // `s` didn't parse as a date-time; try it as a bare date. If that
-            // also fails, `datetime_source` (from the first, more specific
-            // attempt) is the more useful diagnostic to surface.
-            Err(datetime_source) => match DateValue::parse_iso(s) {
-                Ok(value) => {
-                    let Some(wall) = value.into_inner().and_hms_opt(0, 0, 0)
-                    else {
-                        return Err(date_out_of_range_error());
-                    };
-                    let instant = DateTimeValue::from(value).into_inner();
-                    Ok(Self {
-                        point: DatePoint::new(wall, instant, false),
-                    })
-                }
-                Err(_date_source) => Err(invalid_operation(
-                    format!("invalid date {s:?}"),
-                    datetime_source,
-                )),
-            },
+/// Attaches [`DateError`] as the underlying source so render diagnostics keep
+/// the full parse-failure chain.
+fn parse_recognized(s: &str) -> TemplateEngineResult<RecognizedDate> {
+    match DateValue::classify(s) {
+        Some(Ok(rec)) => Ok(rec),
+        Some(Err(err)) => {
+            Err(invalid_operation(format!("invalid date {s:?}"), err))
         }
-    }
-
-    /// Returns the output precision for re-serialization: a datetime input
-    /// keeps its time-of-day, a date-only input stays date-only.
-    fn precision(&self) -> DatePrecision {
-        if self.point.has_time {
-            DatePrecision::DateTime
-        } else {
-            DatePrecision::Date
+        None => {
+            let trimmed = s.trim();
+            let source = match DateFormat::parse_any(trimmed) {
+                Err(err) => err,
+                Ok(_) => match DateTimeFormat::parse_any(trimmed) {
+                    Err(err) => err,
+                    Ok(_) => {
+                        return Err(invalid_operation(
+                            format!("invalid date {s:?}"),
+                            DateError::OutOfRange,
+                        ));
+                    }
+                },
+            };
+            Err(invalid_operation(
+                format!("invalid date {s:?}"),
+                DateError::Unparseable {
+                    input: trimmed.into(),
+                    source,
+                },
+            ))
         }
     }
 }
-
 /// Extracts the shared `format="..."` kwarg every `date.*` namespace method
 /// takes, defaulting to [`DEFAULT_DATE_FORMAT`], and rejects any other kwarg
 /// via [`Kwargs::assert_all_used`].
@@ -315,37 +264,16 @@ fn format_with(
     Ok(rendered)
 }
 
-/// Re-serializes `dt` at the given `precision`.
-///
-/// Uses [`DEFAULT_DATETIME_FORMAT`] when the original input carried a time
-/// component, [`DEFAULT_DATE_FORMAT`] otherwise. Every arithmetic filter uses
-/// this for its output, so a date-only string never grows a fabricated
-/// `00:00:00`, and a datetime string never silently loses its time-of-day.
-///
-/// # Errors
-///
-/// - [`ErrorKind::InvalidOperation`] if formatting unexpectedly fails. This is
-///   unreachable in practice because the format is always
-///   [`DEFAULT_DATE_FORMAT`] or [`DEFAULT_DATETIME_FORMAT`], both valid
-///   strftime specifiers.
-fn format_precise(
-    dt: NaiveDateTime,
-    precision: DatePrecision,
-) -> TemplateEngineResult<String> {
-    format_with(dt.format(precision.format()), precision.format())
-}
-
 /// The shared date/time string parser for filters that work on the human wall
 /// clock (`date_format`, `weekday`, `is_leap_year`); instant-facing filters
-/// parse via [`ParsedDate`] directly. See [`ParsedDate::parse`] for the
-/// accepted formats.
+/// parse via [`parse_recognized`] directly.
 ///
 /// # Errors
 ///
 /// - [`ErrorKind::InvalidOperation`] if `s` is not a parseable date/time
 ///   string.
 fn parse_date(s: &str) -> Result<NaiveDateTime, Error> {
-    ParsedDate::parse(s).map(|parsed| parsed.point.wall)
+    parse_recognized(s).map(|rec| rec.wall_or_utc())
 }
 
 /// `{{ value | date_format(format_string) }}` re-formats a piped date/time
@@ -374,9 +302,9 @@ fn date_format(value: &str, format: &str) -> TemplateEngineResult<String> {
 /// # Errors
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
-///   string; see [`ParsedDate::parse`].
+///   string; see [`parse_recognized`].
 fn timestamp(value: &str) -> TemplateEngineResult<i64> {
-    Ok(ParsedDate::parse(value)?.point.instant.timestamp())
+    Ok(parse_recognized(value)?.instant().timestamp())
 }
 
 /// Parses `value` as a date/time string, transforms `datetime` via `op`, and
@@ -391,16 +319,20 @@ fn shift_date(
     value: &str,
     op: impl FnOnce(NaiveDateTime) -> Option<NaiveDateTime>,
 ) -> TemplateEngineResult<String> {
-    let parsed = ParsedDate::parse(value)?;
-    let shifted = op(parsed.point.wall).ok_or_else(date_out_of_range_error)?;
-    format_precise(shifted, parsed.precision())
+    let recognized = parse_recognized(value)?;
+    let shifted =
+        op(recognized.wall_or_utc()).ok_or_else(date_out_of_range_error)?;
+    let pat = recognized.precision.format_pattern(shifted);
+    format_with(shifted.format(pat), pat)
 }
 
 /// `{{ value | date_add(n, unit="days") }}` adds `n` `unit`s to a piped
 /// date/time string.
 ///
-/// `unit` defaults to `"days"` and accepts `"years"`, `"months"`, `"weeks"`,
-/// `"days"`, `"hours"`, `"minutes"`, `"seconds"`, or `"ms"`.
+/// `unit` defaults to `"days"` and accepts any [`DurationUnit`] spelling
+/// (e.g. `"years"`/`"y"`, `"months"`/`"mo"`, `"weeks"`/`"w"`, `"days"`/`"d"`,
+/// `"hours"`/`"h"`, `"minutes"`/`"m"`, `"seconds"`/`"s"`, or `"ms"`).
+/// Sub-day shifts on date-only values are civil and do not change the date.
 ///
 /// `"years"`, `"months"`, `"weeks"`, and `"days"` preserve the civil wall
 /// clock across a DST transition; the remaining units shift the exact
@@ -429,6 +361,11 @@ fn date_add(
 /// `{{ value | date_sub(n, unit="days") }}` subtracts `n` `unit`s from a piped
 /// date/time string.
 ///
+/// `unit` defaults to `"days"` and accepts any [`DurationUnit`] spelling
+/// (e.g. `"years"`/`"y"`, `"months"`/`"mo"`, `"weeks"`/`"w"`, `"days"`/`"d"`,
+/// `"hours"`/`"h"`, `"minutes"`/`"m"`, `"seconds"`/`"s"`, or `"ms"`).
+/// Sub-day shifts on date-only values are civil and do not change the date.
+///
 /// # Errors
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
@@ -455,12 +392,12 @@ fn date_sub(
 /// Shifts `value` by `n` `unit`s, applying calendar or fixed-duration
 /// semantics per `unit`.
 ///
-/// `"years"`, `"months"`, `"weeks"`, and `"days"` shift the civil wall clock
-/// (calendar application), preserving the clock reading across a DST
-/// transition; the remaining fixed units shift the stored instant exactly, so
-/// the wall clock can land earlier or later than a naive `n`-unit shift across
-/// a transition. A date-only input stays civil for every unit: a zone-free
-/// date has no instant to shift.
+/// - Inputs with a time component ([`Precision::DateTime`]) shift calendar
+///   units on the local wall clock (preserving wall-clock hour across DST) and
+///   sub-day units exactly on the instant.
+/// - Civil inputs ([`Precision::Date`], [`Precision::YearMonth`]) shift
+///   entirely on the civil wall clock. Sub-day shifts on date-only inputs leave
+///   the calendar day unchanged.
 ///
 /// # Errors
 ///
@@ -471,23 +408,25 @@ fn date_shift_unit(
     n: i64,
     unit: DurationUnit,
 ) -> TemplateEngineResult<String> {
-    let parsed = ParsedDate::parse(value)?;
-    let precision = parsed.precision();
-    // Year, month, week, and day units shift the civil wall clock (calendar
-    // application); sub-day units shift the stored instant exactly, which a DST
-    // transition then exposes in the local wall clock. A date-only input stays
-    // civil for every unit: a zone-free date has no instant to shift.
-    let wall = match precision {
-        DatePrecision::Date => {
-            shift_wall(parsed.point.wall, n, unit).map_err(date_error)?
+    let recognized = parse_recognized(value)?;
+    #[expect(
+        clippy::match_same_arms,
+        reason = "pat-exhaustive-enum: explicit match per variant forces a \
+                  shift decision when adding precision"
+    )]
+    let shifted_point = match recognized.precision {
+        Precision::YearMonth => {
+            recognized.point().shift(n, unit).map_err(date_error)?
         }
-        DatePrecision::DateTime => {
-            let dt = DateTimeValue::from(parsed.point.instant);
-            let shifted = dt.shift(n, unit).map_err(date_error)?;
-            shifted.local_wall().ok_or_else(date_out_of_range_error)?
+        Precision::Date => {
+            recognized.point().shift(n, unit).map_err(date_error)?
+        }
+        Precision::DateTime => {
+            recognized.point().shift(n, unit).map_err(date_error)?
         }
     };
-    format_precise(wall, precision)
+    let pat = shifted_point.precision.format_pattern(shifted_point.wall);
+    format_with(shifted_point.wall.format(pat), pat)
 }
 
 /// `{{ value | add_days(n) }}` is a convenience shortcut for
@@ -634,10 +573,10 @@ fn date_diff(
     kwargs: Kwargs,
 ) -> TemplateEngineResult<Value> {
     let unit = unit_kwarg(&kwargs)?;
-    let from = ParsedDate::parse(value)?;
-    let to = ParsedDate::parse(other)?;
+    let from = parse_recognized(value)?;
+    let to = parse_recognized(other)?;
 
-    let diff = from.point.diff(to.point, unit).map_err(date_error)?;
+    let diff = from.point().diff(to.point(), unit).map_err(date_error)?;
 
     match diff {
         DateDiff::Whole(n) => Ok(Value::from(n)),
@@ -648,15 +587,15 @@ fn date_diff(
 /// `{% if value is is_past %}` returns `true` when the piped date/time string
 /// is before now.
 ///
-/// A naive input is interpreted in the reader's local zone (see
-/// [`ParsedDate::parse`]), so it compares correctly against file timestamps.
+/// A naive input is interpreted in the reader's local zone, so it compares
+/// correctly against file timestamps.
 ///
 /// # Errors
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
-///   string; see [`ParsedDate::parse`].
+///   string; see [`parse_recognized`].
 fn is_past(value: &str) -> TemplateEngineResult<bool> {
-    Ok(ParsedDate::parse(value)?.point.instant < Utc::now())
+    Ok(parse_recognized(value)?.instant() < Utc::now())
 }
 
 /// `{% if value is is_future %}` mirrors [`is_past`] for future instants.
@@ -664,9 +603,9 @@ fn is_past(value: &str) -> TemplateEngineResult<bool> {
 /// # Errors
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
-///   string; see [`ParsedDate::parse`].
+///   string; see [`parse_recognized`].
 fn is_future(value: &str) -> TemplateEngineResult<bool> {
-    Ok(ParsedDate::parse(value)?.point.instant > Utc::now())
+    Ok(parse_recognized(value)?.instant() > Utc::now())
 }
 
 /// `{% if value is is_leap_year %}` accepts either an integer year (`2024 is
