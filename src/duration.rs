@@ -136,45 +136,18 @@ impl DurationValue {
         (DurationUnit::Millisecond, "ms"),
     ];
 
-    /// Parses a duration spelling (e.g., `"1h 30m"`, `"4 hrs"`).
+    /// Classifies `s` as a duration expression, returning `None` if it cannot
+    /// start a duration.
     ///
-    /// Accepts one or more `<number><unit>` parts, optionally separated by
-    /// whitespace or commas; whitespace may also sit between a number and its
-    /// unit. A `+` or `-` at the start of the first part sets the sign of the
-    /// whole duration. A part after the first may repeat a redundant `+` but
-    /// never an explicit `-`.
-    ///
-    /// # Errors
-    ///
-    /// - [`Empty`] if the input is empty or contains only separators.
-    /// - [`MissingNumber`] if a unit appears without a preceding number.
-    /// - [`InvalidNumber`] if a `+`/`-` sign is not immediately followed by a
-    ///   digit or by `.` and a digit, or a part after the first carries an
-    ///   explicit `-` sign.
-    /// - [`MalformedNumber`] if the number portion is not valid float syntax.
-    /// - [`MissingUnit`] if a number appears without a trailing unit.
-    /// - [`UnknownUnit`] if the unit string is not recognized.
-    /// - [`NonFiniteNumber`] if a single part's number overflows to infinity.
-    /// - [`NonFiniteSeconds`] if the parsed total cannot be represented as a
-    ///   finite seconds value.
-    ///
-    /// [`Empty`]: DurationError::Empty
-    /// [`MissingNumber`]: DurationError::MissingNumber
-    /// [`InvalidNumber`]: DurationError::InvalidNumber
-    /// [`MalformedNumber`]: DurationError::MalformedNumber
-    /// [`MissingUnit`]: DurationError::MissingUnit
-    /// [`UnknownUnit`]: DurationError::UnknownUnit
-    /// [`NonFiniteNumber`]: DurationError::NonFiniteNumber
-    /// [`NonFiniteSeconds`]: DurationError::NonFiniteSeconds
-    /// Classifies `s` as a duration expression: `None` if `s` cannot start a
-    /// duration, `Some(Err)` on parse failure, or `Some(Ok)` on valid input.
-    ///
-    /// Cheap `O(1)` shape gate upfront: returns `None` without allocation when
-    /// the first byte cannot begin a duration segment.
+    /// Employs a cheap `O(1)` shape gate upfront that returns `None` without
+    /// allocation when the first byte cannot begin a duration segment, or
+    /// when `s` is empty or whitespace. Otherwise delegates to
+    /// [`Self::parse`].
     ///
     /// # Errors
     ///
-    /// - [`DurationError::Empty`] if `s` is empty or whitespace.
+    /// Returns `Some(Err(_))` with:
+    ///
     /// - [`DurationError::MissingNumber`] if a segment has a unit without a
     ///   number.
     /// - [`DurationError::MissingUnit`] if a number appears without a unit.

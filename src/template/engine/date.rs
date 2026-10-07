@@ -32,13 +32,14 @@
 //! `date.today()`, `date.tomorrow()`, `date.yesterday()`, and
 //! `date.from_timestamp()` read or render the local clock for display.
 
-use std::{fmt::Write as _, sync::Arc};
+use std::{borrow::Cow, fmt::Write as _, sync::Arc};
 
 use chrono::{Datelike as _, NaiveDate, NaiveDateTime, Utc};
 use minijinja::{
     Environment, Error, ErrorKind,
     value::{Enumerator, Kwargs, Object, Value},
 };
+use num_traits::ToPrimitive as _;
 
 use super::error::{TemplateEngineResult, invalid_operation};
 use crate::{
@@ -130,76 +131,153 @@ fn today_point() -> DatePoint {
     )
 }
 
-#[expect(
-    clippy::excessive_nesting,
-    reason = "character parsing loop builds ISO component offsets"
-)]
-fn translate_iso_offset(input: &str) -> String {
+/// Translates an ISO-8601 duration offset (e.g., `"P1M"`, `"-P1M"`, `"P-1M"`,
+/// `"P1DT2H"`) to standard `<number><unit>` duration text accepted by
+/// [`DurationValue`]. Returns borrowed input when `input` is not an ISO
+/// duration.
+///
+/// # Errors
+///
+/// Returns an [`ErrorKind::InvalidOperation`] error if `input` has an ISO
+/// duration prefix (`P`) but contains malformed components, invalid units, or
+/// unconsumed trailing text.
+fn translate_iso_offset(input: &str) -> TemplateEngineResult<Cow<'_, str>> {
     let trimmed = input.trim();
-    let (lead_neg, rest) = if let Some(s) = trimmed.strip_prefix('-') {
-        (true, s)
-    } else {
-        (false, trimmed)
+    let (lead_neg, after_lead_sign) = match trimmed.strip_prefix('-') {
+        Some(s) => (true, s),
+        None => (false, trimmed.strip_prefix('+').unwrap_or(trimmed)),
     };
-    if let Some(rest) =
-        rest.strip_prefix('P').or_else(|| rest.strip_prefix('p'))
-    {
-        let (int_neg, rest) = if let Some(s) = rest.strip_prefix('-') {
-            (true, s)
-        } else {
-            (false, rest)
+    let Some(after_p) = after_lead_sign
+        .strip_prefix('P')
+        .or_else(|| after_lead_sign.strip_prefix('p'))
+    else {
+        return Ok(Cow::Borrowed(input));
+    };
+
+    let (int_neg, after_sign) = match after_p.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, after_p.strip_prefix('+').unwrap_or(after_p)),
+    };
+    let is_neg = lead_neg ^ int_neg;
+
+    let (date_part, time_part) =
+        match after_sign.split_once('T').or_else(|| after_sign.split_once('t'))
+        {
+            Some((d, t)) => (d, Some(t)),
+            None => (after_sign, None),
         };
-        let is_neg = lead_neg ^ int_neg;
-        let prefix = if is_neg {
-            "-"
-        } else {
-            ""
-        };
-        let mut out = String::new();
-        let (date_part, time_part) =
-            match rest.split_once('T').or_else(|| rest.split_once('t')) {
-                Some((d, t)) => (d, Some(t)),
-                None => (rest, None),
-            };
-        let mut parse_parts = |part: &str, is_time: bool| {
-            let mut num_buf = String::new();
-            for ch in part.chars() {
-                if ch.is_ascii_digit() || ch == '.' || ch == '-' {
-                    num_buf.push(ch);
-                } else if ch.is_ascii_alphabetic() {
-                    let unit_str = match (ch.to_ascii_uppercase(), is_time) {
-                        ('Y', false) => "y",
-                        ('M', false) => "mo",
-                        ('W', false) => "w",
-                        ('D', false) => "d",
-                        ('H', true) => "h",
-                        ('M', true) => "m",
-                        ('S', true) => "s",
-                        _ => "",
-                    };
-                    if !unit_str.is_empty() && !num_buf.is_empty() {
-                        if !out.is_empty() {
-                            out.push(' ');
-                        }
-                        out.push_str(prefix);
-                        out.push_str(&num_buf);
-                        out.push_str(unit_str);
-                    }
-                    num_buf.clear();
-                } else {
-                    num_buf.clear();
-                }
-            }
-        };
-        parse_parts(date_part, false);
-        if let Some(t) = time_part {
-            parse_parts(t, true);
+
+    let mut parts: Vec<(&str, &'static str)> = Vec::new();
+
+    parse_iso_components(date_part, false, &mut parts).map_err(|()| {
+        invalid_operation(
+            format!("invalid ISO-8601 duration offset {input:?}"),
+            DateError::OutOfRange,
+        )
+    })?;
+
+    if let Some(t) = time_part {
+        if t.is_empty() {
+            return Err(invalid_operation(
+                format!(
+                    "invalid ISO-8601 duration offset {input:?}: missing time \
+                     components after 'T'"
+                ),
+                DateError::OutOfRange,
+            ));
         }
-        if !out.is_empty() {
-            return out;
-        }
+        parse_iso_components(t, true, &mut parts).map_err(|()| {
+            invalid_operation(
+                format!("invalid ISO-8601 duration offset {input:?}"),
+                DateError::OutOfRange,
+            )
+        })?;
     }
-    input.to_owned()
+
+    if parts.is_empty() {
+        return Err(invalid_operation(
+            format!(
+                "invalid ISO-8601 duration offset {input:?}: no duration \
+                 components"
+            ),
+            DateError::OutOfRange,
+        ));
+    }
+
+    let mut out = String::new();
+    if is_neg {
+        out.push('-');
+    }
+    for (idx, (num, unit)) in parts.into_iter().enumerate() {
+        if idx > 0 {
+            out.push(' ');
+        }
+        out.push_str(num);
+        out.push_str(unit);
+    }
+
+    Ok(Cow::Owned(out))
+}
+
+fn parse_iso_components<'a>(
+    part: &'a str,
+    is_time: bool,
+    parts: &mut Vec<(&'a str, &'static str)>,
+) -> Result<(), ()> {
+    if part.is_empty() {
+        return Ok(());
+    }
+
+    let mut remaining = part;
+    while !remaining.is_empty() {
+        let mut char_indices = remaining.char_indices();
+        let mut num_end = 0;
+        let mut has_digit = false;
+        let mut has_dot = false;
+        let mut unit_char = None;
+        let mut next_start = 0;
+
+        for (idx, ch) in char_indices.by_ref() {
+            if ch.is_ascii_digit() {
+                has_digit = true;
+                num_end = idx.checked_add(ch.len_utf8()).ok_or(())?;
+            } else if ch == '.' && !has_dot {
+                has_dot = true;
+                num_end = idx.checked_add(ch.len_utf8()).ok_or(())?;
+            } else if ch.is_ascii_alphabetic() {
+                unit_char = Some(ch);
+                next_start = idx.checked_add(ch.len_utf8()).ok_or(())?;
+                break;
+            } else {
+                return Err(());
+            }
+        }
+
+        let Some(unit_ch) = unit_char else {
+            return Err(());
+        };
+
+        if !has_digit {
+            return Err(());
+        }
+
+        let num_str = remaining.get(..num_end).ok_or(())?;
+        let unit_str = match (unit_ch.to_ascii_uppercase(), is_time) {
+            ('Y', false) => "y",
+            ('M', false) => "mo",
+            ('W', false) => "w",
+            ('D', false) => "d",
+            ('H', true) => "h",
+            ('M', true) => "m",
+            ('S', true) => "s",
+            _ => return Err(()),
+        };
+
+        parts.push((num_str, unit_str));
+        remaining = remaining.get(next_start..).ok_or(())?;
+    }
+
+    Ok(())
 }
 
 fn apply_offset_to_point(
@@ -210,7 +288,7 @@ fn apply_offset_to_point(
         return point.shift(n, DurationUnit::Day).map_err(date_error);
     }
     if let Some(s) = offset_val.as_str() {
-        let translated = translate_iso_offset(s);
+        let translated = translate_iso_offset(s)?;
         let duration = DurationValue::parse(&translated).map_err(|_| {
             invalid_operation(
                 format!("invalid duration offset {s:?}"),
@@ -868,14 +946,14 @@ fn format_human_duration(dv: &DurationValue) -> String {
     for &(singular, plural, unit_secs) in DURATION_HUMAN_UNITS {
         if rem >= unit_secs {
             let count = (rem / unit_secs).floor();
+            let Some(count_u64) = count.to_u64() else {
+                return if is_negative {
+                    format!("-{total_secs:e} seconds")
+                } else {
+                    format!("{total_secs:e} seconds")
+                };
+            };
             rem = count.mul_add(-unit_secs, rem);
-            #[expect(
-                clippy::as_conversions,
-                clippy::cast_possible_truncation,
-                clippy::cast_sign_loss,
-                reason = "unit count is non-negative and fits u64"
-            )]
-            let count_u64 = count as u64;
             if count_u64 == 1 {
                 parts.push(format!("1 {singular}"));
             } else {
@@ -884,21 +962,27 @@ fn format_human_duration(dv: &DurationValue) -> String {
         }
     }
 
-    if parts.is_empty() {
-        #[expect(
-            clippy::as_conversions,
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "sub-second residual fits u64"
-        )]
-        let ms = (rem * 1000.0).round() as u64;
-        match ms.cmp(&1) {
-            std::cmp::Ordering::Equal => parts.push("1 millisecond".to_owned()),
-            std::cmp::Ordering::Greater => {
+    if rem > 0.0 {
+        let ms_f = rem * 1000.0;
+        let ms_round = ms_f.round();
+        if let Some(ms) = ms_round.to_u64()
+            && ms > 0
+        {
+            if ms == 1 {
+                parts.push("1 millisecond".to_owned());
+            } else {
                 parts.push(format!("{ms} milliseconds"));
             }
-            std::cmp::Ordering::Less => return "0 seconds".to_owned(),
+        } else if parts.is_empty() {
+            parts.push("< 1 millisecond".to_owned());
+        } else {
+            // Sub-millisecond residual after whole units are already present is
+            // omitted
         }
+    }
+
+    if parts.is_empty() {
+        return "0 seconds".to_owned();
     }
 
     let joined = parts.join(", ");
@@ -1921,6 +2005,91 @@ mod tests {
                 .expect_err("invalid duration fails");
 
             assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+        }
+
+        #[test]
+        fn formats_compound_with_fractional_seconds() {
+            let rendered = env()
+                .render_str(
+                    r#"{{ "1.5s" | durationformat }}"#,
+                    minijinja::context!(),
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered, "1 second, 500 milliseconds");
+        }
+
+        #[test]
+        fn formats_sub_millisecond_duration_truthfully() {
+            let rendered = env()
+                .render_str(
+                    r#"{{ "0.0001s" | durationformat }}"#,
+                    minijinja::context!(),
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered, "< 1 millisecond");
+        }
+
+        #[test]
+        fn formats_extreme_duration_magnitudes_without_saturating() {
+            let rendered = env()
+                .render_str(
+                    r#"{{ "1e300s" | durationformat }}"#,
+                    minijinja::context!(),
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered, "1e300 seconds");
+        }
+
+        #[test]
+        fn formats_negative_compound_with_milliseconds() {
+            let rendered = env()
+                .render_str(
+                    r#"{{ "-1.5s" | durationformat }}"#,
+                    minijinja::context!(),
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered, "-1 second, 500 milliseconds");
+        }
+    }
+
+    mod iso_offset {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn translates_valid_iso_offsets() {
+            assert_eq!(translate_iso_offset("P1M").unwrap(), "1mo");
+            assert_eq!(translate_iso_offset("P-1M").unwrap(), "-1mo");
+            assert_eq!(translate_iso_offset("-P1M").unwrap(), "-1mo");
+            assert_eq!(translate_iso_offset("P1DT2H").unwrap(), "1d 2h");
+            assert_eq!(translate_iso_offset("-P1DT2H").unwrap(), "-1d 2h");
+            assert_eq!(translate_iso_offset("PT30M").unwrap(), "30m");
+        }
+
+        #[test]
+        fn borrows_standard_durations_without_allocation() {
+            let standard = "1d 2h";
+            let translated = translate_iso_offset(standard).unwrap();
+            assert!(matches!(translated, Cow::Borrowed(_)));
+            assert_eq!(translated, "1d 2h");
+        }
+
+        #[test]
+        fn rejects_malformed_iso_offsets() {
+            for invalid in [
+                "P1Q2D", "P1M2H", "PT1D", "PD", "P1", "P", "PT", "P1DT",
+                "P1Mfoo",
+            ] {
+                assert!(
+                    translate_iso_offset(invalid).is_err(),
+                    "expected {invalid:?} to fail"
+                );
+            }
         }
     }
 

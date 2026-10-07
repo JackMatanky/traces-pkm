@@ -1810,7 +1810,7 @@ mod tests {
     }
 
     #[test]
-    fn query_bucketing_helpers_and_date_function() {
+    fn query_week_bucketing_helpers_return_iso_start_and_end_of_week() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let rows = rows_for_files(temp.path(), &[
             ("sun.md", "---\nwhen: 2026-02-01\n---"),
@@ -1826,14 +1826,18 @@ mod tests {
             vec!["sun"],
         );
         assert_eq!(
-            names(
-                &rows
-                    .clone()
-                    .filter("eow(when) == \"2026-02-01\"")
-                    .expect("eow")
-            ),
+            names(&rows.filter("eow(when) == \"2026-02-01\"").expect("eow")),
             vec!["sun"],
         );
+    }
+
+    #[test]
+    fn query_month_bucketing_helpers_return_start_and_end_of_month() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let rows = rows_for_files(temp.path(), &[
+            ("sun.md", "---\nwhen: 2026-02-01\n---"),
+            ("wed.md", "---\nwhen: 2026-07-29\n---"),
+        ]);
         assert_eq!(
             names(
                 &rows
@@ -1864,12 +1868,20 @@ mod tests {
         assert_eq!(
             names(
                 &rows
-                    .clone()
                     .filter("end_of_month(when) == \"2026-07-31\"")
                     .expect("end_of_month")
             ),
             vec!["wed"],
         );
+    }
+
+    #[test]
+    fn query_year_bucketing_helpers_return_start_and_end_of_year() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let rows = rows_for_files(temp.path(), &[
+            ("sun.md", "---\nwhen: 2026-02-01\n---"),
+            ("wed.md", "---\nwhen: 2026-07-29\n---"),
+        ]);
         assert_eq!(
             names(
                 &rows
@@ -1880,14 +1892,18 @@ mod tests {
             vec!["sun", "wed"],
         );
         assert_eq!(
-            names(
-                &rows
-                    .clone()
-                    .filter("eoy(when) == \"2026-12-31\"")
-                    .expect("eoy")
-            ),
+            names(&rows.filter("eoy(when) == \"2026-12-31\"").expect("eoy")),
             vec!["sun", "wed"],
         );
+    }
+
+    #[test]
+    fn query_date_function_evaluates_parse_with_and_iso_literals() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let rows = rows_for_files(temp.path(), &[
+            ("sun.md", "---\nwhen: 2026-02-01\n---"),
+            ("wed.md", "---\nwhen: 2026-07-29\n---"),
+        ]);
         assert_eq!(
             names(
                 &rows

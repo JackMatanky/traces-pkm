@@ -459,7 +459,82 @@ fn file_day_exposed_in_query_with_filename_precedence() {
     .expect("commit mode must write");
     assert_eq!(std::fs::read_to_string(path).expect("read report"), "1");
 }
+/// Proves template shorthands reject malformed ISO duration offsets.
+#[test]
+fn template_shorthands_reject_malformed_iso_offsets() {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let project = TestProject::trusted(temp.path().join("project"));
+    project.write_template(
+        "invalid_offset.md",
+        r#"{{ date.now("YYYY-MM-DD", "P1Q2D", "2026-05-15", "%Y-%m-%d") }}"#,
+    );
+    let config = project.config();
+    let service =
+        TemplateService::new(&config, Arc::new(PresetDialogProvider::new()))
+            .expect("valid template service");
+    let input =
+        TemplatePathInput::parse(std::path::Path::new("invalid_offset"))
+            .expect("valid template input");
 
+    let result = service.render_to_file(&input, None, WriteMode::DryRun);
+    assert!(result.is_err());
+}
+
+/// Proves file.day persists at index time and does not drift under query-time
+/// timezone changes.
+#[test]
+fn file_day_persists_at_index_time_across_query_time_zone_changes() {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let project = TestProject::trusted(temp.path().join("project"));
+    project.write_note("notes/2026-07-29-daily.md", "---\ntitle: Daily\n---\n");
+    project.write_template(
+        "file_day_tz.md",
+        r#"{{ query.from("notes/").where('file.day == "2026-07-29"') | length }}"#,
+    );
+    let config = project.config();
+    let service =
+        TemplateService::new(&config, Arc::new(PresetDialogProvider::new()))
+            .expect("valid template service");
+    let input = TemplatePathInput::parse(std::path::Path::new("file_day_tz"))
+        .expect("valid template input");
+
+    // Query under UTC+14
+    {
+        TzGuard::set("Pacific/Kiritimati");
+        let written = service
+            .render_to_file(
+                &input,
+                None,
+                WriteMode::Commit(CommitPolicy::CreateNew),
+            )
+            .expect("render file day under Kiritimati");
+        let path = match written {
+            WriteOutcome::Written(path) => Some(path),
+            WriteOutcome::Previewed(_) => None,
+        }
+        .expect("commit mode must write");
+        assert_eq!(std::fs::read_to_string(&path).expect("read report"), "1");
+        std::fs::remove_file(path).expect("remove temp report");
+    }
+
+    // Query under UTC-12
+    {
+        TzGuard::set("Etc/GMT+12");
+        let written = service
+            .render_to_file(
+                &input,
+                None,
+                WriteMode::Commit(CommitPolicy::CreateNew),
+            )
+            .expect("render file day under GMT+12");
+        let path = match written {
+            WriteOutcome::Written(path) => Some(path),
+            WriteOutcome::Previewed(_) => None,
+        }
+        .expect("commit mode must write");
+        assert_eq!(std::fs::read_to_string(path).expect("read report"), "1");
+    }
+}
 /// Proves date.now renders local wall clock while storage stays UTC under
 /// injected TZ.
 #[test]

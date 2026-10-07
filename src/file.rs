@@ -30,7 +30,10 @@ use std::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::path::{FolderRef, RelativePath};
+use crate::{
+    DateValue,
+    path::{FolderRef, RelativePath},
+};
 
 /// Metadata captured for one regular file under a project root.
 ///
@@ -44,6 +47,7 @@ pub struct FileMeta {
     created_at: Option<SystemTime>,
     modified_at: SystemTime,
     size: u64,
+    day: Option<DateValue>,
 }
 
 impl FileMeta {
@@ -64,6 +68,7 @@ impl FileMeta {
         let modified_at = metadata.modified()?;
         let created_at = metadata.created().ok();
         let format = FileFormat::from_path(&path);
+        let day = Self::derive_day(&path, created_at);
 
         Ok(Self {
             path,
@@ -71,7 +76,22 @@ impl FileMeta {
             created_at,
             modified_at,
             size: metadata.len(),
+            day,
         })
+    }
+
+    /// Derives the calendar date for this file, with filename-derived date
+    /// winning over `created_at` (the Dataview rule).
+    fn derive_day(
+        path: &Path,
+        created_at: Option<SystemTime>,
+    ) -> Option<DateValue> {
+        if let Some(name) = BaseNameRef::from_path(path)
+            && let Some((rec, _)) = DateValue::parse_prefix(name.as_str())
+        {
+            return Some(rec.date());
+        }
+        created_at.map(DateValue::from)
     }
 
     /// Builds a [`FileMeta`] with custom fields for test fixtures.
@@ -82,12 +102,36 @@ impl FileMeta {
     #[inline]
     #[must_use]
     pub fn for_test<P: Into<PathBuf>>(path: P, format: FileFormat) -> Self {
+        let path = path.into();
+        let day = Self::derive_day(&path, None);
         Self {
-            path: path.into(),
+            path,
             format,
             created_at: None,
             modified_at: SystemTime::now(),
             size: 10,
+            day,
+        }
+    }
+
+    /// Builds a [`FileMeta`] for a Markdown note with custom paths and
+    /// creation timestamp for test fixtures.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[inline]
+    #[must_use]
+    pub fn note_with_created_at_for_test<P: Into<PathBuf>>(
+        path: P,
+        created_at: Option<SystemTime>,
+    ) -> Self {
+        let path = path.into();
+        let day = Self::derive_day(&path, created_at);
+        Self {
+            path,
+            format: FileFormat::Note,
+            created_at,
+            modified_at: SystemTime::now(),
+            size: 10,
+            day,
         }
     }
 
@@ -155,16 +199,12 @@ impl FileMeta {
         self.created_at
     }
 
-    /// Returns the calendar date for this file, with filename-derived date
-    /// winning over `created_at` (the Dataview rule).
+    /// Returns the calendar date for this file, computed at index time with
+    /// filename-derived date winning over `created_at` (the Dataview rule).
+    #[inline]
     #[must_use]
-    pub(crate) fn day(&self) -> Option<crate::DateValue> {
-        if let Some((rec, _)) =
-            crate::DateValue::parse_prefix(self.name().as_str())
-        {
-            return Some(rec.date());
-        }
-        self.created_at.map(crate::DateValue::from)
+    pub(crate) const fn day(&self) -> Option<crate::DateValue> {
+        self.day
     }
 
     /// Returns the raw filesystem modification timestamp.
@@ -336,12 +376,15 @@ mod tests {
         created_at: Option<SystemTime>,
         modified_at: SystemTime,
     ) -> FileMeta {
+        let path = PathBuf::from("note.md");
+        let day = FileMeta::derive_day(&path, created_at);
         FileMeta {
-            path: PathBuf::from("note.md"),
+            path,
             format: FileFormat::Note,
             created_at,
             modified_at,
             size: 0,
+            day,
         }
     }
 
@@ -422,14 +465,72 @@ mod tests {
                 assert_eq!(record.created_at(), Some(reported));
             }
         }
+        mod day {
+            use pretty_assertions::assert_eq;
+
+            use super::*;
+
+            #[test]
+            fn prefers_filename_date_over_created_at() {
+                // Arrange
+                let filename_day = DateValue::parse_iso("2026-07-29").unwrap();
+                let created_day = DateValue::parse_iso("2025-01-01").unwrap();
+                let created_time = SystemTime::from(
+                    crate::DateTimeValue::from(created_day).into_inner(),
+                );
+
+                // Act
+                let record = FileMeta::note_with_created_at_for_test(
+                    "2026-07-29-daily.md",
+                    Some(created_time),
+                );
+
+                // Assert
+                assert_eq!(record.day(), Some(filename_day));
+            }
+
+            #[test]
+            fn falls_back_to_created_at_when_filename_has_no_date() {
+                // Arrange
+                let created_day = DateValue::parse_iso("2026-03-15").unwrap();
+                let created_time = SystemTime::from(
+                    crate::DateTimeValue::from(created_day).into_inner(),
+                );
+
+                // Act
+                let record = FileMeta::note_with_created_at_for_test(
+                    "plain-note.md",
+                    Some(created_time),
+                );
+
+                // Assert
+                assert_eq!(record.day(), Some(created_day));
+            }
+
+            #[test]
+            fn returns_none_when_both_filename_and_created_at_are_absent() {
+                // Arrange & Act
+                let record = FileMeta::note_for_test("plain-note.md");
+
+                // Assert
+                assert_eq!(record.day(), None);
+            }
+        }
 
         #[test]
         fn file_meta_postcard_roundtrip() {
-            let file = FileMeta::note_for_test("test.md");
+            // Arrange
+            let file = FileMeta::note_for_test("2026-07-29-daily.md");
+            assert!(file.day().is_some());
+
+            // Act
             let bytes = postcard::to_allocvec(&file).expect("serialize");
             let decoded: FileMeta =
                 postcard::from_bytes(&bytes).expect("deserialize");
+
+            // Assert
             assert_eq!(file, decoded);
+            assert_eq!(decoded.day(), file.day());
         }
     }
 
