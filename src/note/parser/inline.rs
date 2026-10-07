@@ -214,15 +214,15 @@ impl<'a> InlineValueParser<'a> {
         self.is_atom_boundary(end).then_some(end)
     }
 
-    /// Parses an ISO `YYYY-MM-DD` date atom at `pos`.
+    /// Parses an ISO date atom (`YYYY-MM-DD` or `YYYY-MM`) at `pos`.
     fn parse_date_at(&self, pos: usize) -> Option<ParsedAtom> {
-        let end = self.source.advance(pos, 10);
-        let date = self.source.get(pos..end)?;
-        if !(DateValue::is_iso_shape(date) && self.is_atom_boundary(end)) {
+        let remainder = self.source.from(pos)?;
+        let (rec, consumed) = DateValue::parse_prefix(remainder)?;
+        let end = self.source.advance(pos, consumed);
+        if !self.is_atom_boundary(end) {
             return None;
         }
-        let value = DateValue::parse_iso(date).ok()?;
-        Some(ParsedAtom::new(NoteFieldValue::Date(value), end))
+        Some(ParsedAtom::new(NoteFieldValue::Date(rec.date()), end))
     }
 
     /// Parses a finite `f64` number atom at `pos`.
@@ -476,8 +476,25 @@ mod tests {
         }
 
         #[test]
-        fn rejects_text_shorter_than_an_iso_date() {
+        fn parses_a_year_month_date_atom() {
             let vp = InlineValueParser::new("2026-07");
+            let result = vp.parse_date_at(0);
+
+            assert_eq!(
+                result,
+                Some(ParsedAtom::new(
+                    NoteFieldValue::Date(
+                        DateValue::parse_iso("2026-07")
+                            .expect("valid year-month")
+                    ),
+                    7
+                ))
+            );
+        }
+
+        #[test]
+        fn rejects_text_shorter_than_an_iso_date() {
+            let vp = InlineValueParser::new("2026");
             let result = vp.parse_date_at(0);
 
             assert_eq!(result, None);

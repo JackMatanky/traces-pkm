@@ -51,9 +51,6 @@ const DEFAULT_DATE_CREATED_FIELD: &str = "date_created";
 /// Default `[frontmatter] date_modified.name` key when unconfigured.
 const DEFAULT_DATE_MODIFIED_FIELD: &str = "date_modified";
 
-/// Default date format applied to both date roles when unconfigured.
-const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%dT%H:%M:%S";
-
 /// Resolved config ready for consumers after discovery, trust checks, and
 /// merging.
 #[derive(Clone, Debug)]
@@ -798,7 +795,7 @@ impl DateFieldConfig {
         Self {
             name: FieldName::try_from(name)
                 .expect("role-name constant is a valid field key"),
-            format: DEFAULT_DATE_FORMAT.to_owned(),
+            format: crate::DEFAULT_DATETIME_FORMAT.to_owned(),
         }
     }
 
@@ -819,9 +816,9 @@ impl DateFieldConfig {
                 name: FieldName::try_from(
                     raw.name.unwrap_or_else(|| default_name.to_owned()),
                 )?,
-                format: raw
-                    .format
-                    .unwrap_or_else(|| DEFAULT_DATE_FORMAT.to_owned()),
+                format: raw.format.unwrap_or_else(|| {
+                    crate::DEFAULT_DATETIME_FORMAT.to_owned()
+                }),
             },
         })
     }
