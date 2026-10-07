@@ -46,5 +46,7 @@ docs/digests/
 # -------------------------- Claude --------------------------- #
 .claude/
 CLAUDE.md
+# --------- Architecture Design Skill Deliverables ------------ #
+.design/
 
 docs/vault/

@@ -1,278 +1,313 @@
 ---
 name: rust-design
 description: >
-  Audit Rust architecture across a module, crate, or workspace; review or
-  redesign a focused responsibility or seam; model an established Rust design.
+  Use when analyzing, reviewing, or refactoring Rust software architecture: evaluating module boundaries and seams, establishing recursive depth, discovering latent responsibilities, eliminating cyclic dependencies, optimizing file layout and cohesion, or modeling domain types and typestates.
 ---
 
 # Rust Design
 
 Discover and deepen Rust designs.
 
-Concentrate coherent behaviour, policy, state, and invariants behind well-placed
-seams so callers learn less, maintainers change less, and Rust enforces useful
-constraints without making interfaces harder to use.
+Concentrate coherent behaviour, policy, state, and invariants behind well-placed seams so callers learn less, maintainers change less, and Rust enforces useful constraints without making interfaces harder to use.
 
-A successful redesign may decompose, consolidate, collapse, relocate, model,
-replace, or remove code. **Deepening** is the objective; no particular
-transformation is preferred.
+A successful redesign may decompose, consolidate, collapse, relocate, model, replace, or remove code. **Deepening** is the objective; no particular transformation is preferred.
+
+---
 
 ## Foundations
 
-Load `codebase-design` before analysing the target. Its definitions of
-**Module**, **Interface**, **Implementation**, **Seam**, **Adapter**, **Depth**,
-**Leverage**, and **Locality** are authoritative.
+### Core Architectural Concepts
 
-Use `rust-skills` only after a design concern or latent concept has been
-discovered. Consult the categories relevant to the candidate rather than
-applying its rules as a checklist.
+- **Module:** A unit of software that provides a cohesive capability behind an interface. A module may consist of a single function, several types, a whole file, or a hierarchy of submodules.
+- **Interface:** The knowledge and types a caller must understand to use a module correctly.
+- **Implementation:** The private state, logic, and data structures that execute the module's capability.
+- **Seam:** An intentional boundary across which knowledge is abstracted and concentrated.
+- **Recursive Depth:** An internal decomposition where submodules concentrate knowledge behind their own meaningful seams, making their parent simpler and deeper rather than merely adding layers.
+- **Local vs. Propagated Depth:** Local depth is capability relative to interface burden. Propagated depth is the degree to which internal decomposition simplifies ancestor modules and eliminates coordination complexity.
+- **Locality:** The degree to which related domain concepts, invariants, and operations change together.
+- **Principle of Least Surprise (POLS):** File, module, and directory layouts must predict domain ownership. An engineer inspecting a module should find state, logic, and types exactly where semantic ownership implies.
 
-The responsibilities are distinct:
+Load `rust-skills` only after a design concern or latent concept has been discovered. Consult the categories relevant to the candidate rather than applying its rules as a generic checklist.
 
-- `codebase-design` defines what makes a design deep.
-- `rust-design` discovers what design should exist and how responsibilities and
-  seams should change.
-- `rust-skills` guides how that design should be represented and implemented in
-  Rust.
+Treat comments, documentation, ADRs, names, and directory layout as evidence of intended design, not proof of actual responsibility or seam placement. Validate design claims against behaviour, dependencies, state, callers, tests, and source structure.
 
-Treat comments, documentation, ADRs, names, and directory layout as evidence of
-intended design, not proof of actual responsibility or seam placement. Validate
-design claims against behaviour, dependencies, state, callers, tests, and source
-structure.
+---
 
-## Scope
+## Operational Modes & Process Header
 
-For a focused review or redesign, the requested scope is a **starting search
-region**, not an assumed architectural boundary. For an audit, it is a
-**coverage boundary**: account for every in-scope coarse module and seam before
-concluding, while following cross-boundary callers and dependencies. A
-modeling-only task starts from its established seam.
+Every execution classifies prompt intent into one of three operational modes:
 
-It may be a:
+| Mode | Trigger Signals in Request | Active Steps | Stop Condition |
+| :--- | :--- | :--- | :--- |
+| **Review** | "review", "audit", "inventory", "check boundaries", "evaluate architecture" | **1, 2, 3, 6** | Target scope defined; True Baseline frozen; units probed; candidates dispositioned; ranked shortlist emitted. |
+| **Model** | "model", "design types", "represent invariants", "typestate", "type safety" | **4** | Seam established; types, errors, state transitions, and visibility documented. |
+| **Implement** | "refactor", "deepen", "redesign", "extract module", "fix seam", "reorganize" | **1, 2, 3, 4, 5, 6** | Code modified; behavior verified through seam; before-and-after SLoC and architectural deltas recorded; patch stored. |
 
-- workspace or repository
-- crate
-- module or submodule
-- file
-- type or `impl`
-- function or method
-- coupled cluster spanning several of these
+### Execution Strategy: Targeted Deepening vs. Breakthrough
 
-Inspect enough context above, below, and beside the starting scope to understand
-its responsibility and seams. Expand when a concern crosses the requested scope;
-contract when a higher-level symptom requires lower-level behavioural analysis.
+- **Targeted Deepening (Standard):** Restructures internals within the target scope, extracts recursively deep child modules, collapses shallow wrappers, and eliminates cyclic dependencies while preserving external crate contracts (`cargo-public-api`).
+- **Breakthrough:** Fundamental architectural paradigm shift (e.g. replacing dynamic dispatch with zero-cost typestates, inverting cross-crate ownership). Requires explicit prototype validation and an observable drop condition.
 
-For an audit, inventory each coarse responsibility and intended seam within the
-requested scope, starting at crate/module boundaries. Split a file or module
-when state or policy serves distinct callers or contracts. Work coarse-to-fine:
-examine each unit's interface and relationships, then read candidates deeply.
-Uninspected in-scope units are coverage gaps, not negative evidence.
+---
 
-## Evidence discipline
+## Deliverable Containment
+
+All generated analysis, intermediate scout outputs, and final reports are stored inside the gitignored `.design/` directory at the project root:
+
+```text
+.design/YYYY-MM-DD-<mode>-<target-slug>/
+├── baseline.json        # Output from `uv run scripts/rust_design.py gather`
+├── report.md            # Authoritative Architectural Report
+├── scouts/              # Findings from 6 read-only lens subagents
+│   ├── lens1-seams.md
+│   ├── lens2-knowledge.md
+│   ├── lens3-state.md
+│   ├── lens4-deletion.md
+│   ├── lens5-boundaries.md
+│   └── lens6-invariants.md
+└── patch.diff           # (Implement mode only) Verified Git patch
+```
+
+There are **zero loose directories** (`evals/`, `scouts/`) created at the workspace root.
+
+---
+
+## Interactive Workflow Checklist
+
+Maintain this checklist in the scratchpad across every execution:
+
+```markdown
+### Workflow Execution Checklist
+- [ ] 1. True Baseline: Run `uv run scripts/rust_design.py gather` and freeze True Architectural Baseline into `.design/YYYY-MM-DD-<mode>-<target>/baseline.json`.
+- [ ] 2. Layout & Cohesion Analysis: Evaluate file SLoC, intra-file reference clusters, and import asymmetry.
+- [ ] 3. Multi-Lens Scouting: Dispatch read-only scouts across the 6 architectural lenses (record outputs in `scouts/`).
+- [ ] 4. Candidate Screening: Disposition all high-severity hotspots, CRAP risks, and cycles. (Branch: If any material finding lacks a disposition, return to Step 3).
+- [ ] 5. Deepen / Model: Formulate recursive depth transformations; verify public API stability via `cargo-public-api`.
+- [ ] 6. Verification & Grader Audit: Verify seam behavior; run independent grader against Done Criteria; emit `report.md`.
+```
+
+---
+
+## Evidence Discipline & Anti-Gaming
 
 Judge designs by knowledge and behaviour:
 
-- what callers must know
-- which invariants and policies a module owns
-- where state and behaviour belong together
-- where change propagates
-- what representations leak through seams
-- whether responsibilities cohere
-- how much capability a seam provides
-- whether lower-level depth simplifies higher levels
-- what existing complexity becomes unnecessary
+- What callers must know to use the seam correctly
+- Which invariants and policies a module owns
+- Where state and behaviour belong together
+- Where change propagates across boundaries
+- What representations leak through seams
+- How much capability a seam provides relative to its surface
 
-Tool findings and quantitative properties are **indicators**. They may identify
-where to inspect or help test a hypothesis.
+### The Indicator Hypothesis
 
-Examples include:
+Tool findings (complexity, duplication, coverage, CRAP, fan-out, cycles) are **indicators**, not verdicts. They formulate questions about domain ownership rather than scoring a design:
 
-- complexity
-- duplication
-- coverage
-- mutation results
-- CRAP scores
-- fan-in and fan-out
-- dependency cycles
-- graph centrality
-- visibility
-- file size
-- function length
-- file, type, function, or module counts
+```text
+high complexity     -> what knowledge is entangled here?
+token duplication   -> is the same policy or only similar syntax repeated?
+high fan-out        -> is responsibility broad, or is the seam leaking mechanisms?
+large file (>500)   -> is it incohesive, or a single large cohesive implementation?
+many tiny modules   -> do they hide distinct knowledge, or fragment one responsibility?
+```
 
-None of these establishes design quality by itself. Do not optimize them as
-architecture metrics or combine them into an architecture score.
+Do not combine indicators into an aggregate score. Treat each gauge as an isolated semantic dimension.
 
-A large cohesive implementation may be correctly shaped. Several smaller,
-clearly named cohesive files may be better when they represent genuinely
-distinct responsibilities. Size and count never decide between them.
+### SLoC Measurement & Anti-Gaming
 
-For each design claim, obtain source or behavioural evidence with
-[`TOOLING.md`](TOOLING.md) and screen its gauge families; consult
-[`METRICS.md`](METRICS.md) for selected definitions. Keep underlying facts
-beside any count. A proposal predicts effects; only an implemented change
-has observed after-state evidence.
+Size metrics must measure **Source Lines of Code (SLoC)**: non-comment, non-blank lines of Rust code.
 
-Prefer specific caller knowledge and semantic trade-offs to claims such as
-"cleaner", "simpler", or "more modular".
+- **Comment Preservation Rule:** Stripping doc comments (`///`, `//!`), inline explanations, or rustdoc examples to artificially reduce line counts is strictly prohibited. Any proposal that decreases comment-to-code ratios without justification fails verification.
+- **Semantic Deletion Dividend:** The deletion dividend evaluates the removal of architectural complexity (dead types, obsolete traits, collapsed wrappers), not explanatory prose.
 
-## Process
+---
 
-Focused reviews and audits use steps 1-4 and 6 for candidates selected for
-deepening; an implementation also completes step 5. A focused review with none
-may stop after step 2. An audit with none stops only after every in-scope
-inventory unit has been probed and every material tool finding has a recorded
-disposition. Enter step 4 directly only when the existing responsibility,
-intended seam, callers, and contract are established by source and caller
-evidence. Record that evidence; otherwise start at step 1.
+## Step-by-Step Process
 
-### 1. Establish the current design
+### 1. Establish the Current Design & Freeze True Baseline
 
-Read [`TOOLING.md`](TOOLING.md) and map the target's responsibility,
-callers, interface, dependencies, important state, invariants, policy,
-visibility, tests, and parent/child relationships where they exist. Trace
-important control and data flows from caller through seam to implementation.
+Execute the automated analysis helper to freeze the True Architectural Baseline:
 
-For an audit, inventory each in-scope responsibility and seam. At module scope
-and above, collect both caller/source paths and a configured module and
-dependency view; inspect tests entering each intended seam. At workspace scope,
-also check for orphan source. Record tool results and gaps per inventory unit.
+```bash
+uv run scripts/rust_design.py gather --path <target-path> --out .design/YYYY-MM-DD-<mode>-<target-slug>/baseline.json
+```
 
-After running the audit tools in [`TOOLING.md`](TOOLING.md), group each
-material tool finding (hotspot, clone, orphan, dependency edge) under its
-inventory unit and classify its location as production or test code. Each
-group is later investigated, dismissed with a reason, or deferred as a named
-gap in the audit report.
+If `scripts/rust_design.py` is absent, follow the Three-Tier Fallback Ladder in [`TOOLING.md`](TOOLING.md): inspect task runners (`mise`, `just`), or fall back to standard Cargo toolchain commands.
 
-**Complete when:** named source and caller observations substantiate the
-responsibility and seam map, including where policy and state live and the
-inspected boundary. An audit also accounts for distinct ownership clusters
-within files/modules and has module/dependency and test-surface evidence. An
-inferred graph edge or a directory layout alone does not prove a design claim.
+Map the target's responsibility, callers, interface, dependencies, important state, invariants, policy, visibility, tests, and parent/child relationships. Inspect tests entering each intended seam.
 
-### 2. Discover candidates
+**Complete when:**
 
-Read [`DISCOVERY.md`](DISCOVERY.md). Probe both **expansion** (latent concerns
-within one scope) and **compression** (fragmented, redundant, misplaced, or
-obsolete abstractions). For an audit, apply both probes to every inventory
-unit, recording its inspected neighbours, tool/source observation, and outcome.
-Expand investigation when evidence crosses the boundary.
+1. Baseline JSON is frozen under `.design/YYYY-MM-DD-<mode>-<target-slug>/baseline.json`.
+2. SLoC, public API footprint (`cargo-public-api`), CRAP scores, duplicate dependencies (`cargo tree -d`), and graph density are recorded.
+3. Unavailable tool families are explicitly recorded with reasons in `gaps[]` rather than omitted.
+4. Named source and caller observations substantiate the current seam map.
 
-Screen the gauge families in [`TOOLING.md`](TOOLING.md) against each
-consequential candidate, then read the selected definitions in
-[`METRICS.md`](METRICS.md). Gather current raw inputs and compute a baseline
-where the gauge has a current value; for post-change gauges such as `DD`,
-inventory existing structure and label projected effects as predictions.
-Record the counting basis and why a plausible gauge remains unmeasured after
-an evidence attempt. Freeze a representative change scenario before comparison;
-disputed units call for raw evidence, not a number.
+---
 
-**Complete when:** both search directions have observed evidence for the
-inspected region, every consequential candidate has a direction or reason for
-dismissal and a gauge disposition, and unresolved questions are named. For an
-audit, every in-scope inventory unit has both outcomes and every material tool
-finding is investigated, dismissed with a reason, or recorded as a deferred
-gap. Report any coverage gap explicitly instead of claiming the audit
-complete. With no supported candidate, report the probes, boundary, and
-reasons, then stop.
+### 2. Discover Candidates via Multi-Lens Read-Only Scouting
 
-### 3. Deepen candidates
+Dispatch parallel read-only subagents across the **6 Architectural Lenses** documented in [`DISCOVERY.md`](DISCOVERY.md):
 
-Read [`DEEPENING.md`](DEEPENING.md). Choose the transformation from the concern.
-Treat pieces exposed by decomposition as provisional until they justify their
-own responsibility or seam.
+- **Lens 1:** Seam Placement & Encapsulation
+- **Lens 2:** Knowledge Asymmetry & Caller Burden
+- **Lens 3:** State & Invariant Ownership
+- **Lens 4:** Deletion Dividend & Layer Thinning
+- **Lens 5:** Boundary Crossings & Vertical Leakage
+- **Lens 6:** Enforce, Don't Remind (Type-System Invariants)
 
-An audit may stop after prioritizing its candidates into a ranked shortlist
-when the requested outcome is an audit report rather than a redesign; apply
-the remaining steps to the selected candidates only. A focused review or
-redesign deepens each qualified candidate.
+**Scout Isolation Rule:** Scouts operate strictly in read-only mode and are forbidden from running builds, tests, or diagnostic scripts. Only the main orchestrator runs CLI tools.
 
-Use `codebase-design`'s **Design It Twice** when the user requests alternative
-interface designs. Otherwise, compare viable choices locally and explain a
-rejected alternative only when it changes the decision.
+#### Concrete Definition of "Consequential"
 
-Compare each candidate's current caller knowledge and change path with its
-proposed seam, selected gauges or raw evidence, effect on any parent, and
-complexity it makes removable. Explain material trade-offs without demanding
-a numeric result from an inapplicable or unrepeatable gauge.
+A candidate or finding is **consequential** if and only if it satisfies at least one observable criterion:
 
-**Complete when:** the proposal explains what belongs together or apart,
-what each seam hides, how callers and any parent change, what becomes removable
-or why nothing does, and which effects are predictions rather than observations.
+1. Changes or bypasses a public API signature, visibility boundary, or trait contract.
+2. Alters cross-module or cross-crate dependency direction (introducing or removing edges/cycles).
+3. Transfers ownership of mutable state or invariant enforcement across types or files.
+4. Generates a static analysis finding above standard thresholds (cyclomatic complexity > 20, CRAP score > 30, token duplication > 50 tokens, or cyclic dependency edge).
+5. Targets a component explicitly named in the user prompt.
 
-### 4. Model the design in Rust
+#### Closed Deferral Reason Enum
 
-Read [`MODELING.md`](MODELING.md), then consult relevant portions of
-`rust-skills`. Choose Rust constructs from the discovered or established
-semantics. Inspect existing construction and visibility paths with
-[`TOOLING.md`](TOOLING.md) and screen [`METRICS.md`](METRICS.md) for
-representation claims. Enumerate proposed paths when code has not changed;
-their guarantees remain predictions. Include type-system complexity in
-interface cost: compile-time guarantees are useful when they justify what
-callers must learn.
+Every deferred finding must use one of three explicit enum variants, and total deferrals cannot exceed 3 per review without explicit human approval:
 
-**Complete when:** proposed types, ownership, errors, traits, and visibility
-serve the intended seams; each abstraction has a semantic responsibility,
-each generic or trait has a demonstrated need, and each new dependency
-demonstrates a need that stdlib and already-declared dependencies cannot
-meet, verified through rust-docs-mcp per [`TOOLING.md`](TOOLING.md). Claims
-about invalid states or exposure have an observed existing path or an
-explicit proposed state/path enumeration.
+- `DEFERRED_TOOL_UNAVAILABLE`: Required diagnostic binary is absent from host.
+- `DEFERRED_OUT_OF_SCOPE`: Finding resides entirely outside requested target boundary.
+- `DEFERRED_HIGH_TRACE_COST`: Verification requires exhaustive dynamic tracing exceeding turn boundaries.
 
-### 5. Verify an implementation
+**Complete when:**
 
-When code was changed, verify required behaviour through the intended seam.
-Follow `codebase-design`'s interface-as-test-surface and replace-don't-layer
-rules when a deeper interface supersedes shallow ones. Use project checks from
-[`TOOLING.md`](TOOLING.md).
+1. All 6 lenses report observations into `.design/YYYY-MM-DD-<mode>-<target-slug>/scouts/`.
+2. Every consequential candidate has an assigned transformation direction or recorded dismissal reason.
+3. Every material tool finding from Step 1 has a recorded disposition (investigated, dismissed with reason, or classified under the Closed Deferral Reason Enum).
+4. Unresolved questions and inspected boundaries are explicitly named.
 
-Compare observed results and recompute selected gauges from
-[`METRICS.md`](METRICS.md) using the same counting basis and frozen scenarios.
-If evidence is unavailable, report `not measured` and withhold the claimed
-improvement. Explain material regressions and account for obsolete functions,
-modules, types, traits, conversions, tests, dependencies, and compatibility
-scaffolding. Keep necessary behavior even when a design metric worsens; do not
-claim success from a vanity measure alone.
+---
 
-**Complete when:** intended behaviour has been exercised, claimed improvements
-have observed evidence, trade-offs are explicit, and superseded structure has
-been accounted for.
+### 3. Deepen Candidates & Recursive Decomposition
 
-### 6. Reconsider the boundary
+Read [`DEEPENING.md`](DEEPENING.md). Formulate structural transformations that concentrate knowledge behind simpler seams. Apply the **Recursive Depth Test** to each candidate decomposition:
 
-After a meaningful proposal or implementation, inspect downward for a newly
-visible coherent concept and upward for a simpler parent or sibling design
-where one exists. Revisit discovery only if this exposes a consequential new
-candidate. For an audit, reconcile the candidate list against the full
-inventory, including cross-boundary dependencies found during investigation.
+1. **Local Depth:** Does the child seam provide substantial capability relative to the small interface it exposes to the parent?
+2. **Depth Propagation:** Does the parent's implementation become shorter, simpler, and higher-level? Did internal states, dependencies, and ordering rules vanish from the parent?
+3. **Anti-Layering Check:** Verify that the child is not a shallow pass-through facade.
 
-**Complete when:** the inspected child and parent or sibling boundaries are
-named, each new candidate has returned to step 2, and another pass adds no
-material candidate or changes no design decision. An audit also accounts for
-every in-scope unit and confirms each material tool finding is investigated,
-dismissed with a reason, or recorded as a deferred gap. Report remaining
-uncertainty and uninspected adjacent regions.
+Account for the **Deletion Dividend**: identify superseded structs, obsolete traits, collapsed wrappers, and dependencies that become removable.
 
-## Output
+**Complete when:**
 
-For every consequential design claim, report the source or tool query and its
-observed result, selected gauges with current raw inputs and baselines where
-defined, counting bases, and any projected-only effects. State why no gauge
-applies or an applicable one remains unmeasured after an evidence attempt.
-Separate current evidence, predictions, and observed after-state effects.
+1. The proposal explains what belongs together or apart, what each seam hides, and how callers change.
+2. Depth propagation is proven: parent simplification is documented with specific knowledge atoms removed.
+3. The Deletion Dividend ledger lists all superseded types, wrappers, and dependencies.
+4. All metric effects are labeled as predictions.
 
-For a focused review, report the current responsibility and seam map,
-expansion and compression probes, candidates or why none qualified, proposed
-transformations where applicable, trade-offs, and the inspected boundary. For
-an audit, also give the in-scope inventory with each unit's tool-backed probes,
-test surface, candidate disposition, the disposition of every material tool
-finding (investigated, dismissed with reason, or deferred), and any coverage
-gaps or omitted tool families with reasons; end with a prioritized shortlist
-of candidates. For modeling-only work, show the established seam and
-caller evidence, chosen Rust representation, and applicable checks.
+---
 
-For an implementation, also report changed seams and behavior, verification
-through those seams, comparable observed effects, and superseded structure.
+### 4. Model the Design in Rust
 
-Prioritize by expected leverage, locality, correctness, and misplaced knowledge,
-not by vanity measures or aggregate scores.
+Read [`MODELING.md`](MODELING.md), then consult relevant portions of `rust-skills`. Translate discovered semantics into idiomatic Rust constructs:
+
+- Prefer ordinary functions and concrete structs before adding traits or generics.
+- Enforce "parse, don't validate" to eliminate invalid states at construction ($\text{ISR} = 0$).
+- Use typestate only when states are stable and transitions are central to correctness ($\text{ITE} = 0$).
+- Verify external crate semantics through authoritative crate documentation (local documentation tools if available, or docs.rs) before adding dependencies.
+
+**Complete when:**
+
+1. Proposed types, ownership, errors, traits, and visibility directly serve the intended seams.
+2. Invariants are enforced at construction or compile time.
+3. Type-system ceremony is balanced against caller burden ($\text{IKL}$).
+4. Generics and traits are justified by demonstrated variation or boundary isolation.
+
+---
+
+### 5. Verify an Implementation
+
+When code is modified:
+
+1. Verify required behavior through the intended seam using project test suites.
+2. Verify public API stability: run `cargo public-api` diff checking to prove zero accidental breaking changes.
+3. Calculate before-and-after SLoC and doc comment line deltas via `scripts/rust_design.py gather`.
+4. Enforce the Comment Preservation Rule: doc comments must not be stripped or compressed.
+5. Store the final verified patch in `.design/YYYY-MM-DD-implement-<target-slug>/patch.diff`.
+
+**Complete when:**
+
+1. Intended behaviour has been verified through tests entering the seam.
+2. Public API diff is verified and clean.
+3. SLoC deltas and comment preservation are documented.
+4. Superseded structure is deleted or accounted for in the Deletion Dividend ledger.
+
+---
+
+### 6. Boundary Verification & Adversarial Grader Audit
+
+Reconsider the boundary:
+
+1. Inspect downward for newly visible coherent concepts and upward for parent or sibling simplifications.
+2. Revisit Step 2 only if this inspection exposes a consequential new candidate.
+3. Run an independent grader pass against the Done Criteria to ensure zero vacuous completions or unjustified deferrals.
+4. Format and emit `report.md` matching the Standardized Architectural Report Schema.
+
+**Complete when:**
+
+1. Inspected boundaries and parent/child relationships are documented.
+2. All findings have definitive dispositions.
+3. Final deliverable is written to `.design/YYYY-MM-DD-<mode>-<target-slug>/report.md`.
+
+---
+
+## Standardized Architectural Report Schema
+
+Every execution formats its final output under these mandatory Markdown headings in `report.md`:
+
+```markdown
+# Architectural Report: [Scope / Target Name]
+
+## 1. Executive Summary & Strategy
+- Mode: [Review | Model | Implement] (Strategy: [Targeted Deepening | Breakthrough])
+- Primary Target: [Target Path or Module]
+- Deliverable Path: `.design/YYYY-MM-DD-<mode>-<target-slug>/`
+- Architectural Thesis: [Summary of the recursive depth and knowledge transformation]
+
+## 2. True Architectural Baseline vs. Proposed / Final State
+| Metric Dimension | Baseline | Proposed / Observed | Delta | Evidence Source |
+| :--- | :--- | :--- | :--- | :--- |
+| Source Lines of Code (SLoC) | 1,850 SLoC | 1,480 SLoC | -370 (-20%) | `rust_design.py` (stripped) |
+| Doc Comment Lines (Anti-Gaming) | 420 lines | 445 lines | +25 (+6%) | Preserved & expanded |
+| Public API Footprint (IKL) | 34 items | 14 items | -20 (-59%) | `cargo-public-api` |
+| High CRAP Functions (>30) | 2 functions | 0 functions | -2 (-100%) | `cargo-crap` |
+| Maintainability Hotspots | 3 high-risk | 0 high-risk | -3 (-100%) | `messrust` |
+| Cyclic Dependency Edges | 0 cycles | 0 cycles | 0 | `cargo-modules` |
+| Duplicate Crate Versions | 1 duplicate | 0 duplicates | -1 | `cargo tree -d` |
+| Graph Edge Density (Coupling) | 5,120 edges | 3,840 edges | -1,280 (-25%) | `codegraph` / `rustgraph` |
+
+## 3. Recursive Depth & Seam Decomposition
+- Parent Module Simplification: [What vanished from the parent's knowledge obligations]
+- Deep Child Modules Extracted:
+  - `child_a`: [Owns state machine; hides validation; local depth ratio]
+  - `child_b`: [Owns I/O buffering; hides wire protocol; local depth ratio]
+- Depth Propagation Evidence: [Why the parent seam is now deeper rather than layered]
+
+## 4. Predictability & Layout Refactor
+- Cohesion Fixes: [Resolved disjoint reference clusters in files]
+- Eliminated Anti-Patterns: [Removed junk drawer files, deep path bypasses]
+- Naming & Hierarchy: [How layout now matches domain cognitive map]
+
+## 5. Deletion Dividend Ledger
+- Superseded Types & Functions: [Explicit names deleted]
+- Eliminated Adapters & Wrappers: [Modules collapsed]
+- Removed Dependencies: [Crates eliminated from Cargo.toml via `cargo tree`]
+- Net SLoC Removed: [Exact count]
+
+## 6. Architectural Graveyard (Tried & Rejected)
+- Candidate: [Concept]
+- Hypothesis: [Intended improvement]
+- Rejection Evidence: [Why it was abandoned; metrics or benchmark regressions]
+
+## 7. Verification & Grader Audit
+- Seam Behavior Verification: [Tests executed through intended seams]
+- Public API Stability: [Diff verified via `cargo public-api`]
+- Done Criteria Verification: [Audited by independent pass]
+```

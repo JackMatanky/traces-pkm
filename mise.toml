@@ -48,6 +48,7 @@ cargo-deny = "latest"
 # -- Docs & ADRs --
 "cargo:https://github.com/snowmead/rust-docs-mcp" = { version = "branch:main", crate = "rust-docs-mcp" }
 "cargo:adrs" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly-2026-10-01" } }
+"cargo:cargo-public-api" = "latest"
 
 [settings]
 # `lockfile` pins resolved tool versions into `mise.lock` so installs are

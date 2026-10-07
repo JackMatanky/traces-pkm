@@ -114,6 +114,14 @@ version = "0.27.0"
 backend = "cargo:cargo-modules"
 specifiers = ["latest"]
 
+[[tools."cargo:cargo-public-api"]]
+version = "0.52.0"
+backend = "cargo:cargo-public-api"
+specifiers = [
+    "0.52.0",
+    "latest",
+]
+
 [[tools."cargo:cargo-shear"]]
 version = "1.14.0"
 backend = "cargo:cargo-shear"

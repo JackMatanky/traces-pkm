@@ -1,270 +1,151 @@
 # Discovery
 
-Find design candidates before choosing abstractions.
+## Contents
 
-Discovery asks where knowledge is misplaced, fragmented, duplicated, implicit,
-or unnecessarily exposed.
+1. [Overview & Scope Traversal](#overview--scope-traversal)
+2. [Multi-Lens Read-Only Scouting](#multi-lens-read-only-scouting)
+3. [Predictability, Cohesion, & Layout Indicators](#predictability-cohesion--layout-indicators)
+4. [Search Directions: Expansion & Compression](#search-directions-expansion--compression)
+5. [Latent Concepts & Misplaced Seams](#latent-concepts--misplaced-seams)
+6. [Removable Debt & The Deletion Dividend](#removable-debt--the-deletion-dividend)
+7. [Depth Propagation](#depth-propagation)
+8. [The Indicator Hypothesis](#the-indicator-hypothesis)
+9. [Candidate Output Expectations](#candidate-output-expectations)
 
-Work at the scale of the requested scope, then traverse upward or downward as
-the evidence requires.
+---
 
-## Traverse scales deliberately
+## Overview & Scope Traversal
 
-### Workspace or repository
+Find design candidates before choosing abstractions. Discovery asks where knowledge is misplaced, fragmented, duplicated, implicit, or unnecessarily exposed.
 
-For an audit, inventory every in-scope coarse responsibility or seam; start
-at crate/module boundaries and split distinct ownership clusters. Use configured
-module tree/dependency views and caller/test entry paths from
-[`TOOLING.md`](TOOLING.md) to map:
+Work at the scale of the requested scope, traversing upward or downward as evidence demands. Probe each inventory unit before concluding; read candidate implementations deeply rather than treating tool graphs or AST summaries as the design.
 
-- crates and dependency direction
-- major external and internal seams
-- important shared domain types
-- cross-crate call and data flows
-- central or highly connected areas
-- cycles and unexpected dependencies
-- repeated orchestration or policy
-- major test surfaces
-- broad structural hotspots
+---
 
-Probe each inventory unit before concluding; read candidate implementations
-deeply rather than treating a tool graph as the design.
+## Multi-Lens Read-Only Scouting
 
-### Crate or module
+During architectural discovery, the orchestrator dispatches read-only investigations across six distinct lenses.
 
-Inspect:
+### Strict Scout Isolation Rules
 
-- the interface presented upward
-- child modules and sibling relationships
-- imports and dependency direction
-- visibility and re-exports
-- state and invariant ownership
-- shared domain vocabulary
-- callers bypassing the intended seam
-- tests and their entry points
-- policy distributed across children or callers
+Scouts inspect source code, documentation, and AST facts. They are **forbidden** from running builds, tests, or diagnostic scripts. Only the main orchestrator runs CLI tools. Each lens reports at most 4 ranked candidates citing exact `file:line` locations, estimated SLoC deletion dividend, and recursive depth impact.
 
-Descend where relationships need lower-level explanation. For an audit, keep
-distinct state or policy clusters with different callers or contracts as
-separate inventory entries, even when they share a file or module.
+- **Lens 1: Seam Placement & Encapsulation**
+  Callers bypassing public abstractions, direct field manipulation, leaked storage/serialization types, and improper visibility declarations.
+- **Lens 2: Knowledge Asymmetry & Caller Burden**
+  Excessive caller coordination, fixed invocation sequences, orchestration logic scattered across call sites, and shallow wrapper layers.
+- **Lens 3: State & Invariant Ownership**
+  Invariants split across multiple types, mutable state disconnected from enforcing logic, and invalid finite states representable in structs.
+- **Lens 4: Deletion Dividend & Layer Thinning**
+  Forwarding wrappers, redundant facade traits, one-to-one adapters, dead type conversions, and compatibility scaffolding that can be deleted.
+- **Lens 5: Boundary Crossings & Vertical Leakage**
+  Internal child error types exposed in ancestor APIs, low-level configuration bubbling upward, and circular imports between sibling modules.
+- **Lens 6: Enforce, Don't Remind (Type-System Invariants)**
+  Semantic rules currently enforced only via doc comments, runtime panics, or boolean flags that can be enforced at compile time via typestate.
 
-### File, type, or `impl`
+---
 
-Determine its architectural role rather than assuming the file is one Module.
+## Predictability, Cohesion, & Layout Indicators
 
-Inspect:
+File and directory layouts represent the cognitive map of a Rust codebase. A design must adhere to the **Principle of Least Surprise (POLS)**: an engineer inspecting a module should find state, logic, and types exactly where their semantic ownership implies.
 
-- state owned or borrowed
-- invariants maintained
-- operations that change together
-- dependencies used by subsets of behaviour
-- vocabulary used by different regions
-- conversions into and out of represented state
-- callers that know representation details
-- responsibilities distributed into nearby files
+1. **SLoC Concentration (>500 SLoC):** A single `.rs` file exceeding 500 SLoC is a primary indicator of mixed lifecycles, entangled invariants, or multiple independent modules trapped in one file.
+2. **Disjoint Reference Clusters (Intra-File Incohesion):** In knowledge graph analysis (via `codegraph` or `rustgraph`), types and functions within the same file that have zero references to each other, but heavy references to distinct external modules, represent misplaced responsibilities grouped by accident.
+3. **Feature Envy (Cross-Boundary Attraction):** A type or function in `module_a.rs` that references fields, methods, or errors in `module_b.rs` more frequently than its own file belongs inside `module_b.rs`.
+4. **Asymmetric / Sprawling Import Footprint:** A file importing numerous distinct sibling modules to perform a single operation indicates an unencapsulated coordinator rather than a cohesive owner.
+5. **Bypassed Seams (Deep Path Traversal):** Callers reaching deep into child submodules (e.g. `use crate::pipeline::stage::internal::parse_header;`) rather than using the parent interface indicate a misplaced or ineffective seam.
+6. **"Junk Drawer" Anti-Patterns:** Files named `utils.rs`, `helpers.rs`, `common.rs`, or `misc.rs` violate predictability. Functions in utility files must be relocated to the domain type they operate upon or encapsulated behind an intentional seam.
 
-Several files may implement one Module. One file may contain several candidate
-Modules.
+---
 
-### Function or method
-
-Inspect the owner and callers before extracting anything.
-
-Look for:
-
-- mixed abstraction levels
-- independent state or invariant clusters
-- policy mixed with mechanism
-- orchestration duplicated elsewhere
-- conditionals encoding states or transitions
-- primitives carrying unstated domain semantics
-- results that require callers to finish the same operation manually
-- dependencies relevant to only part of the behaviour
-
-Function length can direct attention but cannot justify decomposition.
-
-## Search both directions
+## Search Directions: Expansion & Compression
 
 Deepening candidates appear through **expansion** and **compression**.
 
-### Expansion candidates
+### Expansion Candidates
 
 One scope may contain multiple coherent concerns whose structure is hidden.
+Signals include: independent invariants, distinct state or lifecycle, distinct domain vocabulary, policy mixed with low-level mechanism, unrelated dependency subsets, hidden state transitions.
 
-Evidence includes:
-
-- independent invariants
-- distinct state or lifecycle
-- distinct domain vocabulary
-- policy mixed with low-level mechanism
-- unrelated dependency subsets
-- hidden state transitions
-- one interface exposing unrelated capabilities
-- different behaviours changing for different reasons
-
-These may justify provisional decomposition to expose what is actually present.
-
-The result of decomposition is evidence, not automatically a permanent set of
-functions or modules.
-
-### Compression candidates
+### Compression Candidates
 
 Several pieces may collectively represent too little.
+Signals include: forwarding functions, one-to-one delegation chains, pass-through modules, wrappers exposing nearly everything they hide, helpers whose callers must know execution order, duplicated orchestration, distributed policy.
+
+---
+
+## Latent Concepts & Misplaced Seams
+
+### Find Latent Concepts
+
+Look for concepts already implemented implicitly:
+
+- Primitives carrying unstated domain semantics
+- Repeated validation of the same value
+- Boolean or `Option` combinations representing closed states
+- Invalid states representable in ordinary data
+- Data and operations jointly enforcing an unstated invariant
+
+Record the semantic concept and caller burden first before selecting a Rust representation.
+
+### Find Misplaced Seams
+
+Inspect where knowledge crosses architectural levels:
+
+- Callers constructing internal representations
+- Parents coordinating child ordering requirements
+- Storage, serialization, hashing, or protocol types escaping upward
+- Child-specific failures leaking through unrelated parent interfaces
+- Callers bypassing an intended seam through descendant imports
+
+---
+
+## Removable Debt & The Deletion Dividend
+
+Every redesign search includes subtraction. Removal is a primary candidate transformation, not deferred cleanup.
 
 Look for:
 
-- forwarding functions
-- one-to-one delegation chains
-- pass-through modules
-- wrappers that expose nearly everything they hide
-- helpers whose callers must know execution order
-- multiple types representing temporary fragments of one operation
-- duplicated orchestration
-- distributed policy
-- sibling modules that constantly change together
-- single-purpose abstractions without meaningful leverage
-- unnecessary abstraction layers left by previous refactors
+- Shallow abstractions superseded by another owner
+- Obsolete compatibility scaffolding
+- Parallel representations of the same concept
+- Production seams introduced only for tests
+- Traits or generic parameters without meaningful variation
+- Conversions whose source or destination can disappear
 
-These may justify consolidation, collapse, relocation, replacement, or removal.
+---
 
-## Find latent concepts
+## Depth Propagation
 
-Look for concepts already implemented implicitly.
-
-Signals include:
-
-- primitives with distinct semantics
-- repeated validation of the same value
-- boolean or `Option` combinations representing closed states
-- invalid states representable in ordinary data
-- repeated state-transition conditionals
-- operations acting on the same conceptual subset of state
-- repeated conversions around one semantic boundary
-- data and operations jointly enforcing one invariant
-- a vocabulary that appears repeatedly but has no explicit owner
-
-Do not choose the Rust representation yet.
-
-Record the semantics first.
-
-## Find misplaced seams
-
-Inspect where knowledge crosses architectural levels.
-
-Look for:
-
-- callers constructing internal representations
-- parents coordinating child ordering requirements
-- storage, serialization, hashing, protocol, or framework types escaping upward
-- child-specific failures leaking through unrelated parent interfaces
-- callers bypassing an intended seam through descendant imports
-- broad visibility compensating for unclear ownership
-- tests manipulating internals across the intended seam
-- sibling modules coupled through implementation state
-- abstractions whose primary purpose is forwarding dependencies
-
-Ask whether the seam is missing, misplaced, too wide, or unnecessary.
-
-## Find removable debt
-
-Every redesign search should include subtraction.
-
-Look for:
-
-- shallow abstractions superseded by another owner
-- obsolete compatibility scaffolding
-- parallel representations of the same concept
-- production seams introduced only for tests
-- traits or generic parameters without meaningful variation
-- conversions whose source or destination can disappear
-- wrappers preserved after earlier redesigns
-- apparently unreachable or bypassed code
-- dependencies used only by obsolete structure
-- reimplemented stdlib or already-declared dependencies
-- duplicated configuration or policy
-
-Confirm reachability across `cfg` and feature combinations, macro-generated uses,
-and public downstream callers before proposing removal. A direct descendant import
-may be legitimate when it is itself an intended entry point.
-
-Removal is a candidate transformation, not deferred cleanup.
-
-## Inspect depth propagation
-
-For every promising lower-level candidate, inspect its parent.
-
-Ask:
+For every promising lower-level candidate, inspect its parent:
 
 - Which concepts would the parent stop understanding?
 - Which invariants would move behind the child seam?
 - Which dependencies would disappear from the parent?
 - Would the parent operate at a more coherent abstraction level?
 - Would changes remain below the parent seam?
-- Could several parent operations reuse one implementation of policy?
 
-A locally tidy abstraction with no useful effect on its callers is weak evidence
-for another seam.
+A locally tidy abstraction with no simplifying effect on its callers is weak evidence for a seam.
 
-## Use indicators correctly
+---
 
-Indicators choose **where to investigate** or help test a design hypothesis.
+## The Indicator Hypothesis
 
-Useful indicators include:
-
-- complexity
-- duplication
-- coverage
-- mutation escapes
-- CRAP
-- fan-in and fan-out
-- dependency cycles
-- visibility
-- graph centrality
-- file and function size
-- counts of modules, files, types, or functions
-
-No threshold determines a design transformation.
-
-Use an indicator to ask a question:
+Diagnostic indicators (complexity, CRAP, duplication, fan-out, file size) do not establish design verdicts or scores. Instead, formulate questions about domain ownership:
 
 ```text
-high complexity
-→ what knowledge is entangled here?
-
-duplication
-→ is the same policy or only similar syntax repeated?
-
-high fan-out
-→ is responsibility broad, or is the seam leaking mechanisms?
-
-large file
-→ is it incohesive, or merely a large cohesive implementation?
-
-many tiny modules
-→ do they hide distinct knowledge, or fragment one responsibility?
+high complexity     -> what knowledge is entangled here?
+token duplication   -> is the same policy or only similar syntax repeated?
+high fan-out        -> is responsibility broad, or is the seam leaking mechanisms?
+large file (>500)   -> is it incohesive, or a single large cohesive implementation?
+many tiny modules   -> do they hide distinct knowledge, or fragment one responsibility?
 ```
 
-## Evidence for a candidate
+---
 
-Record the concrete caller knowledge, leaked representation, misplaced policy,
-or change path behind the concern. Screen the gauge families in
-[`TOOLING.md`](TOOLING.md) for each consequential candidate and use
-[`METRICS.md`](METRICS.md) for selected definitions. Keep raw observations
-beside any count. Freeze a representative change scenario before comparing
-alternatives; preserve its basis if implementation is later measured.
+## Candidate Output Expectations
 
-## Search and candidate record
-
-For each audit inventory unit, or the inspected region of a focused review,
-record adjacent callers or owners and both expansion and compression/removal
-probes with their tool/source, observation, and outcome. Account for units with
-no candidate as well as those with one; list any uninspected unit as a coverage
-gap rather than a negative result. Group material tool findings (hotspots,
-clones, orphans, suspicious dependency edges) under their inventory unit, and
-mark each investigated, dismissed with a reason, or deferred as a named gap;
-a production/test location classification accompanies duplication findings.
-
-For each consequential candidate, record:
+For each candidate, record:
 
 ```text
 current seam and caller knowledge at issue:
@@ -275,18 +156,4 @@ plausible inapplicable or not-measured gauges and reasons:
 uncertainty:
 ```
 
-A review records expected effects as predictions. An implementation may later
-add observations using the same comparison basis. Describe the design problem
-before selecting a Rust pattern.
-
-## Completion criterion
-
-Discovery is complete for a focused review when consequential candidates
-found in the inspected region are carried forward with evidence or dismissed
-with a reason, both probes have observed results, and adjacent callers or
-owners checked are named. For an audit, those conditions apply to every
-in-scope inventory unit and every material tool finding carries its
-disposition. Expand investigation when evidence crosses the boundary; record
-unresolved questions and uninspected adjacent regions.
-
-The number of findings is not a success measure.
+A review records expected effects as predictions. An implementation later adds observations using the same comparison basis.

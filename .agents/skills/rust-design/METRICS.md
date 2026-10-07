@@ -1,25 +1,33 @@
 # Metrics
 
+## Contents
+
+1. [Overview & Measurement Discipline](#overview--measurement-discipline)
+2. [Claim Routing & Gauge Selection](#claim-routing--gauge-selection)
+3. [Knowledge Atoms & Interface Knowledge Load (`IKL`)](#knowledge-atoms--interface-knowledge-load-ikl)
+4. [Knowledge Compression (`KC`) & Parent Simplification (`PS`)](#knowledge-compression-kc--parent-simplification-ps)
+5. [Cross-Seam Leakage (`L`) & Seam Bypass Ratio (`BR`)](#cross-seam-leakage-l--seam-bypass-ratio-br)
+6. [Change Propagation Distance (`PD`) & Deletion Dividend (`DD`)](#change-propagation-distance-pd--deletion-dividend-dd)
+7. [Source Lines of Code (`SLoC`) & Anti-Gaming Guardrails](#source-lines-of-code-sloc--anti-gaming-guardrails)
+8. [Risk & Structural Gauges: CRAP, Public API Footprint, Recursive Depth](#risk--structural-gauges-crap-public-api-footprint-recursive-depth)
+9. [Typestate, States, & Transitions: `ISR` & `ITE`](#typestate-states--transitions-isr--ite)
+10. [Test Reachability (`TR`) & Mutation Acceptance (`MA`)](#test-reachability-tr--mutation-acceptance-ma)
+11. [Isolated Semantic Gauges & Anti-Gaming](#isolated-semantic-gauges--anti-gaming)
+
+---
+
+## Overview & Measurement Discipline
+
 Use architectural metrics to make comparisons explicit and repeatable.
+Metrics support design reasoning; they do not define good design. Prefer before/after comparisons over universal targets.
 
-Metrics support design reasoning; they do not define good design.
+### Isolated Semantic Gauges
 
-Prefer before/after comparisons over universal targets. Use a metric only when
-its semantics apply to the candidate.
+Never combine metrics into an aggregate score. Each gauge measures an isolated semantic dimension. When comparing designs, evaluate each gauge independently.
 
-Never combine these metrics into an aggregate architecture score.
+### Measurement Record
 
-## Measurement discipline
-
-For each consequential design claim, screen the gauge families against its
-semantics, select applicable gauges, and gather current raw inputs from
-available source or tool evidence. Calculate the current baseline where the
-gauge defines one; for post-change measures such as `DD`, inventory existing
-candidate structure and label the projected dividend as a prediction. If no
-gauge applies, state why. Keep caller facts, paths, or state sets and counting
-basis beside each count. If evidence cannot be obtained or its cost outweighs
-the decision, record the attempt or reason before marking `not measured`.
-When units are disputed, compare raw evidence instead of inventing a number.
+For each consequential design claim, screen the gauge families against its semantics, select applicable gauges, and gather current raw inputs from available source or tool evidence:
 
 ```text
 responsibility and intended seam:
@@ -31,23 +39,26 @@ observed effect (only after implementation):
 trade-offs and uncertainty:
 ```
 
-Freeze representative scenarios before comparing alternatives. A review may
-estimate proposed effects but labels them predictions; only an implemented
-redesign yields observed after-state values. For an implementation, recompute
-applicable gauges for equivalent callers under the same counting basis and
-scenario. Account for new or removed callers separately, then explain material
-regressions.
+Freeze representative scenarios before comparing alternatives. Use `N/A` for an inapplicable gauge or a zero denominator, `not measured (tool unavailable)` for missing evidence, and `0` only for an observed zero.
 
-Use `N/A` for an inapplicable gauge or a zero denominator, `not measured` for
-missing evidence, and `0` only for an observed zero. Counts refer to semantic or
-architectural units unless specified otherwise. Source lines, file counts,
-module counts, function counts, and similar size properties are indicators, not
-architectural equations.
+---
 
-## Knowledge atoms
+## Claim Routing & Gauge Selection
 
-A **knowledge atom** is one independently necessary fact a legitimate caller
-must know to use a seam correctly.
+| Claim Type | Applicable Gauges | Primary Evidence Source |
+|---|---|---|
+| Seam width & caller burden | `IKL`, `KC`, `PS`, `L` | Public API items, `cargo-public-api`, LSP references |
+| Boundary integrity & encapsulation | `BR`, `VE`, `GPD` | Import paths, `cargo-modules dependencies`, re-exports |
+| Impact of changes across seams | `PD` | Frozen change scenario evaluated against seam boundaries |
+| Structure made obsolete & simplified | `DD`, `SLoC` delta | Removed types, collapsed modules, `cargo tree -d` |
+| Risk & test fragility | `CRAP`, `TR`, `MA` | `cargo-crap`, test coverage, mutation runs |
+| Invariant & state representation | `ISR`, `ITE` | Typestates, enum state machines, compile-time invariants |
+
+---
+
+## Knowledge Atoms & Interface Knowledge Load (`IKL`)
+
+A **knowledge atom** is one independently necessary fact a legitimate caller must know to use a seam correctly.
 
 Classify atoms as:
 
@@ -56,440 +67,156 @@ Classify atoms as:
 - `order`: ordering, lifecycle, or transition requirements
 - `error`: failure distinctions on which the caller must act
 - `config`: configuration or environmental requirements
-- `ownership`: ownership, borrowing, lifetime, concurrency, or aliasing
-  constraints
+- `ownership`: ownership, borrowing, lifetime, concurrency, or aliasing constraints
 - `performance`: performance characteristics required for correct use
 - `leak`: lower-level implementation concepts exposed across the seam
 
-Two facts are separate atoms when a caller can satisfy one while violating or
-remaining ignorant of the other.
+### `IKL` Vector
 
-Assign each atom to one category and count it once per seam, not once per
-caller. Classify an exposed implementation representation as `leak` rather than
-also counting it as `type`; retain its name in the atom list.
-
-When Rust makes an invariant impossible to violate, stop counting that invariant
-atom. The caller-visible type or state concept may still count as a `type` atom
-if callers must understand it.
-
-Keep the atom list beside the count so disagreements remain inspectable.
-
-## Interface Knowledge Load: `IKL`
-
-For seam `S`, record the knowledge vector:
+For seam `S`, record the vector:
 
 ```text
-IKL(S) =
-  (K_type,
-   K_invariant,
-   K_order,
-   K_error,
-   K_config,
-   K_ownership,
-   K_performance,
-   K_leak)
+IKL(S) = (K_type, K_invariant, K_order, K_error, K_config, K_ownership, K_performance, K_leak)
 ```
 
-The total load is:
+Preserve the vector when comparing designs. Equal totals can represent very different interfaces.
+
+---
+
+## Knowledge Compression (`KC`) & Parent Simplification (`PS`)
+
+For child `C` and parent `P`, isolate the knowledge in `P` concerning the responsibility being moved behind `C`.
 
 ```text
-|IKL(S)| =
-  K_type
-+ K_invariant
-+ K_order
-+ K_error
-+ K_config
-+ K_ownership
-+ K_performance
-+ K_leak
+KC(C -> P) = 1 - K_after / K_before
 ```
 
-Preserve the vector when comparing designs. Equal totals can represent very
-different interfaces.
+- `KC > 0`: parent knowledge decreased
+- `KC = 0`: no knowledge compression
+- `KC < 0`: parent burden increased
 
-Prefer lower caller knowledge for equivalent capability, while retaining
-semantic distinctions callers genuinely need.
-
-## Knowledge Compression: `KC`
-
-For child `C` and parent `P`, isolate the knowledge in `P` concerning the
-responsibility being moved behind `C`.
+### Parent Simplification (`PS`)
 
 ```text
-KC(C → P) = 1 − K_after / K_before
+PS(C -> P) = K_before - K_after
 ```
 
-where:
+`PS` is a signed net change: positive means fewer parent knowledge atoms.
 
-- `K_before` = relevant parent knowledge before the child seam
-- `K_after` = the same category of parent knowledge after it
+---
 
-Interpretation:
+## Cross-Seam Leakage (`L`) & Seam Bypass Ratio (`BR`)
+
+### Cross-Seam Leakage (`L`)
+
+`L(S)` is the number of lower-level concepts unnecessarily exposed across `S`: storage types, serialization representations, descendant state types, child-specific errors.
 
 ```text
-KC > 0   parent knowledge decreased
-KC = 0   no knowledge compression
-KC < 0   parent burden increased
+Delta L = L_after - L_before
 ```
 
-Use `KC` only when `K_before > 0` and both counts cover the same responsibility.
-When `K_before = 0`, `KC` is `N/A`; the absolute `PS` below and the underlying
-parent-knowledge list still show any new burden.
+### Seam Bypass Ratio (`BR`)
 
-### Parent Simplification: `PS`
+For intended seam `S`, count external caller-to-item access paths:
 
-Keep the absolute reduction as well:
-
-```text
-PS(C → P) = K_before − K_after
-```
-
-`KC` captures proportional compression.
-
-`PS` is a signed net change: positive means fewer parent knowledge atoms, zero
-means unchanged burden, and negative means new parent burden. Preserve the
-before/after lists even if the counts cancel.
-
-## Cross-Seam Leakage: `L`
-
-For seam `S`:
-
-```text
-L(S) =
-  number of lower-level concepts unnecessarily exposed across S
-```
-
-Examples include:
-
-- storage types
-- serialization representations
-- hashing details
-- descendant state types
-- child-specific errors
-- implementation ordering rules
-- lower-level configuration
-
-Record the leaked concepts beside the count.
-
-Compare:
-
-```text
-ΔL = L_after − L_before
-```
-
-Interpretation:
-
-```text
-ΔL < 0   leakage decreased
-ΔL = 0   no change
-ΔL > 0   leakage increased
-```
-
-Do not count a concept as leakage when it is legitimately part of the seam's
-semantics.
-
-## Seam Bypass Ratio: `BR`
-
-For intended seam `S`, freeze its external caller cohort, entry points, module
-boundary, and edge unit before measurement. Count each distinct external
-caller-to-item access path once, recording resolved target and any re-export. An
-access through an intended re-export is not a bypass simply because its target
-lives in a descendant. Define:
-
-- `E_bypass`: recorded paths entering descendants without an intended entry
-  point
+- `E_bypass`: recorded paths entering descendants without an intended entry point
 - `E_in`: all recorded paths entering the subtree, including intended paths
-
-Use the same edge unit and equivalent caller cohort after redesign; account for
-new or removed callers separately. When `E_in > 0`:
 
 ```text
 BR(S) = E_bypass / E_in
 ```
 
-Interpretation:
+`BR = 0` means all external access respects the intended seam.
 
-```text
-BR = 0   all external access respects the intended seam
-BR > 0   some external access bypasses it
-```
+---
 
-Define the intended entry points before calculating `BR`. Do not redraw the seam
-after seeing the result.
+## Change Propagation Distance (`PD`) & Deletion Dividend (`DD`)
 
-When `E_in = 0`, `BR` is `N/A`; report that the seam has no incoming external
-edges instead of treating it as a perfect boundary.
-
-A bypass may be legitimate; if so, the intended seam description was incomplete
-or the relationship deserves its own seam.
-
-## Change Propagation Distance: `PD`
+### Change Propagation Distance (`PD`)
 
 For representative change scenario `q`:
 
 ```text
-PD(q) =
-  number of intended architectural seams crossed
-  by the minimal correct change
+PD(q) = number of intended architectural seams crossed by the minimal correct change
 ```
 
-Freeze `q` before comparing designs.
+Freeze `q` before comparing designs. Count architectural seams crossed, not files touched.
 
-Possible scenarios include:
+### Deletion Dividend (`DD`)
 
-- replace a hash implementation
-- change freshness semantics
-- change persistence representation
-- add a domain property
-- add a query capability
-- change serialization format
-
-Lower `PD` is generally preferable for implementation-level changes.
-
-A semantic change that legitimately changes a higher-level contract is expected
-to cross that contract.
-
-Do not count files touched. Count architectural seams crossed.
-
-## Deletion Dividend: `DD`
-
-A redesign should account for structure made obsolete by its new ownership.
-
-Record the vector:
+A redesign must account for structure made obsolete by its new ownership:
 
 ```text
 DD = (S, R, C, D)
 ```
 
-where:
-
 - `S` = superseded seams or abstraction layers
 - `R` = redundant semantic representations
 - `C` = duplicated coordination or policy sites
-- `D` = dependencies required only by superseded design
+- `D` = dependencies required only by superseded design (`cargo tree`)
 
-Keep `DD` as a vector; do not sum or weight its dimensions. For a proposal,
-record anticipated deletions as predictions. For implemented code, count only
-removed or actually superseded structure, not planned future cleanup.
+Keep `DD` as a vector; do not sum or weight dimensions into a single score.
 
-A zero deletion dividend does not invalidate genuinely new capability, but a
-deepening redesign that only adds structure deserves scrutiny.
+---
 
-## Seam Variation: `V`
+## Source Lines of Code (`SLoC`) & Anti-Gaming Guardrails
 
-For seam `S`:
+Size metrics must measure **Source Lines of Code (SLoC)**: non-comment, non-blank lines of Rust source code.
 
-```text
-V(S) = number of meaningful adapters satisfying the seam
-```
+### Anti-Gaming Guardrails
 
-Interpret this using `codebase-design`'s seam discipline.
+- **Comment Preservation Rule:** Deleting, stripping, or compacting doc comments (`///`, `//!`), inline explanations, or rustdoc examples to artificially reduce line counts is strictly prohibited. Any proposal that decreases comment-to-code ratios without justification fails verification.
+- **Semantic Deletion Dividend:** The deletion dividend evaluates the removal of architectural complexity (dead types, obsolete traits, collapsed wrappers), not explanatory prose.
 
-One implementation may indicate hypothetical variation. Multiple meaningful
-implementations demonstrate actual variation.
+---
 
-Do not create artificial adapters to increase `V`.
+## Risk & Structural Gauges: CRAP, Public API Footprint, Recursive Depth
 
-A test adapter counts only when the underlying dependency category justifies a
-real substitutable seam.
+### Change Risk Anti-Pattern (`CRAP`)
 
-## Visibility Reachability: `VE`
+Measures the risk of changing a function by combining cyclomatic complexity with test coverage:
+$$\text{CRAP}(f) = \text{comp}(f)^2 \cdot (1 - \text{cov}(f))^3 + \text{comp}(f)$$
 
-For Rust item `x`, compare legitimate callers with actual reachability through
-declared visibility and re-exports in a named workspace and relevant
-`cfg`/feature configuration. Include `pub(in crate::ancestor)`, private
-descendants, `pub(super)`, and `pub(crate)`. A `pub` item re-exported from a
-private module can still be publicly reachable; restricted items cannot be
-publicly re-exported simply to widen visibility.
+- Functions with $\text{CRAP} > 30$ are considered high-risk candidates requiring seam tests before refactoring. Gathered via `cargo-crap`.
 
-`VE(x)` is the set of unnecessarily reachable modules within that bounded scope,
-plus an external-public-exposure category when the item is reachable outside the
-workspace. Record paths and callers, rather than a numeric rank. If legitimate
-callers cannot reach the item, record a separate interface defect. An intended
-public contract can justify exposure beyond known current call sites.
+### Public API Footprint (`IKL_pub`)
 
-## Generic Propagation Depth: `GPD`
+The exact count of publicly exported items (`pub fn`, `pub struct`, `pub trait`, `pub enum`, `pub type`) measured via `cargo-public-api`.
 
-For generic parameter, trait abstraction, or adapter type `g`:
+- A deep module refactoring must preserve or compress `IKL_pub`.
 
-```text
-GPD(g) =
-  number of architectural seams through which g passes
-  without semantic use
-```
+### Recursive Depth Ratio (`RDR`)
 
-A level semantically uses `g` when its own behaviour, invariant, dispatch, or
-caller-facing contract depends on that variation. Merely carrying `g` in a field
-or signature to pass it to a child does not establish semantic use.
+$$\text{RDR}(C) = \frac{\text{Capability Encapsulated by } C}{\text{Knowledge Exposed by } C \text{ to Parent}}$$
+When $C$ is recursively deep, $\text{RDR} \gg 1$.
 
-High `GPD` is evidence that implementation variation may be leaking upward.
+### Graph Edge Density (`GED`)
 
-It is not automatically wrong; record the reason when the propagation is
-intentional.
+Total dependency and caller edges divided by node count, gathered via `codegraph` or `rustgraph`. A cohesive decomposition reduces cross-boundary edge density.
 
-## Invalid-State Ratio: `ISR`
+---
 
-Use only when the relevant state space is finite and exactly enumerable.
+## Typestate, States, & Transitions: `ISR` & `ITE`
 
-Let:
+- **Invalid States Representable (`ISR`):** Count of logically invalid states permitted by struct field combinations. Ideal: $\text{ISR} = 0$.
+- **Illegal Transitions Expressible (`ITE`):** Count of invalid state transitions permitted by method signatures at compile time. Ideal: $\text{ITE} = 0$ via typestate.
 
-- `R` = number of representable states
-- `V` = number of semantically valid states
+---
 
-Then:
+## Test Reachability (`TR`) & Mutation Acceptance (`MA`)
 
-```text
-ISR = (R − V) / R   when R > 0
-```
+- **Test Reachability (`TR`):** Number of tests exercising behavior through the intended seam rather than internal details.
+- **Mutation Acceptance (`MA`):** Percentage of mutants killed by seam-level tests (`mutarust`).
 
-Interpretation:
+---
 
-```text
-ISR = 0   every representable state is semantically valid
-ISR > 0   the representation permits invalid states
-```
+## Isolated Semantic Gauges & Anti-Gaming
 
-Use this when comparing:
+A metric becomes harmful when the implementation is altered to manipulate the number rather than improve domain ownership:
 
-- correlated booleans
-- `Option` combinations
-- enums
-- validated types
-- similar finite state representations
-
-When `R = 0`, `ISR` is `N/A`. Do not estimate `R` when the state space cannot be
-counted meaningfully.
-
-## Illegal-Transition Expressibility: `ITE`
-
-Use when the design contains a finite semantic state machine. Fix the universe
-of relevant source states and semantic operations or events before comparison;
-each state-operation pair is one possible transition. Compare equivalent
-semantic operations before and after, and assess new capability separately.
-
-Let:
-
-- `T_illegal` = number of pairs prohibited by the domain semantics
-- `T_expressible` = those illegal pairs callable through the interface
-
-When `T_illegal > 0`:
-
-```text
-ITE = T_expressible / T_illegal
-```
-
-`ITE = 0` means no illegal pair can be expressed; a positive value means some
-can. When `T_illegal = 0`, `ITE` is `N/A`; report that the chosen universe has
-no illegal transitions, not a zero rate. Compare gains in `ITE` against `IKL`:
-eliminating illegal transitions does not automatically justify a substantially
-harder caller interface.
-
-## Test Reach-Through: `TR`
-
-Define the population as tests intended to verify `M`'s responsibility,
-including integration tests. Count each test once. The numerator is the subset
-that depends on descendants past `M`'s intended seam:
-
-```text
-TR(M) = reach-through tests for M / tests verifying M
-```
-
-Independent child-module tests are outside both numerator and denominator.
-When no tests verify `M`, `TR` is `N/A`; report the verification gap.
-Use `TR` to detect tests coupled to internal representation, not to drive
-the ratio blindly to zero.
-
-## Seam Mutation Adequacy: `MA`
-
-Use scoped mutation testing when the design claim needs verification strength.
-Define the policy owned by `M`, including relevant descendants behind its
-seam, and fix the semantic fault classes being probed. Count only compiled,
-executed, behavior-changing mutants in the denominator. The numerator is the
-subset killed by tests through `M`'s seam:
-
-```text
-MA(M) = behavior-changing mutants killed through M's seam
-        / behavior-changing mutants tested in M's responsibility
-```
-
-Record equivalent, uncompilable, skipped, and timed-out mutants separately
-with reasons. Attribute kills to tests through `M`'s seam, such as by running
-the seam tests alone against the mutant; a tool score that does not identify
-the killing test does not establish the numerator, and such a run reports
-`MA` as `not measured` with the unattributed score beside it. Without a
-mutation run, `MA` is `not measured`; if a run yields no qualifying mutants,
-it is `N/A`, not zero. If a redesign changes mutation sites, compare
-equivalent semantic fault classes or mark numeric before/after comparison
-unavailable. Mutation adequacy measures verification strength, not
-architectural depth.
-
-## Comparative acceptance gate
-
-Required behaviour and correctness come first. Compare only gauges selected for
-the claim. For a review, distinguish current measurements from predicted effects
-and state what would verify the prediction. For an implementation, compare
-observed values against the frozen baseline and scenario. Favor a design when
-its required new capability or relevant improvement is evidenced, material
-regressions have explicit semantic or correctness trade-offs, and any
-superseded structure is accounted for. No proxy count alone establishes
-architectural success.
-
-Record a material regression with its before and after evidence, the benefit
-requiring it, and whether an alternative achieves that benefit at lower cost. A
-justified trade-off is allowed; an unexplained regression is not. Never sum
-improvements and regressions into an aggregate score.
-
-## Natural targets
-
-Use absolute targets only where semantics make them meaningful.
-
-Examples:
-
-```text
-BR  = 0   no unintended seam bypass
-ISR = 0   no invalid representable finite states
-ITE = 0   no expressible illegal transitions
-VE  = ∅   no unnecessarily reachable modules
-```
-
-Most metrics are comparative rather than target-seeking.
-
-## Avoid metric gaming
-
-A metric becomes harmful when the implementation is changed to improve the
-number rather than the responsibility it represents.
-
-Examples:
-
-```text
-high IKL
-→ replacing several semantic operations with one opaque "execute" call
-   does not create depth if callers now need a complicated request protocol
-
-high PD
-→ merging unrelated responsibilities into one module does not create locality
-
-high ISR
-→ encoding every possible state in elaborate typestate is not automatically
-   better if IKL and GPD explode
-
-high BR
-→ hiding descendants behind a forwarding facade does not repair a shallow seam
-
-low DD
-→ deleting useful concepts merely to increase the deletion dividend is not
-   deepening
-```
+- Replacing semantic operations with an opaque `execute` call does not create depth if callers now need complex payload builders.
+- Merging unrelated responsibilities into one module does not create locality.
+- Encoding every trivial state into complex typestate hurts readability if `IKL` explodes.
+- Hiding child modules behind a forwarding facade does not create a deep seam.
 
 The semantic explanation remains authoritative.
-
-## Completion criterion
-
-Evidence is ready for a design decision when every consequential claim has a
-gauge disposition, each selected gauge has a current baseline where defined or
-recorded current-state inputs for its predicted effects, and scenarios were
-frozen before comparison. Missing evidence needs a recorded attempt or reason;
-`N/A`, `not measured`, and observed zero stay distinct. An implementation
-uses the same interpretation before and after and explains material regressions.
-A review labels proposed effects as predictions, without optimizing a vanity
-count or hiding a trade-off in an aggregate score.

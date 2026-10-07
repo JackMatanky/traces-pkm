@@ -1,111 +1,117 @@
 # Tooling
 
-An architecture audit needs independent structural, caller, and test-surface
-evidence before choosing the cheapest tool for a particular claim. A focused
-review uses the smallest set that answers its scoped question. For indexed
-navigation start with CodeGraph; use LSP for exact definitions and references.
-Check graph inferences against source, callers, and tests. Record each tool
-query, its result, and any unavailable or omitted evidence family with a reason.
+## Contents
 
-## Choose evidence by question
+1. [Overview & Resource Isolation](#overview--resource-isolation)
+2. [Three-Tier Fallback Ladder](#three-tier-fallback-ladder)
+3. [Universal Tool Guidance & Execution](#universal-tool-guidance--execution)
+4. [Choose Evidence by Question](#choose-evidence-by-question)
+5. [Audit Views & Evidence Protocol](#audit-views--evidence-protocol)
+6. [Evidence for Selected Gauges](#evidence-for-selected-gauges)
+7. [Verify Changes, Not Proposals](#verify-changes-not-proposals)
+
+---
+
+## Overview & Resource Isolation
+
+An architecture audit needs independent structural, caller, and test-surface evidence before choosing the cheapest tool for a particular claim. A focused review uses the smallest set that answers its scoped question.
+
+### Resource Isolation Rule
+
+Parallel subagents (e.g. read-only scouting lenses during Step 2) operate strictly in **read-only mode**. Scouts are **forbidden** from running `cargo build`, `cargo test`, or diagnostic scripts, eliminating target directory lock contention. Only the main orchestrator executes CLI tools or test suites.
+
+---
+
+## Three-Tier Fallback Ladder
+
+To ensure deterministic execution across diverse host environments, follow this three-tier capability ladder:
+
+```text
++-------------------------------------------------------------------------------+
+| Tier 1: Automated Script (Preferred)                                          |
+| Run `uv run scripts/rust_design.py gather`                                    |
+| Multi-tool execution, SLoC counting, and normalized JSON output               |
++-------------------------------------------------------------------------------+
+                                  | (if script/uv absent)
+                                  v
++-------------------------------------------------------------------------------+
+| Tier 2: Configured Environment Tasks (Fallback)                               |
+| Inspect `mise tasks`, `just --list`, `cargo make`, or `Makefile`              |
+| Look for tasks providing: tree, deps, orphans, hotspots, crap, clones         |
++-------------------------------------------------------------------------------+
+                                  | (if task runner absent)
+                                  v
++-------------------------------------------------------------------------------+
+| Tier 3: Standard Cargo & Toolchain Baseline (Universal Minimal)               |
+| Structure: `cargo check`, manual `mod.rs`/`lib.rs` inspection, LSP references |
+| Quality:   `cargo clippy --all-targets -- -D warnings`                        |
+| Testing:   `cargo test`                                                       |
+| Dependencies: `cargo tree`, `cargo tree -d`                                   |
+| Unmet tool metrics marked explicitly as `not measured (tool unavailable)`     |
++-------------------------------------------------------------------------------+
+```
+
+1. **Tier 1 (Automated Helper):** Execute `uv run scripts/rust_design.py gather --path <target> --out <dest>`. The script auto-detects `mise`, probes `PATH`, extracts SLoC and comment counts, executes available analyzers, queries `codegraph` / `rustgraph`, and normalizes output.
+2. **Tier 2 (Environment Task Runners):** If the helper cannot run, inspect project task runners (`mise`, `just`, `cargo make`). Execute configured aliases (e.g. `modules:tree`, `mess`, `crap`) directly.
+3. **Tier 3 (Universal Standard Cargo):** If third-party analyzers are unavailable, fall back to built-in `cargo` commands (`cargo check`, `cargo test`, `cargo clippy`, `cargo tree`). Mark missing analyzer metrics explicitly as `not measured (tool unavailable)` rather than omitting or fabricating them.
+
+---
+
+## Universal Tool Guidance & Execution
+
+| Tool | Capability & Invocation | Evidence & Limit |
+|---|---|---|
+| `codegraph` | `codegraph status -j`, `codegraph files -j --filter <path>` | Whole-crate node/edge density and per-file symbol counts. Fast SQLite-backed AST graph. |
+| `rustgraph` | `rustgraph structure --json` | AST-aware code navigation fallback when `codegraph` is unavailable. |
+| `cargo-public-api` | `cargo public-api` / `cargo public-api --diff-git-checkouts <base> <head>` | Precise mathematical count of public API surface (IKL); automated diff proving zero breaking changes. |
+| `cargo-modules` | `cargo-modules tree`, `cargo-modules dependencies --lib` | Module hierarchy and dependency edges. Note: cycle detection flags can report spurious cycles on re-exports. |
+| `cargo-crap` | `cargo-crap` (requires test coverage data) | Change Risk Anti-Pattern scores (cyclomatic complexity combined with low test coverage). |
+| `messrust` | `messrust` | Advisory maintainability hotspots and tangled responsibilities. |
+| `jscpd` | `jscpd --format rust --reporters console <paths>` | Token-clone sites and duplicate token clusters. A clone is a lead, not proof of repeated policy. |
+| `cargo tree` | `cargo tree`, `cargo tree -d` (duplicate versions) | Built-in Cargo dependency hierarchies and duplicate crate resolution. |
+
+Before anything else, resolve external crate semantics through authoritative crate documentation (local documentation tools if available, or `docs.rs`) rather than recalled knowledge, web search, or guessing from source. Treat remembered API behavior as a hypothesis to verify.
+
+---
+
+## Choose Evidence by Question
 
 | Question | First evidence | Escalate when needed |
 |---|---|---|
-| Who calls this and where does its state or policy live? | CodeGraph for flow; LSP for definitions and references | Inspect relevant source and callers for semantic ownership |
+| Who calls this and where does its state or policy live? | CodeGraph/LSP for flow; definitions and references | Inspect relevant source and callers for semantic ownership |
 | Is a seam bypassed or a dependency direction wrong? | Graph paths, imports, and intended entry points | Existing module/dependency graph tasks for structure |
 | Does a representation permit invalid states or operations? | Enumerated state and transition model | Behavior tests for an implementation |
 | Will a change cross parent seams? | Frozen change scenario and graph impact | Inspect affected responsibilities and source paths |
-| Did a redesign leave obsolete structure? | Changed interfaces, references, and dependency declarations | Configured orphan or unused-dependency checks |
+| Did a redesign leave obsolete structure? | Changed interfaces, references, and dependency declarations | `cargo tree -d` and orphan checks |
 | Does the implemented seam preserve behavior? | Project build and tests through the intended interface | Scoped coverage or mutation checks for uncertain policy |
 
-## Audit tools
+---
 
-For a module, crate, or workspace architecture audit, run the structural,
-hotspot, and duplication tools below, then inspect their findings in source.
-For a focused review, use tools that answer its specific claim. Run configured
-tasks through `run_task`; call the globally installed `jscpd` CLI directly.
+## Audit Views & Evidence Protocol
 
-| Invocation (tool) | Evidence and limit |
-|---|---|
-| `modules:tree`, `modules:deps` (`cargo-modules`) | Module inventory, visibility, and dependency candidates; confirm inferred edges in source. `modules:deps --acyclic` is informational, not a gate: its graph model reports spurious cycles here. |
-| `modules:orphans` (`cargo-modules`) | Source files outside the module tree, not unused functions; run for workspace audits and file-removal proposals. |
-| `mess` (`messrust`) | Advisory maintainability hotspots, including complexity and tangled responsibilities under `messrust.xml`; exit 2 means findings, not a broken tool. Triage findings against actual ownership, not thresholds alone. |
-| `crap` (`cargo-crap`, depends on `coverage:lcov` via `cargo-llvm-cov`) | Per-function complexity/coverage risk; inspect matching audited functions and coverage exclusions before interpreting scores. `coverage:html -m <module>` provides a scoped coverage view when test reach-through needs inspection. |
-| `jscpd --format rust --reporters console <paths>` (global `jscpd`) | Rust token-clone sites and duplication rate within the named paths; use `src` for crate-wide scans, or relevant files/modules for focused scans. It has no mise task here. A clone is a lead, not proof of repeated policy: compare semantics and callers. |
-| `test:mutants -f <file>` or `-m <module>` (`mutarust`, depends on `test`) | Killed/escaped behavior-changing mutants for candidate code; scope to the responsible file or module, distinguish equivalent/invalid mutants, and check test strength. The report does not name which test killed each mutant, so a raw score cannot establish `MA`; isolate seam tests or report `MA` as `not measured`. This is not a static architecture score. |
+At module scope and above, obtain these views before declaring a design audit complete:
 
-Keep `jscpd`'s scanned paths, scan boundary, and clone locations beside its
-percentage, and classify each clone's location as production or test code
-separately: a whole-file rate can be dominated by inline tests. The scan only
-sees the named paths, so it cannot observe clones into siblings; widen the
-scan when a claim crosses the boundary. Token clones and semantic duplication
-are different claims.
+1. **Structure & Topology:** Run `scripts/rust_design.py gather` (or `cargo-modules tree` alongside CodeGraph/rustgraph). Confirm material edges in source.
+2. **Callers & Ownership:** Use LSP definitions/references and inspect source for intended entry paths, bypasses, visibility, state, and policy. If a tool misses a known caller, use another query rather than treating an empty result as proof.
+3. **Hotspots, Duplication, & Risk:** Inspect CRAP risks, complexity hotspots, and token clones. Classify each material finding by production or test location within the audited scope. Identify tests entering each intended seam.
 
-## Audit evidence
+---
 
-At module scope and above, obtain these views before declaring a design audit
-complete:
+## Evidence for Selected Gauges
 
-1. **Structure:** run `modules:tree` and `modules:deps` alongside CodeGraph
-   flows; at workspace scope also run `modules:orphans`. Confirm material edges
-   in source.
-2. **Callers and ownership:** use LSP definitions/references and inspect source
-   for intended entry paths, bypasses, visibility, state, and policy. If a tool
-   misses a known caller, use another source/structural query rather than
-   treating an empty result as proof.
-3. **Hotspots, duplication, and tests:** run `mess`, `crap`, and `jscpd`
-   for a module-level or broader audit; classify each material finding by
-   production or test location within the audited scope and identify tests
-   entering each intended seam. Run `test:mutants` on consequential
-   test-strength claims and isolate seam tests before reporting `MA`. State
-   which behaviour was actually verified; a proposal is not a test result.
-
-Before anything else, resolve external crate semantics through the
-repository's rust-docs-mcp tools rather than recalled knowledge, web
-search, or guessing from source. Treat remembered API behavior as a
-hypothesis to verify there, and cache a missing crate before reasoning
-about its API.
-
-Complexity, duplication, CRAP, coverage percentage, size, counts, and graph
-centrality are candidate indicators. They suggest where to inspect but do not
-enter a design acceptance gate. A simpler graph is not inherently a deeper
-design.
-
-## Evidence for selected gauges
-
-Screen these families for every consequential candidate; read the applicable
-definitions in [`METRICS.md`](METRICS.md). Tool output supplies inputs, not
-a verdict. Keep the underlying caller facts, paths, or state sets beside each
-count and name the query or command that produced them.
+Screen these families for every consequential candidate; read the applicable definitions in [`METRICS.md`](METRICS.md). Tool output supplies inputs, not a verdict. Keep the underlying caller facts, paths, or state sets beside each count and name the query or command that produced them.
 
 | Gauges | Inspect first |
 |---|---|
-| `IKL`, `KC`, `PS`, `L` | Caller obligations, interface types, and parent knowledge before and after |
+| `IKL`, `KC`, `PS`, `L` | Caller obligations, interface types, and parent knowledge before and after (`cargo-public-api`) |
 | `BR`, `VE`, `GPD` | Intended entry points, call/import paths, visibility and re-exports, generic propagation |
-| `PD`, `DD` | Frozen change path and superseded seams, representations, coordination, dependencies |
+| `PD`, `DD` | Frozen change path and superseded seams, representations, coordination, dependencies (`cargo tree`) |
 | `V` | Meaningful implementations of the proposed seam |
 | `ISR`, `ITE` | Exactly enumerated states and transitions |
 | `TR`, `MA` | Tests that cross the intended seam; scoped behavior-changing mutants when useful |
 
-Derive selected gauges' current inputs from available graph, module, source,
-or behavioural evidence. Record failed queries and measurement limits as
-specified in [`METRICS.md`](METRICS.md).
+---
 
-## Use project-available commands
+## Verify Changes, Not Proposals
 
-Inspect `mise://tasks` and the active worktree's tool configuration before
-naming a configured task. Route configured build, test, format, lint, and audit
-tasks through `run_task`; `verify` gates non-trivial implementations. Run
-the global `jscpd` CLI directly because no mise task wraps it. The repository's
-`audit` task checks security, not architecture. If a tool is unavailable,
-report the missing measurement and use remaining evidence.
-
-## Verify changes, not proposals
-
-For an implementation, run the project's required checks and exercise the
-changed behavior through its intended seam. Compare only evidence selected
-before the redesign, with the same counting basis and frozen scenarios. For a
-review, state what a future check would distinguish; do not report it as run.
-
-Use expensive behavioral tools only when a candidate requires their evidence. A
-design session does not become stronger merely by running more tools.
+For an implementation, run the project's required checks and exercise the changed behavior through its intended seam. Compare only evidence selected before the redesign, with the same counting basis and frozen scenarios. For a review, state what a future check would distinguish; do not report it as run.

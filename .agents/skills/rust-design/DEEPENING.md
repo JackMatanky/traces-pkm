@@ -1,305 +1,163 @@
 # Deepening
 
-Deepening concentrates coherent behaviour, policy, state, and invariants behind
-a simpler seam.
+## Contents
 
-It may require splitting one thing, joining several things, moving
-responsibility, replacing an abstraction, or deleting it.
+1. [Overview & Core Principles](#overview--core-principles)
+2. [Recursive Depth Decomposition & Depth Propagation](#recursive-depth-decomposition--depth-propagation)
+3. [The Recursive Depth Test](#the-recursive-depth-test)
+4. [Consolidate Fragmented Responsibility](#consolidate-fragmented-responsibility)
+5. [Collapse Shallow Seams](#collapse-shallow-seams)
+6. [Redesign a Real Seam](#redesign-a-real-seam)
+7. [Relocate Ownership & Model Implicit Concepts](#relocate-ownership--model-implicit-concepts)
+8. [Replace the Wrong Abstraction & Deletion Dividend](#replace-the-wrong-abstraction--deletion-dividend)
+9. [Protect Sibling Isolation & Contain Vertical Leakage](#protect-sibling-isolation--contain-vertical-leakage)
+10. [Transformations & Trade-Off Accounting](#transformations--trade-off-accounting)
 
-Choose the transformation from the concern.
+---
 
-## Decompose to discover
+## Overview & Core Principles
 
-Use decomposition as a **probe** when separating behaviour can expose
-independently meaningful knowledge.
+Deepening concentrates coherent behaviour, policy, state, and invariants behind a simpler seam. It may require splitting one thing, joining several things, moving responsibility, replacing an abstraction, or deleting dead structure.
 
-Begin with a hypothesis such as:
+Choose the transformation from the concern, not from a desire to apply a Rust pattern.
 
-- separate invariants may exist
-- distinct state or lifecycle may exist
-- abstraction levels are mixed
-- independent policies are entangled
-- a hidden state machine may exist
-- one orchestration contains several semantic operations
-- only part of the behaviour needs a dependency
+---
 
-Separate conceptually before committing to permanent code structure where
-practical.
+## Recursive Depth Decomposition & Depth Propagation
 
-Observe whether the provisional pieces converge around:
+A central failure of superficial refactoring is "flat layering": introducing intermediate structs or forwarding functions that simply pass calls through without hiding knowledge. The primary structural pillar of this skill is **Recursive Depth**:
 
-- shared state
-- one invariant
-- one lifecycle
-- one policy
-- one domain vocabulary
-- one transformation
-- one reason for change
-
-The desired process is:
+> **A module is recursively deep when its internal decomposition concentrates knowledge behind meaningful seams, and those seams make their parent simpler and deeper rather than merely adding layers.**
 
 ```text
-behaviour
-→ provisional decomposition
-→ coherent knowledge becomes visible
-→ latent concept
-→ deliberate consolidation behind a seam
++-----------------------------------------------------------------------------------+
+| Parent Seam: Unified Domain Concept (Minimal Caller Knowledge Burden)             |
++-----------------------------------------------------------------------------------+
+                                          |
+                                          v
++-----------------------------------------------------------------------------------+
+| Deep Internal Child A                        | Deep Internal Child B              |
+| - Owns state machine and lifecycle           | - Owns wire encoding and framing   |
+| - Hides all transition validation rules      | - Hides ring-buffer memory pool    |
++-----------------------------------------------------------------------------------+
+                                          |
+                                          v
++-----------------------------------------------------------------------------------+
+| Low-Level Leaf Operations: System Calls, Network Drivers, Storage I/O             |
++-----------------------------------------------------------------------------------+
 ```
 
-If decomposition reveals no independent concept and does not improve knowledge
-placement, it has not justified another module.
+### Depth Propagation
 
-## Consolidate fragmented responsibility
+For a lower-level candidate with a parent, inspect that parent. What vanished from the parent's required knowledge?
 
-Consolidate when callers currently assemble one concern from several shallow
-pieces.
+- Child concepts and representations
+- Child dependencies and configuration
+- Ordering rules and state machine invariants
+- Child-specific error hierarchies
 
+Good lower-level design raises the abstraction level of the parent. A locally tidy child that leaves its parent equally complicated does not earn an independent seam.
+
+---
+
+## The Recursive Depth Test
+
+When extracting or reviewing an internal child module $C$ within parent $P$:
+
+1. **Local Depth:** Does $C$'s seam provide substantial capability relative to the small interface it exposes to $P$?
+2. **Depth Propagation:** Does $P$'s implementation become shorter, simpler, and higher-level? Did internal states, dependencies, and ordering rules vanish from $P$?
+3. **The Anti-Layering Rule:** If $P$ still coordinates $C$'s internal sequence, inspects $C$'s internal states, or maps $C$'s errors directly upward, $C$ is a shallow layer, not a recursively deep module.
+
+---
+
+## Consolidate Fragmented Responsibility
+
+Consolidate when callers currently assemble one concern from several shallow pieces.
 Evidence includes:
 
-- fixed call sequences
-- shared invariants spread across helpers
-- repeated orchestration
-- several modules changing together
-- callers coordinating internal details
-- intermediate types whose purpose is crossing shallow seams
-- sibling modules exposing one another's representations
-- policy duplicated across multiple call sites
+- Fixed call sequences across call sites
+- Shared invariants spread across helpers
+- Repeated orchestration or loops
+- Several modules constantly changing together
+- Intermediate types whose sole purpose is crossing shallow seams
 
-The result should remove knowledge from callers.
+The result must remove knowledge from callers. Moving functions into one file without changing responsibility or seams is not deepening.
 
-Moving functions into one file without changing responsibility or seams is not
-deepening.
+---
 
-## Collapse shallow seams
+## Collapse Shallow Seams
 
-Collapse a seam whose interface costs roughly as much knowledge as the behaviour
-it hides.
+Collapse a seam whose interface costs roughly as much knowledge as the behaviour it hides:
 
-Typical candidates include:
+- Forwarding wrappers
+- One-to-one delegation layers
+- Redundant facades
+- Helper modules that merely rename operations
+- Traits with no meaningful variation or substitution need
 
-- forwarding wrappers
-- one-to-one delegation layers
-- redundant facades
-- helper modules that merely rename operations
-- traits with no meaningful variation
-- adapters that exist without an actual substitution need
+Ask: *If the module disappeared, would its complexity reappear in callers, or would the abstraction simply vanish?* If it simply vanishes, delete it.
 
-Use `codebase-design`'s deletion test:
+---
 
-> If the module disappeared, would its complexity reappear in callers, or would
-> the abstraction simply vanish?
+## Redesign a Real Seam
 
-A useful module concentrates knowledge. A shallow layer often only redistributes
-names.
+Keep the responsibility but change the seam when the module is meaningful and its callers learn the wrong things:
 
-## Redesign a real seam
+- Raise parameters or results to domain semantics
+- Absorb ordering requirements internally
+- Hide storage, serialization, or network representations
+- Enforce invariants internally via types
+- Replace several mechanism-level operations with one semantic operation
+- Narrow visibility
 
-Keep the responsibility but change the seam when the module is meaningful and
-its callers learn the wrong things.
+---
 
-A redesign may:
+## Relocate Ownership & Model Implicit Concepts
 
-- raise parameters or results to a more semantic level
-- absorb ordering requirements
-- hide storage or serialization representation
-- enforce invariants internally
-- replace several mechanism-level operations with one semantic operation
-- narrow visibility
-- relocate dependency injection
-- present domain failures instead of child implementation failures
+### Relocate Ownership
 
-Use `codebase-design`'s Design It Twice process when the user requests
-alternative interface designs. Otherwise, compare remaining viable choices
-locally; explain a rejected choice only when it changes the decision.
+Move behaviour when another module owns the state, invariant, lifecycle, or policy that gives it meaning. Code enforcing an invariant must have direct authority over the state involved. Avoid placing domain logic in "junk drawer" files (`utils.rs`, `helpers.rs`).
 
-Compare by depth, locality, caller knowledge, and upward composition where
-a parent exists.
+### Model Implicit Concepts
 
-## Relocate ownership
+Make a concept explicit when doing so concentrates an invariant, eliminates invalid states, gives a seam semantic vocabulary, or eliminates runtime validation checks. Read [`MODELING.md`](MODELING.md) before selecting the Rust representation.
 
-Move behaviour when another module owns the state, invariant, lifecycle, or
-policy that gives it meaning.
+---
 
-Prefer designs where the code enforcing an invariant has direct authority over
-the state involved.
+## Replace the Wrong Abstraction & Deletion Dividend
 
-A utility location is weak ownership when behaviour actually belongs to a domain
-concept elsewhere.
+### Replace Rather than Layer
 
-## Model an implicit concept
+Replace rather than incrementally repair when the current abstraction preserves the wrong responsibility or seam. A replacement plan must identify:
 
-Make a concept explicit when doing so:
+- Callers to migrate
+- Behaviour to preserve
+- Tests whose seam changes
+- Types or layers superseded
+- Dependencies that become unnecessary
 
-- concentrates an invariant
-- eliminates invalid states
-- gives a seam semantic vocabulary
-- reduces caller coordination
-- makes a meaningful transition explicit
-- distinguishes values currently easy to confuse
+### The Deletion Dividend
 
-Read [`MODELING.md`](MODELING.md) before choosing the Rust representation.
+A redesign must account for structure made obsolete by its new ownership. Search for obsolete helpers, shallow wrappers, redundant modules, parallel representations, and superseded dependencies. A deeper module should pay a **deletion dividend**.
 
-The concept justifies the type. The availability of a Rust pattern does not
-justify the concept.
+---
 
-## Replace the wrong abstraction
+## Protect Sibling Isolation & Contain Vertical Leakage
 
-Replace rather than incrementally repair when the current abstraction preserves
-the wrong responsibility or seam.
+### Protect Sibling Isolation
 
-A replacement plan must identify:
+When a parent contains several child modules, ensure their knowledge is independent. Frequent cross-sibling changes indicate misplaced boundaries, unowned shared invariants, or leaked representations.
 
-- callers to migrate
-- behaviour to preserve
-- tests whose seam changes
-- types or layers superseded
-- compatibility constraints
-- dependencies that become unnecessary
+### Contain Vertical Leakage
 
-Do not leave the superseded design beside the replacement without a concrete
-migration reason.
+Prevent lower-level knowledge from escaping upward: descendant types in ancestor interfaces, storage or serialization details, child-specific error structures, or internal state constructors.
 
-## Remove what no longer earns its cost
+---
 
-Deletion is a design operation.
+## Transformations & Trade-Off Accounting
 
-After deepening, search for:
+Compare current caller knowledge and change paths with the proposed seam:
 
-- obsolete helpers
-- shallow wrappers
-- redundant modules
-- parallel representations
-- unnecessary conversions
-- superseded traits
-- former test seams
-- compatibility scaffolding
-- dependencies used only by removed architecture
-
-A deeper module should often pay a **deletion dividend**.
-
-## Evaluate local depth
-
-Ask what the immediate caller gains for what it must learn.
-
-A deep seam tends to:
-
-- hide policy or mechanism
-- own invariants
-- absorb ordering knowledge
-- expose semantic rather than incidental representation
-- make correct use natural
-- provide several callers one implementation of shared knowledge
-
-Interface size is semantic.
-
-Method count, source lines, and file count do not measure it.
-
-## Evaluate depth propagation
-
-For a lower-level candidate with a parent, inspect that parent.
-
-Ask what disappeared from the parent's required knowledge:
-
-- child concepts
-- child dependencies
-- child invariants
-- ordering rules
-- representation details
-- child-specific failures
-- reasons to modify the parent when the child changes
-
-Good lower-level design should often raise the abstraction level available to
-the parent.
-
-A locally elegant child that leaves its parent equally complicated may not earn
-an independent seam.
-
-## Compare the transformation
-
-For a concrete design claim, compare current caller knowledge and change paths
-with the proposed seam. Ask which facts leave callers or a parent, which policy
-finds an owner, and what becomes removable, if anything. Carry forward the
-gauges, raw evidence, and frozen scenario selected in discovery; when a new
-claim arises, screen it with [`METRICS.md`](METRICS.md) and select an
-evidence source from [`TOOLING.md`](TOOLING.md).
-
-For a review, state expected effects as predictions. For an implementation,
-compare observed results against the same current evidence. Explain material
-trade-offs, including additional caller burden accepted to eliminate invalid
-transitions. No design has to improve every applicable dimension.
-
-## Protect sibling isolation
-
-When a parent contains several child modules, inspect whether their knowledge is
-actually independent.
-
-Frequent cross-sibling changes may indicate:
-
-- responsibility split at the wrong place
-- a shared invariant without an owner
-- leaked representation
-- orchestration that belongs in the parent
-- children that should be consolidated
-
-Separate files do not establish separate responsibilities.
-
-## Contain vertical leakage
-
-Look for lower-level knowledge escaping upward:
-
-- descendant types in ancestor interfaces
-- storage or serialization details
-- child-specific error structures
-- execution order
-- internal state constructors
-- lower-level configuration
-- imports bypassing the intended owner
-
-A seam earns its existence partly by containing such knowledge.
-
-## Validate an implemented transformation
-
-When code changes, verify behaviour through the intended seam and check the
-dependency direction, visibility, parent simplification, and superseded
-structure relevant to the design claim. Select evidence with
-[`TOOLING.md`](TOOLING.md). Follow `codebase-design`'s replace-don't-layer
-testing rule when a deeper interface supersedes shallow ones. Retain lower-level
-tests when they protect an independent behavioural contract.
-
-## Size is an indicator, never a verdict
-
-Large functions or files can be useful places to inspect because they may
-contain more opportunities for mixed responsibility.
-
-Small files or many modules can also be useful places to inspect because they
-may reveal fragmentation.
-
-Neither fact decides the design.
-
-A cohesive 2,000-line implementation with a deep seam may be the correct shape.
-Five cohesive, clearly named files may be much clearer when five distinct
-responsibilities exist.
-
-Prefer the shape implied by knowledge ownership and seams.
-
-## Reconsider the boundary
-
-After a meaningful proposal or transformation, inspect downward for a newly
-visible coherent concern and upward for a simpler parent or sibling where one
-exists. Revisit discovery when that inspection exposes a consequential new
-candidate.
-
-Stop a pass when it adds no material candidate or changes no design decision.
-Record what was inspected and what remains uncertain; a review need not prove
-there is no further improvement elsewhere.
-
-## Completion criterion
-
-A candidate is resolved when current and proposed caller knowledge or change
-paths are compared using the selected evidence, and the design explains why
-responsibilities belong where they do, what each seam hides and asks callers
-to know, how any parent changes, what becomes removable or why nothing does,
-and which trade-offs remain. Record each selected gauge or reason it is
-inapplicable or not measured. A review separates observed current evidence
-from predicted effects; an implementation additionally verifies behaviour
-and observes the claimed effects.
+- For a review, state expected effects as predictions.
+- For an implementation, compare observed results against baseline evidence.
+- Document trade-offs, including any additional caller burden accepted to eliminate invalid transitions.

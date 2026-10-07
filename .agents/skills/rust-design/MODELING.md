@@ -1,294 +1,150 @@
 # Modeling
 
-Translate discovered concepts and seams into Rust.
+## Contents
 
-Normally start after discovery and deepening establish the responsibility and
-seam. If these are already established, confirm their contract and model them
-directly.
+1. [Overview & Semantic Starting Points](#overview--semantic-starting-points)
+2. [Ordinary Functions & Newtypes](#ordinary-functions--newtypes)
+3. [Validated Types: Parse, Don't Validate](#validated-types-parse-dont-validate)
+4. [Structs & Enums](#structs--enums)
+5. [Typestate & Compile-Time State Machines](#typestate--compile-time-state-machines)
+6. [Traits, Variation, & Generic Costs](#traits-variation--generic-costs)
+7. [Ownership, Borrowing, & Visibility](#ownership-borrowing--visibility)
+8. [Error Types as Part of the Seam](#error-types-as-part-of-the-seam)
+9. [Module & File Layout (POLS)](#module--file-layout-pols)
+10. [Comparing Candidate Representations](#comparing-candidate-representations)
 
-Use `rust-skills` as the Rust-specific reference. Load only the categories
-relevant to the current candidate.
+---
 
-The type system is part of the interface. Stronger compile-time guarantees are
-useful only when their leverage exceeds the additional knowledge imposed on
-callers.
+## Overview & Semantic Starting Points
 
-## Start from semantics
+Translate discovered concepts and seams into idiomatic Rust.
+The type system is part of the interface. Stronger compile-time guarantees are useful only when their leverage exceeds the additional knowledge and ceremony imposed on callers.
 
-Before choosing a construct, state:
+### Start from Semantics
 
-- what concept exists
-- what invariant or policy it owns
-- what operations belong to it
-- what states are legal
-- who should construct it
-- who should observe it
-- which representation details should remain hidden
-- whether real implementation variation exists
+Before choosing a Rust construct, state:
 
-Then compare Rust representations.
+- What concept exists and what invariant or policy it owns
+- What operations belong to it and what states are legal
+- Who constructs it and who observes it
+- Which representation details must remain hidden behind the seam
+- Whether real variation or substitutability exists
 
-A type-system improvement is strongest when it removes invalid states or caller
-knowledge without exporting equivalent complexity elsewhere. Compare concrete
-state spaces and caller obligations with [`METRICS.md`](METRICS.md) only when
-that evidence clarifies a design decision.
+---
 
-## Ordinary function
+## Ordinary Functions & Newtypes
 
-Prefer an ordinary function when:
+### Ordinary Functions
 
-- the operation is stateless or works entirely from its parameters
-- no durable invariant needs ownership
-- no new semantic identity is needed
-- callers gain little from another type
+Prefer a free or associated function when:
 
-A free or associated function can still be a deep Module under
-`codebase-design`.
+- The operation is stateless or works entirely from its parameters
+- No durable invariant requires ownership
+- No new semantic identity is needed
 
 Do not introduce a type merely to give one function a namespace.
 
-## Newtype
-
-Consult the relevant `rust-skills` newtype rules when distinct semantics are
-currently represented by the same underlying type.
+### Newtypes
 
 A newtype is promising when it:
 
-- prevents confusing semantically different values
-- owns validation or construction constraints
-- creates useful domain vocabulary at a seam
-- enables behaviour specific to the concept
+- Prevents confusing semantically different values of the same primitive type
+- Owns construction validation constraints
+- Creates domain vocabulary at an architectural seam
 
-A wrapper that enforces nothing, distinguishes nothing, and simplifies no seam
-has weak justification.
+A wrapper that enforces nothing, distinguishes nothing, and simplifies no caller has weak justification.
 
-## Validated type
+---
 
-Consult `rust-skills`' parse-don't-validate guidance when callers repeatedly
-carry raw values plus knowledge about whether validation has happened.
+## Validated Types: Parse, Don't Validate
 
-Prefer moving validity to construction when:
+Prefer moving validity to construction ("parse, don't validate"):
 
-- validity has a stable definition
-- downstream operations assume it
-- repeated runtime checks can disappear
-- invalid values should not enter the deeper module
+- Validity has a stable, closed definition
+- Downstream operations assume validity and can discard runtime checks
+- Invalid values cannot enter the deeper module
 
-Keep external parsing or transport representation outside the validated domain
-type where that preserves a cleaner seam. Check that every safe construction,
-deserialization, and mutation path preserves the invariant; private fields
-alone do not help if a public conversion or deserializer bypasses validation.
+Ensure every safe construction, deserialization, and mutation path preserves the invariant; private fields alone do not help if a public constructor or conversion bypasses validation.
 
-## Struct
+---
 
-Use a struct when several values form one concept and their relationship,
-lifecycle, or invariant is meaningful.
+## Structs & Enums
 
-Ask whether methods truly belong with the state they act upon.
+### Structs
 
-A struct is not automatically superior to functions. Its value comes from
-ownership of coherent state and behaviour.
+Use a struct when several values form one concept and their relationship or invariant is meaningful. Methods must truly belong with the state they act upon.
 
-## Enum
+### Enums
 
-Consult `rust-skills` enum and pattern-matching guidance for closed alternatives
-or mutually exclusive states.
+Enums replace correlated booleans, incompatible `Option` combinations, and tag-plus-payload structures. Variants must represent semantic alternatives rather than incidental execution steps.
+Where states are enumerable, ensure $\text{ISR} = 0$.
 
-Enums are especially useful when they replace:
+---
 
-- correlated booleans
-- incompatible `Option` combinations
-- tag-plus-payload structures with invalid combinations
-- conditionals that repeatedly rediscover the same closed state space
+## Typestate & Compile-Time State Machines
 
-Make variants represent semantic alternatives rather than incidental execution
-steps.
+Typestate is strongest when states are well-defined, transitions are central to correctness, and different states expose materially different legal operations:
 
-Where the state space is exactly enumerable, compare valid and representable
-states. A review can enumerate proposed variants but labels their effect a
-prediction; an implementation checks the actual public construction paths.
+```rust
+// Hiding internal typestate transitions from high-level callers
+pub struct Session<State> {
+    inner: SessionInner,
+    _state: std::marker::PhantomData<State>,
+}
+```
 
-## Typestate
+Prefer an ordinary enum or runtime validation when typestate would leak marker types, generic parameters, and conversion ceremony through unrelated caller interfaces.
 
-Consult `rust-skills` typestate guidance when legal operations materially depend
-on state and invalid transitions are both meaningful and worth preventing at
-compile time.
+---
 
-Typestate is strongest when:
+## Traits, Variation, & Generic Costs
 
-- states are stable and well-defined
-- transitions are central to correctness
-- different states expose materially different legal operations
-- callers benefit from compiler enforcement
+Introduce a trait because a seam needs meaningful behavioural variation or external dependency isolation, not as an ornamental pattern:
 
-Prefer an ordinary enum or validated runtime state when typestate would spread
-generic parameters, marker types, or conversion ceremony through unrelated
-callers.
+- Multiple legitimate implementations exist
+- An owned external dependency requires a test or environment adapter
+- A stable behavioural contract is needed independent of implementation details
 
-Where transitions are exactly enumerable, compare which illegal operations
-callers can express. Balance the gain against the knowledge and ceremony the new
-interface demands.
+Treat generic parameters and trait bounds as interface cost. Prefer concrete types until variation produces demonstrable leverage.
 
-## Trait
+---
 
-Introduce a trait because a seam needs meaningful behavioural variation, not
-because traits are an available abstraction mechanism.
+## Ownership, Borrowing, & Visibility
 
-Look for:
+- Code enforcing an invariant must have direct authority over the state involved.
+- Avoid shared ownership (`Arc`, `Rc`) or interior mutability (`Mutex`, `RefCell`) to mask unclear responsibility.
+- Visibility implements the intended seam. Use scoped visibility (`pub(crate)`, `pub(super)`, `pub(in crate::ancestor)`) to prevent internal child details from leaking into public crates.
 
-- multiple legitimate implementations
-- an owned external dependency requiring an adapter
-- a test substitute justified by `codebase-design`'s dependency categories
-- a stable behavioural contract independent of implementation details
+---
 
-A single implementation can still justify a trait where a real external or
-deployment seam exists. A speculative implementation does not.
+## Error Types as Part of the Seam
 
-Consult `rust-skills` for:
+Error types are part of the interface because callers must understand and handle failure modes:
 
-- associated type vs generic parameter
-- static vs dynamic dispatch
-- object safety
-- sealed traits
-- default methods
-- coherence constraints
+- Design errors at the abstraction level of the seam.
+- Do not mechanically mirror every child error variant through every parent.
+- Hide child implementation errors behind cohesive domain error classifications.
 
-Keep trait vocabulary at the lowest level that needs the variation.
+---
 
-Record `V` when variation is part of the justification. A test double counts
-only when the dependency category makes that seam meaningful under
-`codebase-design`.
+## Module & File Layout (POLS)
 
-## Generics
+Structure file and directory layouts to match the cognitive map of the domain:
 
-Use generics where callers genuinely need parametric variation or static
-dispatch.
+- Follow the **Principle of Least Surprise (POLS)**: locate state and types where semantic ownership implies.
+- A single file exceeding 500 SLoC is a candidate for decomposing into cohesive child modules.
+- Eliminate "junk drawer" files (`utils.rs`, `helpers.rs`, `common.rs`).
 
-Treat generic parameters and bounds as interface cost.
+---
 
-A generic abstraction is weak when:
+## Comparing Candidate Representations
 
-- only one concrete type exists
-- every caller supplies the same type
-- parameters flow unchanged through several layers
-- callers must understand implementation variation they do not care about
+For non-trivial choices, compare candidate representations against:
 
-Prefer concrete types until variation produces actual leverage.
+1. Semantic precision
+2. Invalid states prevented ($\text{ISR} = 0$, $\text{ITE} = 0$)
+3. Caller knowledge and cognitive load ($\text{IKL}$)
+4. Seam depth and parent simplification
+5. Compile-time vs runtime trade-offs
 
-Trace a generic through parent interfaces when implementation variation appears
-to leak through levels that do not semantically use it.
-
-## Ownership and borrowing
-
-Use ownership to reinforce responsibility.
-
-Ask:
-
-- Which module should own this state?
-- Which values should be borrowed temporarily?
-- Is cloning hiding unclear ownership?
-- Is shared ownership exposing a responsibility problem?
-- Does interior mutability reveal a seam that should move?
-- Does a lifetime relationship belong in the caller-facing interface?
-
-Consult relevant `rust-skills` ownership rules when answering these questions.
-
-Do not optimize borrowing cleverness at the cost of a substantially harder
-semantic interface.
-
-## Visibility
-
-Rust visibility should implement the intended seam.
-
-Consult `rust-skills` project-structure and visibility guidance.
-
-Check the modules that legitimately call an item and the paths that expose it.
-Rust also supports scoped visibility such as `pub(in crate::ancestor)` in
-addition to `pub(super)` and `pub(crate)`. A `pub` item can be re-exported from
-a private module, but a restricted item cannot be publicly re-exported merely to
-widen its visibility. Evaluate the reachable public path as well as the item's
-declaration. Choose visibility from the module tree and intended API, not a
-numeric ranking.
-
-Broadening visibility to make internal decomposition convenient may indicate
-misplaced ownership. [`METRICS.md`](METRICS.md) describes how to inspect
-effective reachability.
-
-## Errors
-
-Error types are part of the Interface because callers must understand their
-failure modes.
-
-Design errors at the abstraction level of the seam.
-
-Ask:
-
-- Which failures are meaningful to this caller?
-- Which lower-level errors are implementation details?
-- Which distinctions must callers react to?
-- Which context should be preserved without leaking mechanisms?
-
-Consult the relevant `rust-skills` error guidance after answering these
-questions.
-
-Do not mechanically mirror every child error variant through every parent.
-
-## Collections and representation
-
-Choose concrete representation from required semantics and measured workload.
-
-Representation details should remain behind the seam when callers do not need
-them.
-
-Consult `rust-skills` collection, memory, serde, and performance guidance only
-where the discovered design makes those choices material.
-
-Do not distort a semantic seam for speculative micro-optimization.
-
-## Module and file layout
-
-Lay out files after responsibility is understood.
-
-A file should have a concise name that predicts the coherent knowledge found
-inside it.
-
-Several cohesive files are preferable when they represent meaningful
-responsibilities and improve navigation. A single large file is acceptable when
-its contents remain one coherent responsibility and splitting would introduce
-shallow seams or navigation without leverage.
-
-Filesystem structure implements the design; it does not define it.
-
-Consult `rust-skills` project-structure guidance where Rust module mechanics,
-visibility, or re-exports matter.
-
-## Compare candidate representations
-
-For non-trivial choices, compare alternatives against:
-
-- semantic precision
-- invalid states prevented
-- caller knowledge
-- seam depth
-- caller and parent simplification where applicable
-- ownership clarity
-- error clarity
-- compile-time and runtime cost
-- cognitive cost
-- future variation supported by evidence
-- implementation knowledge hidden
-
-Prefer the least elaborate representation that preserves the needed semantics
-and depth.
-
-## Completion criterion
-
-For a proposal, explain how each proposed abstraction represents established
-semantics, whether invalid states need prevention and at what cost, why traits
-and generics serve real variation or a seam, and how ownership, visibility, and
-errors fit the intended callers. State how implementation representation remains
-private where possible and how callers or an existing parent become simpler.
-Label unimplemented guarantees as predictions.
-
-For implemented code, verify these claims against its actual constructors,
-public paths, operations, and callers.
+Prefer the least elaborate representation that preserves the needed semantics and recursive depth.
