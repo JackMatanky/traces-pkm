@@ -354,14 +354,6 @@ impl DurationValue {
     /// remainder rounds to zero, or `u64` overflows at the other extreme),
     /// falls back to [`DurationSeconds`]'s [`Display`](fmt::Display) so the
     /// result never lies as `"0s"`.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "part of DurationValue surface; called in tests and by \
-                      future classify/temporal callers"
-        )
-    )]
     #[inline]
     pub(crate) fn from_seconds(seconds: DurationSeconds) -> Self {
         Self {
@@ -1058,6 +1050,13 @@ impl DurationSeconds {
         } else {
             value
         })
+    }
+
+    /// Returns the raw seconds value as `f64`.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn as_f64(self) -> f64 {
+        self.0
     }
 }
 

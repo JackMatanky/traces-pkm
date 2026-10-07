@@ -1578,15 +1578,6 @@ pub enum DateError {
         /// The raw input that failed to parse.
         input: Box<str>,
     },
-    /// `pattern` is not a valid strftime specifier.
-    ///
-    /// No crate code path currently constructs this variant: date-format
-    /// rendering failures surface as template render errors instead.
-    #[error("`{pattern}` is not a valid format pattern")]
-    InvalidPattern {
-        /// The pattern that failed to render.
-        pattern: Box<str>,
-    },
     /// The process's local timezone could not resolve a naive input, or the
     /// resolved offset would push it outside `NaiveDateTime`'s range.
     ///
@@ -2553,6 +2544,8 @@ mod tests {
 
         #[test]
         fn converts_from_system_time_to_date_value() {
+            TzGuard::set("UTC");
+
             let system_time = std::time::SystemTime::UNIX_EPOCH
                 + std::time::Duration::from_secs(1_000);
             let converted = DateValue::from(system_time);
