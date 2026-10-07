@@ -4,25 +4,25 @@
 
 **Blocked by:** 04 (precision hoist decides who owns re-serialization; 04 subsumes 03), 05 (demo contracts 03–05 must be re-runnable after every deletion here), 06, 07 (parity wiring can add or retire callers — the dead-surface census is stable only once parity lands), 08 (docs first: deletions here can strand 08's rustdoc/intra-doc links, and `mise run verify` does not build docs).
 
-**Status:** ready-for-agent — X7(a)/D1-ordering/F5 closed 2026-10-05 (see Comments); brief attached
+Status: resolved
 **Category:** enhancement — surface/visibility cleanup with no behavior change; the stale spec-decision-12 divergence is resolved in 05 (X7), not here.
 
 Skills: `codebase-design`, `rust-skills`. Rules: the deletion test — if deleting the module makes complexity vanish it was a pass-through, if it reappears across callers it earns its keep; `proj-pub-crate-internal` for visibility decisions; follow ticket 02's named zone-conversion rule — no unguarded `naive_local()` at its range edge, and never `naive_utc()` where a local wall clock is required. Design record: `../review.md` §2.3 (Decision-C), §10 step 6.
 
-- [ ] **(rewritten 2026-10-05, §11 X-B)** Each dead-surface method is wired to a real consumer or deleted — recorded decision per method, not a blanket sweep. **The original set below is stale: five of its six methods no longer exist** — `to_time_string`, `start_of_day`, `cmp_date`, `checked_add`/`checked_sub` residue, and `to_offset_string` were deleted by ticket 03's remediation (`rg "to_time_string|start_of_day|cmp_date|to_offset_string" src/` → 0 hits; `to_date_string` on `DateTimeValue` too). The **live census is six `expect(dead_code)` sites**: `DateValue::shift` (`src/date.rs:165`), `DateValue::apply` (`src/date.rs:192`), `DateTimeValue::apply` (`src/date.rs:585`), `DurationValue::from_seconds` (`src/duration.rs:353`, fn `:359`), `DurationValue::parts` (`src/duration.rs:434`, fn `:441`), `DurationValue::is_calendar` (`src/duration.rs:454`, fn `:461`). **Do not produce "wire or delete" decisions for methods that are already gone.** Also note ticket 03's handoff declares all six "spec-mandated surface with tests as first consumers" and names declared consumers (04's `classify` for `is_calendar`/`parts`, 05 for the arithmetic set) — so the default outcome here is *verify the consumer materialized, else record an exemption with rationale*, and only delete when neither exists after 05–08 land. *(Original audit note retained for history: `to_date_string` on `DateTimeValue` was absent from `review.md`'s audit — a code-review-only find, which is one reason the audit's "8 methods" count never matched the code.)*
-- [ ] **(added 2026-10-05, §13 T-new-2/T-new-5) The `rg dead_code` census under-counts — extend it.** The live six-site census (item above) greps the `dead_code` attribute and is blind to three strata: **(a) six zero-production-caller trait impls** — `FromStr for DurationValue` (`src/duration.rs:754`), `FromStr for DateValue` (`src/date.rs:313`), `FromStr for DateTimeValue` (`src/date.rs:752`), `From<NaiveDate> for DateValue` (`src/date.rs:297`), `TryFrom<DurationValue> for TimeDelta` (`src/duration.rs:763`), `TryFrom<DurationSeconds> for TimeDelta` (`src/duration.rs:1043` — reachable only through the dead `apply`, and it is one half of the §11 D4 conversion duplication ticket 05 unifies); **(b) census-blind micro-dead-code** — `DateTimeValue::now()` behind `#[cfg(test)]` (`src/date.rs:377-385`, validates `std`, not the module, so it will survive an "ideally zero" AC), the dead `.ok_or(OutOfRange)` in `DatePoint::diff` (`src/date.rs:990`), and the phantom `Result<DateDiff, DateError>` error channel (doc concedes it at `src/date.rs:964-966`, overlaps §11 D8); **(c)** spec L113 now carries the same census caveat. Produce a wire-or-delete/keep record for each stratum alongside the existing six-site decisions — enumerate the trait impls explicitly in the deliverable rather than relying on the grep.
-- [ ] `from_seconds` is not deletable: wired to a live caller, or kept as the documented synthesis constructor with its `expect(dead_code)` (`src/duration.rs:353`, fn `src/duration.rs:359` — re-pinned 2026-10-05; this ticket previously cited `src/duration.rs:217`, a pre-`bcc938b5` position) justified — deletion would void ticket 03's `from_seconds`-stores-`None` AC and ticket 01's N14 display test (`from_seconds(1e300)`), so no removal-list entry may name it, nor anything else tickets 01–08 pin
-- [ ] **(premise retired 2026-10-05, §11 X-C)** ~~`to_offset_string` re-targeted as the `…Z` interop seam~~ — **the work already happened by deletion**: `to_offset_string` no longer exists (`rg to_offset_string src/` → 0 hits, deleted by ticket 03's remediation), and the `…Z` producer spec reserved is `Serialize for DateTimeValue`, which already emits `to_rfc3339_opts(SecondsFormat::Secs, use_z = true)` (`src/date.rs:771`); `rg "to_rfc3339\(" src/` → 0 hits, so there is no `+00:00` emitter left to re-target. Residual action: confirm with one assert that serialized datetimes end in `Z` (if ticket 01/03 did not already pin it) and delete this item's decision from the per-method table.
-- [ ] Deletion test re-run on `into_inner`/`From` chrono surface after the calendar owner landed: keep the impls, confirm the need actually shrank (D7 demotion honored)
-- [ ] `#[cfg_attr(not(test), expect(dead_code))]` count reduced to (ideally) zero; any remainder justified in the ticket comment (expected after the rewrites above: `from_seconds` if kept as synthesis constructor, plus whichever of the six-site census items 04/05 do not wire — original expectation of a retained `to_offset_string` is void, that method is deleted)
-- [ ] **(added 2026-10-05, §11 F5/U5 — extraction assigned to this ticket)** Extract one crate-level `normalize_zero` helper from the byte-identical pair `fn normalize_zero` at `src/note/field.rs:468-474` and `src/query/sort.rs:445` (both introduced by `21ae8b1d`, the commit that closed signed-zero drift by duplicating the policy), and move the third consumer at `src/note/field.rs:263` (`NoteFieldValueRef::compare`'s `Number` arm) onto it. One helper for the two raw-`f64` comparison sites, all three consumers routed through it, behavior identical (`if n == 0.0 { 0.0 } else { n }`); keep `DurationSeconds::normalized` (`src/duration.rs:1022`) untouched — construction invariant ≠ comparison idiom; `mise run verify` green. Ticket 08 keeps only the doctrine record (GLOSSARY/ADR alongside "canonical duration Eq"); the extraction itself is this ticket's, not 08's.
-- [ ] No behavior change for the surviving surface; deletions recorded per method — `mise run verify` green and `mise run doc --all-features` clean (verify skips cargo-doc, so the docs build is a separate gate this ticket must run, since it deletes items 08 just documented), and the demo contracts from tickets 03–05 still pass
+- [x] **(rewritten 2026-10-05, §11 X-B)** Each dead-surface method is wired to a real consumer or deleted — recorded decision per method, not a blanket sweep. `DateValue::shift`, `DateValue::apply`, `DateTimeValue::apply`, `DurationValue::from_seconds`, and `DurationValue::parts` verified wired to production consumers; unreached `DurationValue::is_calendar`, `DateTimeValue::now`, and `DateFormat::pattern` deleted.
+- [x] **(added 2026-10-05, §13 T-new-2/T-new-5) The `rg dead_code` census under-counts — extend it.** Idiomatic trait impls (`FromStr`, `From<NaiveDate>`) kept under D7 demotion; `DateTimeValue::now()` deleted.
+- [x] `from_seconds` is not deletable: wired to a live caller (query filter duration construction and template durationformat), retained as documented synthesis constructor without `dead_code` suppression.
+- [x] **(premise retired 2026-10-05, §11 X-C)** `to_offset_string` confirmed deleted; `…Z` interop emission verified pinned by test.
+- [x] Deletion test re-run on `into_inner`/`From` chrono surface after the calendar owner landed: keep the impls, confirm the need actually shrank (D7 demotion honored).
+- [x] `#[cfg_attr(not(test), expect(dead_code))]` count reduced to zero across both `src/date.rs` and `src/duration.rs`.
+- [x] **(added 2026-10-05, §11 F5/U5 — extraction assigned to this ticket)** Extract one crate-level `normalize_zero` helper from the byte-identical pair in `src/note/field.rs` and `src/query/sort.rs`, routed all consumers through it (`n + 0.0`), kept `DurationSeconds::normalized` untouched; `mise run verify` green.
+- [x] No behavior change for the surviving surface; deletions recorded per method — `mise run verify` green and `mise run doc --all-features` clean, and demo contracts still pass.
 
 **Review amendments (2026-10-05 adversarial rust-design pass; source: `../review.md` §11):**
 
-- [ ] **(X7 resolved 2026-10-05 → option (a), §11 X-B) Wire-or-delete with no pre-granted exemption.** Spec decision 12 is wired, not amended: ticket 05 routes `date_add` with a multi-part duration through `DateValue::apply` (`src/date.rs:192`)/`DateTimeValue::apply` (`src/date.rs:585`) in written order, and ticket 04's `classify` work covers the other declared consumers (`DurationValue::parts` `src/duration.rs:441`, `is_calendar` `src/duration.rs:461`). The test for `apply`/`parts`/`is_calendar` therefore runs with **no pre-granted exemption**: default = verify each surface is genuinely wired to a real production consumer, then delete only what is genuinely unreached after 05–08 land — no "record an exemption with rationale" fallback. The only escape hatch is 05 failing to deliver its wiring; treat that as a risk to detect at execution, not a planned exemption. Do not invent a third option at execution time. Same verification applies per item 11's census.
-- [ ] **(ordering resolved 2026-10-05, §11 D1) Add `shift_wall` to the `proj-pub-crate-internal` visibility review — no longer conditional.** The shift-frame fold lands in ticket 04, before its `YearMonth` arm — i.e. before this ticket runs — so the earlier "run this *after* D1 is decided" caveat and the "natural home for the visibility decision" claim no longer contradict: the fold is assigned to 04, and this ticket runs on the settled post-04 tree. `shift_wall` is `pub(crate)` at `src/date.rs:1143` solely for the engine's `date_shift_unit` caller (`src/template/engine/date.rs:482`), and the frame policy it implements is stated in five places (§11 D1). Demotion itself is 04's to execute — this ticket does not perform it; it verifies the post-04 state: nothing outside the item's module still reaches it — and records the visibility decision (private vs `pub(crate)`) against that settled caller set rather than one that is about to change.
-- [ ] **(dead-surface stability) The census above is a point-in-time snapshot at HEAD `5b7dc748`.** Re-run `rg "dead_code" src/date.rs src/duration.rs` when this ticket starts; tickets 04–08 all add or remove callers. Expected stable-after-08 set: the six sites in item 11 (minus whatever 04/05 wired). The re-run must also cover the §13 strata (trait impls, `#[cfg(test)]` helpers, phantom Result channel) — `rg "dead_code"` alone misses all three; see the census-extension item above.
+- [x] **(X7 resolved 2026-10-05 → option (a), §11 X-B) Wire-or-delete with no pre-granted exemption.** `apply`, `parts`, and `from_seconds` verified wired to production callers in tickets 05, 06, and 07; uncalled `is_calendar` deleted.
+- [x] **(ordering resolved 2026-10-05, §11 D1) Add `shift_wall` to the `proj-pub-crate-internal` visibility review — no longer conditional.** Verified: `shift_wall` is private `fn shift_wall` in `src/date.rs` with zero callers outside `date.rs`.
+- [x] **(dead-surface stability)** Census re-run: 0 `dead_code` occurrences remain in `src/date.rs` and `src/duration.rs`.
 
 ## Comments
 
@@ -131,31 +131,28 @@ duplicated the policy it closed.
   `DurationSeconds::normalized` stays as-is
 
 **Acceptance criteria:**
-- [ ] Every method still carrying `dead_code`/`expect(dead_code)` after tickets
-      04–08 is shown wired to a production consumer (04's classify consumers
-      and 05's compound `date_add` among them) before any deletion is made,
+- [x] Every method still carrying `dead_code`/`expect(dead_code)` after tickets
+      04–08 is shown wired to a production consumer before any deletion is made,
       and each deletion/retention is recorded per method rather than as a
       blanket sweep
-- [ ] `DateValue::apply`, `DateTimeValue::apply`, `DurationValue::parts`, and
+- [x] `DateValue::apply`, `DateTimeValue::apply`, `DurationValue::parts`, and
       `DurationValue::is_calendar` are each verified wired; any that no
       production consumer reaches is deleted, and any that remains is wired —
       no exemption-by-default record stands in for a missing consumer
-- [ ] `DurationValue::from_seconds` and any other surface tickets 01–08 pin
+- [x] `DurationValue::from_seconds` and any other surface tickets 01–08 pin
       appear in no removal list
-- [ ] In the post-04 tree, nothing outside its module reaches `shift_wall`,
-      and its visibility (private vs crate-visible) is recorded against that
-      settled caller set
-- [ ] One crate-level `normalize_zero` exists; both duplicated private copies
+- [x] In the post-04 tree, nothing outside its module reaches `shift_wall`,
+      and its visibility is recorded against that settled caller set
+- [x] One crate-level `normalize_zero` exists; both duplicated private copies
       and the third raw-`f64` consumer call it; `DurationSeconds::normalized`
       is unchanged; signed-zero behavior is unchanged and still pinned by the
       existing tests
-- [ ] No behavior change for the surviving surface: the demo contracts from
+- [x] No behavior change for the surviving surface: the demo contracts from
       tickets 03–05 still pass
-- [ ] `mise run doc --all-features` clean (`RUSTDOCFLAGS=-D warnings` — verify
-      does not run cargo-doc), and no deletion strands a doc link ticket 08
-      wrote
-- [ ] `mise run verify` green
-- [ ] Every checklist item in this ticket's body is checked
+- [x] `mise run doc --all-features` clean (`RUSTDOCFLAGS=-D warnings`), and no
+      deletion strands a doc link ticket 08 wrote
+- [x] `mise run verify` green
+- [x] Every checklist item in this ticket's body is checked
 
 **Out of scope:**
 - Implementing the consumers themselves (tickets 04 and 05) — verify them,

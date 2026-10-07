@@ -4,15 +4,17 @@ title: Source Expression Grammar for Query Selection
 date: 2026-09-14
 status: accepted
 tags:
-  - query
-  - grammar
-  - dsl
-  - source-expression
+- query
+- grammar
+- dsl
+- source-expression
 links:
-  - target: 5
-    kind: relatesto
-  - target: 6
-    kind: relatesto
+- target: 5
+  kind: relatesto
+- target: 6
+  kind: relatesto
+- target: 9
+  kind: relatesto
 ---
 
 # 8. Source Expression Grammar for Query Selection

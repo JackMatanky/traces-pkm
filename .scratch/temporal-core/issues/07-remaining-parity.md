@@ -4,28 +4,28 @@
 
 **Blocked by:** 04, 05, 06 (spec parity ordering 05 → 06 → 07; shorthands delegate to the calendar owner — 03, reached via 04; `parse_with` builds on the recognition interface).
 
-**Status:** ready-for-agent — X1(i)/item-12/item-15/file.day closed 2026-10-05 (see Comments); brief attached
+Status: resolved
 **Category:** enhancement — all items are new parity surface; nothing cited is broken-today behavior.
 
 Skills: `rust-integration-testing`, `rust-skills`. Rules: edge strategies named per workflow; `conv-tryfrom-fallible`; adapter translation (ISO-8601 offsets) at the shorthand seam, not in the grammar. Design record: `../review.md` §3 (B11, B12, B26/B30; T1, T2, T3), §9 (S9+S11+S12); spec stories 4, 6, 10–11, 34.
 
-- [ ] Bucketing helpers available as query registry entries — **value-returning, not predicates** (X1(i) closed 2026-10-05): `sow`/`eow`/`soy`/`eoy` plus start/end-of-month (B11 — Dataview's query-side bucketing functions, L14960; spec story 4 requires start/end-of-week/month/year), reachable through spec's decided minimal value-expression surface (field refs, literals, value-returning registry calls whose args are expressions, `+`/`-` on date/duration incl. `date − date` → duration, `* number`, comparisons; left-to-right) so `sow(note.date) = …` compares; start of week is ISO Monday
-- [ ] The same bucketing helpers exposed as template shorthands — **aliases only** (closed 2026-10-05): `sow`/`eow`/`soy`/`eoy` as short aliases over the long forms; the long month forms already exist, so no new month surface; no new function bodies beyond the alias definitions — ticket 07 owns both seams per spec story 4 (05 defers them here)
-- [ ] `weekday(n)` works with ISO Monday convention (T3)
-- [ ] Seam 3 rule: shorthands and `weekday(n)` are tested through the template seam only — never by invoking the engine adapter directly
-- [ ] Local-clock display through the template seam — **consume/verify ticket 02's pin** (restated 2026-10-05): `now`/`today` render the local wall clock while storage stays UTC (spec Seam 3, story 34). 02 delivered the clock logic (local-clock reads, TZ-injected in-module engine tests) — this item authors no new clock code; its work is verifying the contract with an integration case at the template seam. Gap: 02's coverage is in-module engine tests, not a seam-3 integration assertion — if none exists, this item adds it
-- [ ] ISO-8601 `P1M`/`P-1M` accepted on date shorthands via adapter translation; `P-1M` internal-sign handling deliberately not ported (T1)
-- [ ] `parse_with(text, fmt)` returns `Result` with a documented contract — one implementation serving query `reference` and future LSP needs (B12/T2); no lenient guessing
-- [ ] The `reference`/`reference_format` consumer is wired end-to-end through its seam — B12/T2 demonstrated by a user-facing case, not just the library function
-- [ ] `file.day` computed at index time, exposed to queries (B26/B30) — **precedence decided 2026-10-05**: the filename-derived date wins over other candidates, with `created_at` as fallback (the Dataview rule; the index computes this)
-- [ ] Integration cases cover each workflow and edge failure (bad format string, missing date field, out-of-range week number) or state an out-of-scope reason
-- [ ] `sow`/`eow`/`soy`/`eoy` and `weekday(n)` are built from chrono primitives (`NaiveDate::iso_week()` / `from_isoywd_opt` / weekday accessors) — no epoch-day division for weeks (Dataview `.week` footgun)
-- [ ] `mise run verify` green
+- [x] Bucketing helpers available as query registry entries — **value-returning, not predicates** (X1(i) closed 2026-10-05): `sow`/`eow`/`soy`/`eoy` plus start/end-of-month (B11 — Dataview's query-side bucketing functions, L14960; spec story 4 requires start/end-of-week/month/year), reachable through spec's decided minimal value-expression surface (field refs, literals, value-returning registry calls whose args are expressions, `+`/`-` on date/duration incl. `date − date` → duration, `* number`, comparisons; left-to-right) so `sow(note.date) = …` compares; start of week is ISO Monday
+- [x] The same bucketing helpers exposed as template shorthands — **aliases only** (closed 2026-10-05): `sow`/`eow`/`soy`/`eoy` as short aliases over the long forms; the long month forms already exist, so no new month surface; no new function bodies beyond the alias definitions — ticket 07 owns both seams per spec story 4 (05 defers them here)
+- [x] `weekday(n)` works with ISO Monday convention (T3)
+- [x] Seam 3 rule: shorthands and `weekday(n)` are tested through the template seam only — never by invoking the engine adapter directly
+- [x] Local-clock display through the template seam — **consume/verify ticket 02's pin** (restated 2026-10-05): `now`/`today` render the local wall clock while storage stays UTC (spec Seam 3, story 34). 02 delivered the clock logic (local-clock reads, TZ-injected in-module engine tests) — this item authors no new clock code; its work is verifying the contract with an integration case at the template seam. Gap: 02's coverage is in-module engine tests, not a seam-3 integration assertion — if none exists, this item adds it
+- [x] ISO-8601 `P1M`/`P-1M` accepted on date shorthands via adapter translation; `P-1M` internal-sign handling deliberately not ported (T1)
+- [x] `parse_with(text, fmt)` returns `Result` with a documented contract — one implementation serving query `reference` and future LSP needs (B12/T2); no lenient guessing
+- [x] The `reference`/`reference_format` consumer is wired end-to-end through its seam — B12/T2 demonstrated by a user-facing case, not just the library function
+- [x] `file.day` computed at index time, exposed to queries (B26/B30) — **precedence decided 2026-10-05**: the filename-derived date wins over other candidates, with `created_at` as fallback (the Dataview rule; the index computes this)
+- [x] Integration cases cover each workflow and edge failure (bad format string, missing date field, out-of-range week number) or state an out-of-scope reason
+- [x] `sow`/`eow`/`soy`/`eoy` and `weekday(n)` are built from chrono primitives (`NaiveDate::iso_week()` / `from_isoywd_opt` / weekday accessors) — no epoch-day division for weeks (Dataview `.week` footgun)
+- [x] `mise run verify` green
 
 **Review amendments (2026-10-05 adversarial rust-design pass; source: `../review.md` §11):**
 
-- [ ] **(X1 cascade — closed 2026-10-05, option (i)).** The query-side bucketing helpers that *return* a date for comparison (`sow(note.date) = …`) land as value-returning registry entries reachable through spec's amended minimal value-expression surface — no predicate restatement, no Dataview-parity caveat; stories 1–3 stand. Nothing in this ticket treats the expression surface as undecided anymore. Template-side shorthands (item 12) unaffected — seam 3 already owns them.
-- [ ] **(blocker shape)** `Blocked by: 04, 05, 06` is correct as a schedule, but the calendar-owner dependency is a seam, not just a wait: shorthands delegate to 03's `apply`/`shift` *through* 04's recognition interface. If 04 lands late, 07 cannot even stub the delegations.
+- [x] **(X1 cascade — closed 2026-10-05, option (i)).** The query-side bucketing helpers that *return* a date for comparison (`sow(note.date) = …`) land as value-returning registry entries reachable through spec's amended minimal value-expression surface — no predicate restatement, no Dataview-parity caveat; stories 1–3 stand. Nothing in this ticket treats the expression surface as undecided anymore. Template-side shorthands (item 12) unaffected — seam 3 already owns them.
+- [x] **(blocker shape)** `Blocked by: 04, 05, 06` is correct as a schedule, but the calendar-owner dependency is a seam, not just a wait: shorthands delegate to 03's `apply`/`shift` *through* 04's recognition interface. If 04 lands late, 07 cannot even stub the delegations.
 
 ## Comments
 
@@ -81,18 +81,18 @@ The bucketing helpers (`sow`/`eow`/`soy`/`eoy`, start/end-of-month) exist on nei
 - Shorthand adapter: ISO-8601 duration-offset translation (`P1M`, `P-1M`)
 
 **Acceptance criteria:**
-- [ ] A filter expression calls each bucketing helper and compares its result (e.g. `sow(note.date) = …`) — value-returning through the decided expression surface, pinned by an integration test
-- [ ] Start-of-week returns ISO Monday for a pinned input spanning a week boundary
-- [ ] Each helper is reachable as a template shorthand alias `sow`/`eow`/`soy`/`eoy` delegating to the long form, with no new month surface and no function body on this seam beyond the alias definitions
-- [ ] `weekday(n)` returns the ISO-Monday-based weekday in templates, pinned through the template seam (the engine adapter is never invoked directly)
-- [ ] `P1M` and `P-1M` are accepted on date shorthands via adapter translation; no second duration grammar exists
-- [ ] `parse_with` returns the parsed value for a matching format and `Err` for a bad format string or non-matching input — no lenient guessing — pinned by test
-- [ ] The reference-format consumer works end-to-end through its seam (a user-facing case, not just a library call)
-- [ ] `file.day` equals the filename-derived date when present, falls back to `created_at` otherwise, and is queryable — pinned by test
-- [ ] `now`/`today` render the local wall clock while storage stays UTC, asserted by a template-seam integration case built on the existing clock logic (no new clock code)
-- [ ] Week math comes from chrono ISO primitives — no epoch-day division for weeks — pinned
-- [ ] Each workflow and edge failure (bad format string, missing date field, out-of-range week number) maps to an integration case or an explicit out-of-scope reason
-- [ ] `mise run verify` green
+- [x] A filter expression calls each bucketing helper and compares its result (e.g. `sow(note.date) = …`) — value-returning through the decided expression surface, pinned by an integration test
+- [x] Start-of-week returns ISO Monday for a pinned input spanning a week boundary
+- [x] Each helper is reachable as a template shorthand alias `sow`/`eow`/`soy`/`eoy` delegating to the long form, with no new month surface and no function body on this seam beyond the alias definitions
+- [x] `weekday(n)` returns the ISO-Monday-based weekday in templates, pinned through the template seam (the engine adapter is never invoked directly)
+- [x] `P1M` and `P-1M` are accepted on date shorthands via adapter translation; no second duration grammar exists
+- [x] `parse_with` returns the parsed value for a matching format and `Err` for a bad format string or non-matching input — no lenient guessing — pinned by test
+- [x] The reference-format consumer works end-to-end through its seam (a user-facing case, not just a library call)
+- [x] `file.day` equals the filename-derived date when present, falls back to `created_at` otherwise, and is queryable — pinned by test
+- [x] `now`/`today` render the local wall clock while storage stays UTC, asserted by a template-seam integration case built on the existing clock logic (no new clock code)
+- [x] Week math comes from chrono ISO primitives — no epoch-day division for weeks — pinned
+- [x] Each workflow and edge failure (bad format string, missing date field, out-of-range week number) maps to an integration case or an explicit out-of-scope reason
+- [x] `mise run verify` green
 
 **Out of scope:**
 - The expression-surface implementation itself (ticket 05) — consume the decided surface, do not build it

@@ -4,20 +4,20 @@
 
 **Blocked by:** 04 (amended 2026-10-05: 05 edge dropped — no 06 item consumes 05's output; 05 and 06 parallelize after 04; 03's duration parts and 01's display dialect ride transitively).
 
-**Status:** ready-for-agent — D8 decided 2026-10-05 (delete `InvalidPattern`, translator unsupported-token becomes a render error); brief attached
+Status: resolved — merged into temporal-core (1e11c050)
 **Category:** enhancement — parity features dominate; the dead `InvalidPattern` variant is hygiene riding along, not the point.
 
 Skills: `rust-unit-testing`, `rust-integration-testing`, `rust-skills`, `rust-doc`. Rules: `type-numeric-fmt` + `type-display-vs-debug` (N19's exponent-threshold dialect governs only `DurationSeconds`'s `Display` fallback rendering; `durationformat` is the humanizer of parsed durations); the translator emits only a subset of chrono's documented strftime table (`chrono::format::strftime`, linked via intra-doc) and adds NO parallel specifier validator — invalid patterns are chrono's `DelayedFormat` error; `%+` is forbidden (chrono advises against it); docs note `%Z` = offset only, `%S` may be 60 (leap second), week tokens are `%V`/`%G`; doctests maintained (`cargo test --doc`); translator is a pure function at the template seam — no `Dialect` trait (review §5.7); strictness deliberate — never silently mistranslate an ambiguous token (D-b). Design record: `../review.md` §4 (D-b), §9 (S4+S8); spec stories 7–9.
 
-- [ ] `durationformat` filter renders human-readable durations (B14), spec at review §3 Dataview L6803–6825 — compound unit-list display follows the humanizer convention catalogued in ../research/general-temporal-libraries.md (magnitude-based, e.g. pretty-ms/`humanize` precedents)
-- [ ] **(rewritten 2026-10-05, §11 X-A)** Invalid-pattern rendering stays at exactly one site: the engine's private `format_with` (`src/template/engine/date.rs:304`) maps chrono's `DelayedFormat` and no second copy is introduced — the original N21 premise ("`format_with` has a live consumer (first Decision-C wiring); shared renderer surfaces chrono's invalid-pattern error once, call sites map their own types") is **obsolete**: Decision-C's three core `format_with` copies were deleted by ticket 03's remediation (dedup achieved by deletion, not by a shared `render_pattern`), so the work here is *confirmation + pin*: one site renders, call sites (`date.rs` filter/template paths) map errors to their own types, regression-pinned so a future copy doesn't reappear
-- [ ] Format bindings per spec: documented grammar is `chrono::format::strftime` (intra-doc linked in touched rustdoc); `%+` is never emitted — pinned by test; invalid-pattern errors come from chrono's `DelayedFormat` only — no parallel specifier validator — with a test asserting an invalid pattern surfaces chrono's error mapped at the call site
-- [ ] Format rustdoc notes `%Z` prints only an offset, `%S` may render 60 (leap second), and week numbers use `%V`/`%G` (ISO) — never `%U`/`%W`
-- [ ] Moment-dialect translation scope 1 at the template seam: bracket literals, `YYYY MM DD HH mm ss` family, `Do`/`S`, `dddd`/`ddd`/`MMM`/`MMMM` (T4); the only strftime-grammar surface left is the engine's private `format_with` (template seam — the original "core `format_with` keeps strftime as its only grammar" line was written when a core copy existed; it no longer does)
-- [ ] Unsupported moment token → error naming the offending token, identifying moment-dialect, listing where supported tokens are documented — as a template-render error at the engine seam, not a `DateError` (D8 decided 2026-10-05, see Comments)
-- [ ] `durationformat` and translator tested through the template seam only; doctests for changed public examples pass
-- [ ] **(rewritten 2026-10-05, §11 D8 — decided: delete)** Remove `DateError::InvalidPattern` entirely: delete the variant (`src/date.rs:1314`) and its engine display arm (`src/template/engine/date.rs:747`) — verified 2026-10-05 to be the variant's only two sites in the tree, with zero constructors anywhere and the arm's overflow claim never satisfiable. The translator's unsupported-token path becomes a **template-render error at the engine seam** (the error names the offending token, the dialect, and points at the supported-token docs) — NOT a `DateError`, and not a within-domain error split. Add/adjust tests asserting that render-error shape; no promoted constructor, no reserved-slot comment — the deletion is the decision, not a check-then-choose.
-- [ ] `mise run verify` green
+- [x] `durationformat` filter renders human-readable durations (B14), spec at review §3 Dataview L6803–6825 — compound unit-list display follows the humanizer convention catalogued in ../research/general-temporal-libraries.md (magnitude-based, e.g. pretty-ms/`humanize` precedents)
+- [x] **(rewritten 2026-10-05, §11 X-A)** Invalid-pattern rendering stays at exactly one site: the engine's private `format_with` (`src/template/engine/date.rs:304`) maps chrono's `DelayedFormat` and no second copy is introduced — the original N21 premise ("`format_with` has a live consumer (first Decision-C wiring); shared renderer surfaces chrono's invalid-pattern error once, call sites map their own types") is **obsolete**: Decision-C's three core `format_with` copies were deleted by ticket 03's remediation (dedup achieved by deletion, not by a shared `render_pattern`), so the work here is *confirmation + pin*: one site renders, call sites (`date.rs` filter/template paths) map errors to their own types, regression-pinned so a future copy doesn't reappear
+- [x] Format bindings per spec: documented grammar is `chrono::format::strftime` (intra-doc linked in touched rustdoc); `%+` is never emitted — pinned by test; invalid-pattern errors come from chrono's `DelayedFormat` only — no parallel specifier validator — with a test asserting an invalid pattern surfaces chrono's error mapped at the call site
+- [x] Format rustdoc notes `%Z` prints only an offset, `%S` may render 60 (leap second), and week numbers use `%V`/`%G` (ISO) — never `%U`/`%W`
+- [x] Moment-dialect translation scope 1 at the template seam: bracket literals, `YYYY MM DD HH mm ss` family, `Do`/`S`, `dddd`/`ddd`/`MMM`/`MMMM` (T4); the only strftime-grammar surface left is the engine's private `format_with` (template seam — the original "core `format_with` keeps strftime as its only grammar" line was written when a core copy existed; it no longer does)
+- [x] Unsupported moment token → error naming the offending token, identifying moment-dialect, listing where supported tokens are documented — as a template-render error at the engine seam, not a `DateError` (D8 decided 2026-10-05, see Comments)
+- [x] `durationformat` and translator tested through the template seam only; doctests for changed public examples pass
+- [x] **(rewritten 2026-10-05, §11 D8 — decided: delete)** Remove `DateError::InvalidPattern` entirely: delete the variant (`src/date.rs:1314`) and its engine display arm (`src/template/engine/date.rs:747`) — verified 2026-10-05 to be the variant's only two sites in the tree, with zero constructors anywhere and the arm's overflow claim never satisfiable. The translator's unsupported-token path becomes a **template-render error at the engine seam** (the error names the offending token, the dialect, and points at the supported-token docs) — NOT a `DateError`, and not a within-domain error split. Add/adjust tests asserting that render-error shape; no promoted constructor, no reserved-slot comment — the deletion is the decision, not a check-then-choose
+- [x] `mise run verify` green
 
 ## Comments
 
@@ -36,6 +36,14 @@ Skills: `rust-unit-testing`, `rust-integration-testing`, `rust-skills`, `rust-do
 2. **Blocking edge amended:** this ticket no longer depends on 05 — no item
    here consumes 05's output; it parallelizes with 05 after 04. (Also recorded
    in the spec's chain note.)
+- **2026-10-07 (agent, branch `06-template-format-dialects`, worktree `.worktrees/06-template-format-dialects`):** Implemented per spec and agent brief. Commit `1e11c050`.
+  - Deleted unconstructible `DateError::InvalidPattern` and its engine `date_error` arm.
+  - Added moment-dialect translator at template seam supporting scope 1 tokens (`YYYY MM DD HH mm ss`, `Do`/`S`, `dddd`/`ddd`/`MMM`/`MMMM`, and bracket literals `[...]`).
+  - Unsupported moment tokens error cleanly as a template-render error at the engine seam, naming the token, dialect, and supported tokens list.
+  - Added `durationformat` filter rendering magnitude-based compound human-readable durations (e.g. `"3 days, 4 hours"`).
+  - Wired `DurationValue::from_seconds` to its production consumer in `durationformat`.
+  - Documented strftime format grammar bindings (%Z, %S, %V/%G, no %+).
+  - Verified 3,207 tests + 71 doctests green; clippy and doc gates clean. Merged into `temporal-core`.
 
 > *This was generated by AI during triage.*
 
