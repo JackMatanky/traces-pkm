@@ -406,6 +406,17 @@ impl DurationValue {
         self.parts.as_deref()
     }
 
+    /// Returns `true` if this duration contains any calendar-application units
+    /// in its parsed parts.
+    #[cfg(test)]
+    #[inline]
+    #[must_use]
+    pub(crate) fn is_calendar(&self) -> bool {
+        self.parts().is_some_and(|parts| {
+            parts.iter().any(|&(_, unit)| unit.is_calendar())
+        })
+    }
+
     /// Returns the raw duration text.
     #[inline]
     #[must_use]
@@ -930,6 +941,15 @@ impl DurationUnit {
             Self::Month => 2_592_000.0,
             Self::Year => 31_536_000.0,
         }
+    }
+
+    /// Returns `true` if this unit is a calendar application unit
+    /// ([`Self::Day`], [`Self::Week`], [`Self::Month`], or [`Self::Year`]).
+    #[cfg(test)]
+    #[inline]
+    #[must_use]
+    pub(crate) const fn is_calendar(self) -> bool {
+        matches!(self, Self::Day | Self::Week | Self::Month | Self::Year)
     }
 
     /// Whole fixed seconds per unit as `i64`, derived from
@@ -1906,6 +1926,30 @@ mod tests {
                     bit_exact,
                     "Σ fold must reconstruct stored seconds bit-exactly"
                 );
+            }
+            #[test]
+            fn identifies_calendar_units_and_durations() {
+                assert!(DurationUnit::Day.is_calendar());
+                assert!(DurationUnit::Week.is_calendar());
+                assert!(DurationUnit::Month.is_calendar());
+                assert!(DurationUnit::Year.is_calendar());
+                assert!(!DurationUnit::Hour.is_calendar());
+                assert!(!DurationUnit::Minute.is_calendar());
+                assert!(!DurationUnit::Second.is_calendar());
+                assert!(!DurationUnit::Millisecond.is_calendar());
+
+                let cal =
+                    DurationValue::parse("1mo 2d").expect("valid duration");
+                assert!(cal.is_calendar());
+
+                let fixed =
+                    DurationValue::parse("2h 30m").expect("valid duration");
+                assert!(!fixed.is_calendar());
+
+                let synth = DurationValue::from_seconds(
+                    DurationSeconds::try_from(86_400.0).unwrap(),
+                );
+                assert!(!synth.is_calendar());
             }
         }
 

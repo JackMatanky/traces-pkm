@@ -138,9 +138,9 @@ fn today_point() -> DatePoint {
 ///
 /// # Errors
 ///
-/// Returns an [`ErrorKind::InvalidOperation`] error if `input` has an ISO
-/// duration prefix (`P`) but contains malformed components, invalid units, or
-/// unconsumed trailing text.
+/// - [`ErrorKind::InvalidOperation`] if `input` has an ISO duration prefix (`P`
+///   or `p`) but contains malformed components, invalid units, or unconsumed
+///   trailing text.
 fn translate_iso_offset(input: &str) -> TemplateEngineResult<Cow<'_, str>> {
     let trimmed = input.trim();
     let (lead_neg, after_lead_sign) = match trimmed.strip_prefix('-') {
@@ -1236,7 +1236,7 @@ fn sub_years(value: &str, n: u32) -> TemplateEngineResult<String> {
 /// # Errors
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
-///   string; see [`ParsedDate::parse`].
+///   string; see [`parse_recognized`].
 /// - [`ErrorKind::InvalidOperation`] if the first day of the month is outside
 ///   chrono's representable range; see [`date_out_of_range_error`].
 fn start_of_month(value: &str) -> TemplateEngineResult<String> {
@@ -1248,7 +1248,7 @@ fn start_of_month(value: &str) -> TemplateEngineResult<String> {
 /// # Errors
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
-///   string; see [`ParsedDate::parse`].
+///   string; see [`parse_recognized`].
 /// - [`ErrorKind::InvalidOperation`] if the last day of the month is outside
 ///   chrono's representable range; see [`date_out_of_range_error`].
 fn end_of_month(value: &str) -> TemplateEngineResult<String> {
@@ -1301,7 +1301,7 @@ fn weekday(
 /// # Errors
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` or `other` is not a parseable
-///   date/time string (see [`ParsedDate::parse`]) or `unit` is not one of
+///   date/time string (see [`parse_recognized`]) or `unit` is not one of
 ///   [`DurationUnit::parse`]'s accepted names (see [`unit_kwarg`]).
 /// - [`ErrorKind::InvalidOperation`] if the difference overflows chrono's
 ///   representable range (see [`date_error`]).
@@ -1977,6 +1977,14 @@ mod tests {
         #[case::minutes_seconds("1m 30s", "1 minute, 30 seconds")]
         #[case::zero_duration("0s", "0 seconds")]
         #[case::negative_duration("-3d 4h", "-3 days, 4 hours")]
+        #[case::sub_second_milliseconds("500ms", "500 milliseconds")]
+        #[case::fractional_seconds("1.5s", "1 second, 500 milliseconds")]
+        #[case::sub_millisecond_residual("0.0001s", "< 1 millisecond")]
+        #[case::extreme_magnitudes("1e300s", "1e300 seconds")]
+        #[case::negative_fractional_seconds(
+            "-1.5s",
+            "-1 second, 500 milliseconds"
+        )]
         fn formats_compound_durations(
             #[case] input: &str,
             #[case] expected: &str,
@@ -2004,18 +2012,6 @@ mod tests {
         }
 
         #[test]
-        fn formats_sub_second_duration_as_milliseconds() {
-            let rendered = env()
-                .render_str(
-                    r#"{{ "500ms" | durationformat }}"#,
-                    minijinja::context!(),
-                )
-                .expect("render succeeds");
-
-            assert_eq!(rendered, "500 milliseconds");
-        }
-
-        #[test]
         fn rejects_invalid_duration_value() {
             let error = env()
                 .render_str(
@@ -2025,54 +2021,6 @@ mod tests {
                 .expect_err("invalid duration fails");
 
             assert_eq!(error.kind(), ErrorKind::InvalidOperation);
-        }
-
-        #[test]
-        fn formats_compound_with_fractional_seconds() {
-            let rendered = env()
-                .render_str(
-                    r#"{{ "1.5s" | durationformat }}"#,
-                    minijinja::context!(),
-                )
-                .expect("render succeeds");
-
-            assert_eq!(rendered, "1 second, 500 milliseconds");
-        }
-
-        #[test]
-        fn formats_sub_millisecond_duration_truthfully() {
-            let rendered = env()
-                .render_str(
-                    r#"{{ "0.0001s" | durationformat }}"#,
-                    minijinja::context!(),
-                )
-                .expect("render succeeds");
-
-            assert_eq!(rendered, "< 1 millisecond");
-        }
-
-        #[test]
-        fn formats_extreme_duration_magnitudes_without_saturating() {
-            let rendered = env()
-                .render_str(
-                    r#"{{ "1e300s" | durationformat }}"#,
-                    minijinja::context!(),
-                )
-                .expect("render succeeds");
-
-            assert_eq!(rendered, "1e300 seconds");
-        }
-
-        #[test]
-        fn formats_negative_compound_with_milliseconds() {
-            let rendered = env()
-                .render_str(
-                    r#"{{ "-1.5s" | durationformat }}"#,
-                    minijinja::context!(),
-                )
-                .expect("render succeeds");
-
-            assert_eq!(rendered, "-1 second, 500 milliseconds");
         }
     }
 
