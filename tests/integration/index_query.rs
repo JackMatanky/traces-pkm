@@ -597,4 +597,16 @@ fn filters_pages_handle_null_and_missing_temporal_operands() {
         .expect("valid filter");
     let null_eq_rows = service.run(&index, null_eq_query);
     assert_eq!(null_eq_rows.len(), 2);
+
+    let null_add_unit_query = QueryBuilder::pages(SourceSelector::All)
+        .filter("date_add(due, 1, \"day\") == null")
+        .expect("valid filter");
+    let null_add_unit_rows = service.run(&index, null_add_unit_query);
+    assert_eq!(null_add_unit_rows.len(), 2);
+
+    let null_comp_query = QueryBuilder::pages(SourceSelector::All)
+        .filter("date_component(due, \"year\") == null")
+        .expect("valid filter");
+    let null_comp_rows = service.run(&index, null_comp_query);
+    assert_eq!(null_comp_rows.len(), 2);
 }

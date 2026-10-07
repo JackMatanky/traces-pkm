@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use pretty_assertions::{assert_eq, assert_ne};
+use rstest::rstest;
 use traces_pkm::{
     CommitPolicy, PresetDialogProvider, TemplatePathInput, TemplateService,
     TestProject, TzGuard, WriteMode, WriteOutcome,
@@ -408,13 +409,16 @@ fn template_filters_support_bucketing_aliases_and_weekday_arg() {
 }
 
 /// Proves template weekday rejects out-of-range argument.
-#[test]
-fn template_weekday_rejects_out_of_range_day_index() {
+#[rstest]
+#[case::above_range(8)]
+#[case::negative(-1)]
+#[case::far_out_of_range(99)]
+fn template_weekday_rejects_out_of_range_day_index(#[case] invalid_idx: i64) {
     let temp = tempfile::tempdir().expect("create temp dir");
     let project = TestProject::trusted(temp.path().join("project"));
     project.write_template(
         "invalid_weekday.md",
-        r#"{{ "2026-07-29" | weekday(8) }}"#,
+        &format!(r#"{{{{ "2026-07-29" | weekday({invalid_idx}) }}}}"#),
     );
     let config = project.config();
     let service =

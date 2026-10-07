@@ -415,6 +415,9 @@ fn evaluate_registry_call(
             ),
             [date, NoteFieldValue::Number(n), NoteFieldValue::String(unit)] => {
                 use num_traits::ToPrimitive as _;
+                if matches!(date, NoteFieldValue::Null) {
+                    return Some(NoteFieldValue::Null);
+                }
                 let unit = DurationUnit::parse(unit)?;
                 let n = (n.fract() == 0.0).then(|| n.to_i64()).flatten()?;
                 let shifted = date_point(date)?.shift(n, unit).ok()?;
@@ -537,6 +540,9 @@ fn evaluate_date_component(args: &[NoteFieldValue]) -> Option<NoteFieldValue> {
     let [date, NoteFieldValue::String(component)] = args else {
         return Some(NoteFieldValue::Null);
     };
+    if matches!(date, NoteFieldValue::Null) {
+        return Some(NoteFieldValue::Null);
+    }
     let wall = date_point(date)?.wall;
     let number = if component.eq_ignore_ascii_case("year") {
         f64::from(wall.year())
@@ -555,7 +561,7 @@ fn evaluate_date_component(args: &[NoteFieldValue]) -> Option<NoteFieldValue> {
     } else if component.eq_ignore_ascii_case("week") {
         f64::from(wall.iso_week().week())
     } else {
-        return None;
+        return Some(NoteFieldValue::Null);
     };
     Some(NoteFieldValue::Number(number))
 }
