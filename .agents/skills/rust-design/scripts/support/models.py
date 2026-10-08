@@ -1,4 +1,8 @@
-"""Pydantic schemas for rust-design tool probes and architectural reports."""
+"""Pydantic schemas for rust-design tool probes and architectural reports.
+
+Defines validated data models for tool probing, source metrics, dependency
+graphs, CRAP risk scoring, hypothesis ledgers, and comparative diff reports.
+"""
 
 from __future__ import annotations
 
@@ -11,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 # Base Schema Model
 # ---------------------------------------------------------------------------
 class StrictSchemaModel(BaseModel):
-    """Base model enforcing strict type validation and immutability defaults."""
+    """Base model enforcing type validation and field population defaults."""
 
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
@@ -47,7 +51,7 @@ class EnvironmentContext(StrictSchemaModel):
 
 
 class ProbeReport(StrictSchemaModel):
-    """Complete probe report."""
+    """Complete environment tool capability report."""
 
     timestamp: str
     environment: EnvironmentContext
@@ -64,7 +68,14 @@ class FileMetrics(StrictSchemaModel):
     sloc: int = Field(
         ge=0, description="Source lines of code excluding comments and blanks"
     )
-    comment_lines: int = Field(ge=0, description="Comment and doc lines")
+    comment_lines: int = Field(
+        ge=0, description="Total comment lines (doc comments and impl comments)"
+    )
+    doc_comment_lines: int = Field(
+        default=0,
+        ge=0,
+        description="Preserved doc comment lines (///, //!, /** ... */)",
+    )
     node_count: int = Field(
         default=0, ge=0, description="Knowledge graph node/symbol count"
     )
@@ -115,6 +126,11 @@ class BaselineMetrics(StrictSchemaModel):
 
     total_sloc: int = Field(ge=0)
     total_comment_lines: int = Field(ge=0)
+    total_doc_comments: int = Field(
+        default=0,
+        ge=0,
+        description="Total preserved documentation comment lines",
+    )
     public_api_item_count: int = Field(ge=0)
     module_count: int = Field(ge=0)
     cyclic_dependencies_count: int = Field(ge=0)
@@ -128,6 +144,11 @@ class BaselineMetrics(StrictSchemaModel):
     duplicate_dependencies_count: int = Field(ge=0)
     graph_nodes_count: int = Field(ge=0)
     graph_edges_count: int = Field(ge=0)
+    max_file_sloc: int = Field(
+        default=0,
+        ge=0,
+        description="Maximum SLoC in any single file across scanned scope",
+    )
 
 
 class TargetDescriptor(StrictSchemaModel):
@@ -135,6 +156,17 @@ class TargetDescriptor(StrictSchemaModel):
 
     path: str
     crate: str = "workspace"
+    manifest_path: str | None = None
+
+
+class ToolGapRecord(StrictSchemaModel):
+    """Structured record of an unavailable tool or failed analysis."""
+
+    tool: str
+    reason: str
+    category: Literal[
+        "not_installed", "execution_failed", "timeout", "not_applicable"
+    ] = "not_installed"
 
 
 class ArchitecturalBaselineReport(StrictSchemaModel):
@@ -184,6 +216,7 @@ class TrialResult(StrictSchemaModel):
     timestamp: str
     sloc_delta: int = 0
     comment_delta: int = 0
+    doc_comment_delta: int = 0
     crap_delta: int = 0
     api_item_delta: int = 0
     tests_passed: bool = True
@@ -198,6 +231,7 @@ class ScoreboardEntry(StrictSchemaModel):
     commit_or_ref: str
     sloc: int = Field(ge=0)
     comment_lines: int = Field(ge=0)
+    doc_comment_lines: int = Field(default=0, ge=0)
     crap_elevated: int = Field(default=0, ge=0)
     public_api_items: int = Field(default=0, ge=0)
     graph_edges: int = Field(default=0, ge=0)

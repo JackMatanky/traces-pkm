@@ -7,91 +7,127 @@
 # ///
 """Deterministic before-and-after architectural diff calculator.
 
-Compares two baseline JSON files and outputs a formatted Markdown table
-for report.md.
+Compares architectural baseline JSON files, calculates signed and percentage
+deltas across metrics (SLoC, doc comments, CRAP risks, graph density, god-file
+risk), and renders formatted Markdown tables for architectural reports.
 
 Usage:
     .agents/skills/rust-design/scripts/diff.py <base_json> <final_json>
+    .agents/skills/rust-design/scripts/diff.py --scoreboard <label:path ...>
+    .agents/skills/rust-design/scripts/diff.py --ledger <ledger_json>
     uv run diff.py <base_json> <final_json>
 """
 
 from __future__ import annotations
 
+import argparse
 import pathlib
 import sys
 from typing import NamedTuple
 
-from support import models, runner
+from support import catalog, io, models
 
 
-class MetricDimensionSpec(NamedTuple):
-    """Specification of an architectural metric row in the report table."""
+class ArchitecturalMetricSpec(NamedTuple):
+    """Specification of a comparative metric dimension in the diff report."""
 
     label: str
-    attribute: str
-    source: str
+    attribute_name: str
+    evidence_source: str
+    fallback_attribute: str | None = None
 
 
-# Table formatting schema linked directly to BaselineMetrics attributes
-# and ToolSpec evidence sources.
-DIFF_METRIC_SCHEMA: tuple[MetricDimensionSpec, ...] = (
-    MetricDimensionSpec(
-        "Source Lines of Code (SLoC)", "total_sloc", "rust_design/measure"
+# Central table formatting schema linked to BaselineMetrics attributes
+DIFF_METRIC_SCHEMA: tuple[ArchitecturalMetricSpec, ...] = (
+    ArchitecturalMetricSpec(
+        label="Source Lines of Code (SLoC)",
+        attribute_name="total_sloc",
+        evidence_source="rust_design/measure",
     ),
-    MetricDimensionSpec(
-        "Doc Comment Lines (Anti-Gaming)",
-        "total_comment_lines",
-        "rust_design/measure",
+    ArchitecturalMetricSpec(
+        label="Doc Comment Lines (Anti-Gaming)",
+        attribute_name="total_doc_comments",
+        fallback_attribute="total_comment_lines",
+        evidence_source="rust_design/measure",
     ),
-    MetricDimensionSpec(
-        "Public API Footprint (IKL)",
-        "public_api_item_count",
-        runner.TOOL_SPECS["cargo_public_api"].default_evidence_name
-        or "cargo-public-api",
+    ArchitecturalMetricSpec(
+        label="Public API Footprint (IKL)",
+        attribute_name="public_api_item_count",
+        evidence_source=(
+            catalog.ANALYSIS_TOOL_CATALOG[
+                "cargo_public_api"
+            ].default_evidence_name
+            or "cargo-public-api"
+        ),
     ),
-    MetricDimensionSpec(
-        "Elevated CRAP Functions (>8.0)",
-        "elevated_crap_functions_count",
-        runner.TOOL_SPECS["cargo_crap"].default_evidence_name or "cargo-crap",
+    ArchitecturalMetricSpec(
+        label="Elevated CRAP Functions (>8.0)",
+        attribute_name="elevated_crap_functions_count",
+        evidence_source=(
+            catalog.ANALYSIS_TOOL_CATALOG["cargo_crap"].default_evidence_name
+            or "cargo-crap"
+        ),
     ),
-    MetricDimensionSpec(
-        "High CRAP Functions (>15.0)",
-        "high_crap_functions_count",
-        runner.TOOL_SPECS["cargo_crap"].default_evidence_name or "cargo-crap",
+    ArchitecturalMetricSpec(
+        label="High CRAP Functions (>15.0)",
+        attribute_name="high_crap_functions_count",
+        evidence_source=(
+            catalog.ANALYSIS_TOOL_CATALOG["cargo_crap"].default_evidence_name
+            or "cargo-crap"
+        ),
     ),
-    MetricDimensionSpec(
-        "Maintainability Hotspots",
-        "maintainability_hotspots_count",
-        runner.TOOL_SPECS["messrust"].default_evidence_name or "messrust",
+    ArchitecturalMetricSpec(
+        label="Maintainability Hotspots",
+        attribute_name="maintainability_hotspots_count",
+        evidence_source=(
+            catalog.ANALYSIS_TOOL_CATALOG["messrust"].default_evidence_name
+            or "messrust"
+        ),
     ),
-    MetricDimensionSpec(
-        "Cyclic Dependency Edges",
-        "cyclic_dependencies_count",
-        runner.TOOL_SPECS["cargo_modules"].default_evidence_name
-        or "cargo-modules",
+    ArchitecturalMetricSpec(
+        label="Cyclic Dependency Edges",
+        attribute_name="cyclic_dependencies_count",
+        evidence_source=(
+            catalog.ANALYSIS_TOOL_CATALOG["cargo_modules"].default_evidence_name
+            or "cargo-modules"
+        ),
     ),
-    MetricDimensionSpec(
-        "Duplicate Crate Versions",
-        "duplicate_dependencies_count",
-        runner.TOOL_SPECS["cargo_tree"].default_evidence_name
-        or "cargo tree -d",
+    ArchitecturalMetricSpec(
+        label="Duplicate Crate Versions",
+        attribute_name="duplicate_dependencies_count",
+        evidence_source=(
+            catalog.ANALYSIS_TOOL_CATALOG["cargo_tree"].default_evidence_name
+            or "cargo tree -d"
+        ),
     ),
-    MetricDimensionSpec(
-        "Graph Edge Density (Coupling)",
-        "graph_edges_count",
-        runner.TOOL_SPECS["codegraph"].default_evidence_name
-        or "codegraph / rustgraph",
+    ArchitecturalMetricSpec(
+        label="Graph Edge Density (Coupling)",
+        attribute_name="graph_edges_count",
+        evidence_source=(
+            catalog.ANALYSIS_TOOL_CATALOG["codegraph"].default_evidence_name
+            or "codegraph / rustgraph"
+        ),
+    ),
+    ArchitecturalMetricSpec(
+        label="Max File SLoC (God-Module Risk)",
+        attribute_name="max_file_sloc",
+        evidence_source="rust_design/measure",
+    ),
+    ArchitecturalMetricSpec(
+        label="Module / File Count",
+        attribute_name="module_count",
+        evidence_source="rust_design/measure",
     ),
 )
 
-TABLE_HEADER: str = (
+DIFF_TABLE_HEADER: str = (
     "## 2. True Architectural Baseline vs. Proposed / Final State\n\n"
     "| Metric Dimension | Baseline | Final / Observed "
     "| Delta | Evidence Source |\n"
     "| :--- | :--- | :--- | :--- | :--- |"
 )
 
-SCOREBOARD_HEADER: str = (
+SCOREBOARD_TABLE_HEADER: str = (
     "## Multi-Trial Progression Scoreboard\n\n"
     "| Trial / Step | SLoC | Doc Comments | CRAP > 8.0 "
     "| Public API | Graph Edges | Tests | Status |\n"
@@ -99,58 +135,78 @@ SCOREBOARD_HEADER: str = (
 )
 
 
-def calc_metric_delta(base: int | float, final: int | float) -> tuple[str, str]:
-    """Calculate signed difference and percentage change."""
-    delta: int | float = final - base
-    if base == 0:
+def calculate_metric_delta(
+    base_val: int | float, final_val: int | float
+) -> tuple[str, str]:
+    """Calculate signed numeric delta and percentage change string.
+
+    Args:
+        base_val: Baseline measurement value.
+        final_val: Final or trial measurement value.
+
+    Returns:
+        Tuple of (signed_delta_str, percentage_str).
+    """
+    delta: int | float = final_val - base_val
+    if base_val == 0:
         pct_str: str = "N/A"
     else:
-        pct: float = (delta / base) * 100
+        pct: float = (delta / base_val) * 100
         pct_str = f"{pct:+.1f}%"
-    sign: str = "+" if delta > 0 else ""
-    return f"{sign}{delta}", pct_str
+    sign_prefix: str = "+" if delta > 0 else ""
+    return f"{sign_prefix}{delta}", pct_str
 
 
 def format_markdown_diff_row(
-    spec: MetricDimensionSpec,
+    spec: ArchitecturalMetricSpec,
     baseline_metrics: models.BaselineMetrics,
     final_metrics: models.BaselineMetrics,
 ) -> str:
-    """Format a single Markdown table row with computed deltas."""
-    b_val: int | float = getattr(baseline_metrics, spec.attribute, 0)
-    f_val: int | float = getattr(final_metrics, spec.attribute, 0)
-    diff_str: str
-    pct_str: str
-    diff_str, pct_str = calc_metric_delta(b_val, f_val)
-    delta_col: str = (
-        f"{diff_str} ({pct_str})" if pct_str != "N/A" else f"{diff_str}"
+    """Format a single Markdown table row comparing two metric values."""
+    b_val: int | float = getattr(baseline_metrics, spec.attribute_name, 0)
+    f_val: int | float = getattr(final_metrics, spec.attribute_name, 0)
+
+    # Use fallback attribute if primary attribute is 0 (backward compatibility)
+    if b_val == 0 and spec.fallback_attribute:
+        b_val = getattr(baseline_metrics, spec.fallback_attribute, 0)
+    if f_val == 0 and spec.fallback_attribute:
+        f_val = getattr(final_metrics, spec.fallback_attribute, 0)
+
+    delta_str, pct_str = calculate_metric_delta(b_val, f_val)
+    delta_cell: str = (
+        f"{delta_str} ({pct_str})" if pct_str != "N/A" else f"{delta_str}"
     )
-    return f"| {spec.label} | {b_val} | {f_val} | {delta_col} | {spec.source} |"
+    return (
+        f"| {spec.label} | {b_val} | {f_val} | {delta_cell} | "
+        f"{spec.evidence_source} |"
+    )
 
 
 def generate_diff_table(
-    base_data: models.ArchitecturalBaselineReport,
-    final_data: models.ArchitecturalBaselineReport,
+    base_report: models.ArchitecturalBaselineReport,
+    final_report: models.ArchitecturalBaselineReport,
 ) -> str:
-    """Generate the full Markdown baseline comparison table."""
-    b_m: models.BaselineMetrics = base_data.baseline_metrics
-    f_m: models.BaselineMetrics = final_data.baseline_metrics
+    """Generate Markdown comparison table between baseline and final reports."""
+    base_m: models.BaselineMetrics = base_report.baseline_metrics
+    final_m: models.BaselineMetrics = final_report.baseline_metrics
 
-    rows: list[str] = [TABLE_HEADER]
+    rows: list[str] = [DIFF_TABLE_HEADER]
     for spec in DIFF_METRIC_SCHEMA:
-        rows.append(format_markdown_diff_row(spec, b_m, f_m))
+        rows.append(format_markdown_diff_row(spec, base_m, final_m))
+
     return "\n".join(rows)
 
 
 def generate_scoreboard_table(
     reports: list[tuple[str, models.ArchitecturalBaselineReport]],
 ) -> str:
-    """Generate a multi-trial progression scoreboard Markdown table."""
-    rows: list[str] = [SCOREBOARD_HEADER]
+    """Generate multi-trial progression scoreboard Markdown table."""
+    rows: list[str] = [SCOREBOARD_TABLE_HEADER]
     for label, report in reports:
         m = report.baseline_metrics
+        doc_count = m.total_doc_comments or m.total_comment_lines
         rows.append(
-            f"| {label} | {m.total_sloc} | {m.total_comment_lines} | "
+            f"| {label} | {m.total_sloc} | {doc_count} | "
             f"{m.elevated_crap_functions_count} | {m.public_api_item_count} | "
             f"{m.graph_edges_count} | Passed | observed |"
         )
@@ -173,15 +229,13 @@ def generate_ledger_summary(ledger: models.ArchitecturalLedger) -> str:
         )
 
     if ledger.scoreboard:
-        lines.extend(
-            [
-                "",
-                "### Empirical Scoreboard",
-                "| Step / Trial | Ref | SLoC | Comments | CRAP > 8 "
-                "| Public API | Status |",
-                "| :--- | :--- | :--- | :--- | :--- | :--- | :--- |",
-            ]
-        )
+        lines.extend([
+            "",
+            "### Empirical Scoreboard",
+            "| Step / Trial | Ref | SLoC | Comments | CRAP > 8 "
+            "| Public API | Status |",
+            "| :--- | :--- | :--- | :--- | :--- | :--- | :--- |",
+        ])
         for s in ledger.scoreboard:
             lines.append(
                 f"| {s.step_or_trial} | {s.commit_or_ref} | {s.sloc} | "
@@ -192,75 +246,93 @@ def generate_ledger_summary(ledger: models.ArchitecturalLedger) -> str:
     return "\n".join(lines)
 
 
-def main() -> None:
-    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
-        print(
-            "Usage:\n"
-            "  diff.py <baseline_json> <final_json>\n"
-            "  diff.py --scoreboard <label:path ...>\n"
-            "  diff.py --ledger <ledger_json>\n"
-            "  diff.py <json1> <json2> <json3> ... (auto-scoreboard)",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+def build_cli_parser() -> argparse.ArgumentParser:
+    """Construct argument parser for diff.py commands."""
+    parser = argparse.ArgumentParser(
+        description="Deterministic architectural diff calculator.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--scoreboard",
+        nargs="+",
+        metavar="LABEL:PATH",
+        help="Generate progression scoreboard from label:path trial reports.",
+    )
+    parser.add_argument(
+        "--ledger",
+        metavar="LEDGER_JSON",
+        help="Render summary table of an Architectural Hypothesis Ledger.",
+    )
+    parser.add_argument(
+        "files",
+        nargs="*",
+        metavar="FILE",
+        help="Two files to compare, or multiple files for scoreboard.",
+    )
+    return parser
 
-    if sys.argv[1] == "--ledger":
-        if len(sys.argv) < 3:
-            print(
-                "Error: --ledger requires path to ledger JSON", file=sys.stderr
-            )
-            sys.exit(2)
-        ledger_p = pathlib.Path(sys.argv[2])
-        ledger = models.ArchitecturalLedger.model_validate_json(
-            ledger_p.read_text(encoding="utf-8")
+
+def parse_scoreboard_entries(
+    file_arguments: list[str],
+) -> list[tuple[str, models.ArchitecturalBaselineReport]]:
+    """Parse list of path or label:path arguments into verified reports."""
+    reports: list[tuple[str, models.ArchitecturalBaselineReport]] = []
+    for arg in file_arguments:
+        if ":" in arg and not arg.startswith("/") and not arg.startswith("./"):
+            label, path_str = arg.split(":", 1)
+        else:
+            p = pathlib.Path(arg)
+            label, path_str = p.stem, str(p)
+        file_path = pathlib.Path(path_str)
+        report = io.read_json_model(
+            file_path, models.ArchitecturalBaselineReport
         )
+        reports.append((label, report))
+    return reports
+
+
+def main() -> None:
+    """Execute diff calculation and render Markdown outputs."""
+    parser = build_cli_parser()
+    args = parser.parse_args()
+
+    # Mode 1: Render hypothesis ledger
+    if args.ledger:
+        ledger_path = pathlib.Path(args.ledger)
+        ledger = io.read_json_model(ledger_path, models.ArchitecturalLedger)
         print(generate_ledger_summary(ledger))
         return
 
-    if sys.argv[1] == "--scoreboard" or len(sys.argv) > 3:
-        file_args = (
-            sys.argv[2:] if sys.argv[1] == "--scoreboard" else sys.argv[1:]
-        )
-        reports: list[tuple[str, models.ArchitecturalBaselineReport]] = []
-        for arg in file_args:
-            if (
-                ":" in arg
-                and not arg.startswith("/")
-                and not arg.startswith("./")
-            ):
-                label, path_str = arg.split(":", 1)
-            else:
-                p = pathlib.Path(arg)
-                label, path_str = p.stem, str(p)
-            p = pathlib.Path(path_str)
-            if not p.exists():
-                print(f"Error: File does not exist: {p}", file=sys.stderr)
-                sys.exit(2)
-            report = models.ArchitecturalBaselineReport.model_validate_json(
-                p.read_text(encoding="utf-8")
-            )
-            reports.append((label, report))
+    # Mode 2: Explicit --scoreboard flag
+    if args.scoreboard:
+        reports = parse_scoreboard_entries(args.scoreboard)
         print(generate_scoreboard_table(reports))
         return
 
-    base_p: pathlib.Path = pathlib.Path(sys.argv[1])
-    final_p: pathlib.Path = pathlib.Path(sys.argv[2])
+    # Mode 3: Positional arguments (2 files = diff table, >2 files = scoreboard)
+    if not args.files:
+        parser.print_help(sys.stderr)
+        sys.exit(1)
 
-    if not base_p.exists() or not final_p.exists():
-        print(
-            f"Error: One or both files do not exist: {base_p}, {final_p}",
-            file=sys.stderr,
+    if len(args.files) == 2:
+        base_p = pathlib.Path(args.files[0])
+        final_p = pathlib.Path(args.files[1])
+        base_rep = io.read_json_model(
+            base_p, models.ArchitecturalBaselineReport
         )
-        sys.exit(2)
+        final_rep = io.read_json_model(
+            final_p, models.ArchitecturalBaselineReport
+        )
+        print(generate_diff_table(base_rep, final_rep))
+        return
 
-    base_report = models.ArchitecturalBaselineReport.model_validate_json(
-        base_p.read_text(encoding="utf-8")
-    )
-    final_report = models.ArchitecturalBaselineReport.model_validate_json(
-        final_p.read_text(encoding="utf-8")
-    )
+    if len(args.files) > 2:
+        reports = parse_scoreboard_entries(args.files)
+        print(generate_scoreboard_table(reports))
+        return
 
-    print(generate_diff_table(base_report, final_report))
+    parser.print_help(sys.stderr)
+    sys.exit(1)
 
 
 if __name__ == "__main__":
