@@ -9,6 +9,8 @@ their final homes — only legacy tests move.
 **Blocked by:** 16 (trees are derived from whatever survives pruning), 17 (fixture renames
 settle before tests are re-pathed into them).
 
+**Category:** enhancement
+
 **Status:** ready-for-agent
 
 - [ ] Integration tree instantiated post-pruning (~5 files): persistence, refresh, query
@@ -20,11 +22,15 @@ settle before tests are re-pathed into them).
       (`cli.rs` rejected) and NOT grouped by error-renderer (no `cli_diagnostics.rs`
       catch-all); scope is argv/exit only
 - [ ] Legacy tests relocated to their capability names (only relocation — no assertion changes
-      in this ticket)
-- [ ] `dispatch.rs` dissolves: its tests split into the capability files (§15 T7.1) — the
-      generic file's final name chosen from candidates like `process_contract.rs`, or §12's
-      permitted alternative adopted explicitly: keep the file with scope narrowed to argv/exit
-      only. Under-move (leaving the catch-all intact under a new name) is not an option
+      in this ticket) — including ticket 16's byte-equivalent-pair survivor and `untrust`
+      smoke: this naming step is where they get their final integration home (16 deletes and
+      flags; 19 places — mirroring 16's ACs)
+- [ ] `dispatch.rs` dissolves: its tests split into the capability files (§15 T7.1); the
+      generic process-contract file is named `process_contract.rs` (audit §12's first
+      candidate — and ticket 10's gap tests already live there). §12's alternative — keep
+      `dispatch.rs` narrowed to argv/exit — is explicitly **not** adopted: it preserves lineage
+      naming for non-`Commands::run` scope, contradicting this ticket's organizing rule and the
+      glossary AC below
 - [ ] Glossary alignment: marked-avoid terms removed from test names (`vault`, `checkbox
       line`); config-related tests avoid index-glossary words (`roundtrip`, `lifecycle`);
       `dispatch` terminology scoped to `Commands::run` only

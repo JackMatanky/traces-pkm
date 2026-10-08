@@ -9,6 +9,8 @@ corruption self-heal asserted at process level.
 **Blocked by:** 07 (prerequisites), 08 (spawn-only invariant), 10 (run accessors: code +
 exact-stdout).
 
+**Category:** enhancement
+
 **Status:** ready-for-agent
 
 - [ ] Integration: build → persist → edit tag/body → assert **query-visible** delta through the
@@ -28,7 +30,9 @@ exact-stdout).
       with correct output and a valid file again (catches exit-101 panic, permanent
       `index::failed`, silent empty results)
 - [ ] Each test carries executes-vs-asserts note + defect class (stale-secondary-index,
-      always-rebuild regression, panic-on-corruption)
+      unobservable-reload, panic-on-corruption)
+- [ ] Visibility freeze: production and test-utils public-api diffs empty; textual pub-token
+      diff empty (the new fail-open unit exports nothing)
 - [ ] Fidelity note respected: persist→load codec fidelity stays with the integration
       persistence file (already owns it)
 - [ ] E2E tests land in the `index` capability file; integration tests in the refresh seam file
@@ -36,6 +40,6 @@ exact-stdout).
 
 **Evidence:** audit §10 G-B3/G4, E-2, plus the potential-defects entry's own disposition for
 fail-open ("not inducible from the public API … **in-crate unit**"), §14 P1.10 (divergence
-precondition analysis: no tracing subscriber in binary, `traces index` always rebuilds,
-corruption wipe-and-recreates); spec §Gap tests (refresh family).
+precondition analysis: no tracing subscriber in binary, `traces index` always rebuilds);
+spec §Gap tests (refresh family — including corruption wipe-and-recreates).
 **Defect class:** stale-secondary-index; unobservable-reload; panic-on-corruption.

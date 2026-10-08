@@ -6,8 +6,11 @@ feature-off binary, doctests pinned to `--all-features` — with non-empty/count
 working timeouts, a watch task that runs the canonical suite, and the non-Linux E2E job
 unlocked by the env policy. Layer failures become legible in the checks list.
 
+**Category:** enhancement
+
 **Blocked by:** 03 (per-target and doctest-count assertions are this ticket's acceptance
-backbone), 09 (env policy gates the non-Linux E2E job).
+backbone). Ticket 09 gates **only** the non-Linux E2E job (AC5) — per spec, runner/CI is
+"otherwise parallel" with the env-policy work.
 
 **Status:** ready-for-agent
 
@@ -23,15 +26,18 @@ backbone), 09 (env policy gates the non-Linux E2E job).
       enabled (today: zero timeouts, `status-level = "fail"` hides slow markers)
 - [ ] CI: default-configuration test run added — `cargo nextest run --no-default-features`
       (there is **no** `default` feature; `--features default` is a hard error — do not emit
-      any `--features default` flag anywhere); test job split by suite; non-Linux E2E job added
-      (gated on ticket 09's env table); doctest-count and per-target assertions still green
+      any `--features default` flag anywhere); test job split by suite; doctest-count and
+      per-target assertions still green; the non-Linux E2E job lands **once ticket 09's env
+      table exists** (09 runs in parallel — if it hasn't landed when everything else here is
+      done, this one item waits on it and no other AC does)
 - [ ] Stale tooling pointers corrected where they lie to agents: the documented `--test
       init_cli` target that doesn't exist, and the mutants config path docs reference but is
       absent (audit §11 final row / §15 T6.7)
 - [ ] `test:unit` name and `-m <module>` filter behavior documented or fixed (module filter
       silently drops integration+e2e today)
 - [ ] Coverage/mutation decision recorded (gate vs advisory) + targeted post-redesign mutation
-      runs against the modules new seams protect; note recorded that the mutation tool excludes
+      runs against the modules new seams protect; **decision + local runs only — no CI gate in
+      this ticket** (spec Out of Scope); note recorded that the mutation tool excludes
       the CLI module, so CLI-covered seams rely on the process-level tests from tickets 10–14
 
 **Evidence:** audit §4 (runner composition, `mise watch` wrong on two counts), §13 F1–F8;

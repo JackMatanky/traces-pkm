@@ -6,7 +6,11 @@ variables for tests that study them, and an assertion that state actually lands 
 sandbox. Hermeticity becomes enforced rather than assumed — and the non-Linux E2E CI job
 (ticket 18) becomes unblocked.
 
-**Blocked by:** 08 (both reshape the E2E harness; sequence avoids conflict).
+**Category:** enhancement
+
+**Blocked by:** 08 (both reshape the E2E harness; sequence avoids conflict), 10 (both edit
+`tests/e2e/support.rs` — sandbox command builder vs `Run` accessors; spec plan order T3.1 →
+T3.7 sequences the accessors first).
 
 **Status:** ready-for-agent
 

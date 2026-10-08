@@ -8,6 +8,8 @@ tests aren't written against helpers scheduled for replacement.
 
 **Blocked by:** 06 (facade relocation re-paths the same test roots; sequence avoids churn).
 
+**Category:** enhancement
+
 **Status:** ready-for-agent
 
 - [ ] `tests/common` included by both external test roots (`mod common` / `#[path]` — zero
@@ -20,11 +22,12 @@ tests aren't written against helpers scheduled for replacement.
 - [ ] Behavior constructors stay layer-local: integration trusts through the facade; E2E trusts
       only by spawning the CLI (already true — don't change it)
 - [ ] Assertion-style convention recorded: behavior-under-test `.expect` becomes assertions for
-      all tests written from this spec onward; demonstrated by this ticket's own additions
+      all tests written from this spec onward (a standing convention per spec §Testing
+      Decisions; 17 completes the legacy backlog)
 - [ ] No fixture capability added to an exported type (any that would need one is a spec
       amendment, not an implementation choice)
 - [ ] Visibility freeze: production and test-utils public-api diffs both empty
 
 **Evidence:** spec §Facade & harness (fixtures/split/convention), §Ordering (prerequisite
 slice); audit §8 items 1–2 (behavior-hidden helpers, hidden couplings).
-**Defect class:** arrangement-hidden-act; test-writing churn prevention.
+**Defect class:** arrangement-hidden-act; fixture-rewrite churn.

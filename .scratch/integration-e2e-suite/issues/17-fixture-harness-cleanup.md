@@ -8,6 +8,8 @@ convention ticket 07 started.
 
 **Blocked by:** 16 (pruning first — several fixtures die with the tests they served).
 
+**Category:** enhancement
+
 **Status:** ready-for-agent
 
 - [ ] Arrange and trust split into separate fixture steps; a test that never consults trust no

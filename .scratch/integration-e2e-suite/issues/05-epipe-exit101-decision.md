@@ -5,15 +5,22 @@ recorded in-repo naming the intended contract and the cheap test shape that will
 production code changes here — this is the "decide, don't fix" half; a fix would be a separate
 spec.
 
-**Blocked by:** None (can start immediately).
+**Category:** enhancement
+
+**Blocked by:** None for the repro/observation half (docs-only, start immediately); the
+recorded decision lands in the T3b investigation phase per spec ordering (parallel with gap
+tests, after the prerequisite slice).
 
 **Status:** ready-for-agent
 
 - [ ] Premise verified before deciding: reproduce `traces list | head` EPIPE behavior first
       (dev-profile panic → exit 101; release `panic = "abort"` → 134) — the decision records
       what was observed, not what the audit asserts
-- [ ] Decision recorded in-repo with rationale, covering the observed behavior: Rust ignores
-      SIGPIPE, so pipe errors arrive in-band as `ErrorKind::BrokenPipe`
+- [ ] Decision recorded under `## Comments` in this ticket (a new ADR if the maintainer
+      prefers) with rationale, **status proposed until the maintainer accepts it** — the agent
+      records the observation and a recommendation; the maintainer decides the contract.
+      Covers the observed behavior: Rust ignores SIGPIPE, so pipe errors arrive in-band as
+      `ErrorKind::BrokenPipe`
 - [ ] Research-informed recommendation documented as the leading option: **in-band
       `BrokenPipe → exit 0` detection** (ecosystem contract converged by ripgrep/bat/fd/ast-grep)
       rather than resetting to `SIG_DFL` (Windows has no SIGPIPE, so in-band detection must

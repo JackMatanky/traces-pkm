@@ -6,8 +6,11 @@ ledger entry naming its behavior, former layer, defect class, and surviving test
 exists so consolidation can never mask a freshly filled gap; test counts are bookkeeping, not
 a criterion.
 
+**Category:** enhancement
+
 **Blocked by:** 04 (the investigation may add a regression test that changes the inventory),
-10, 11, 12, 13, 14 (every gap ticket — the analysis runs over the enlarged suite).
+10, 11, 12, 13, 14 (every test-adding gap ticket — the analysis runs over the enlarged suite;
+09 reaches it via 11).
 
 **Status:** ready-for-agent
 
@@ -23,9 +26,12 @@ a criterion.
 - [ ] The golden-path test evaluated but NOT deleted (its replacements — cross-process index
       read, edit-between-spawns — must exist and be identified by number in the ledger before
       any future deletion ticket)
-- [ ] Output reviewed before ticket 16 executes — this ticket's own gate (the spec mandates
-      the recompute and the ledger; the human checkpoint is this ticket's addition, agreed at
-      planning time)
+- [ ] Ledger incorporates the dispositions already recorded by earlier tickets: 11's unit-owned
+      config-stage mapping and 13's schema-field replacement mapping (both promised to land
+      here; they are resolved facts, not proposed deletions)
+- [ ] Output reviewed before ticket 16 executes — this ticket's own gate: the spec mandates the
+      recompute and the ledger, but the human checkpoint before mass deletion is **this
+      ticket's addition** (proposed here; the maintainer signs off before 16 starts)
 
 **Evidence:** audit §9 (duplication table D1–D12), §14 P2 (recompute note); spec §Consolidation.
 **Defect class:** consolidation-masking-gap (the failure mode this gate prevents).

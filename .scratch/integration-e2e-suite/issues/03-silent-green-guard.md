@@ -8,6 +8,8 @@ doctest can never pass unnoticed.
 **Blocked by:** 01 (its compile-fail probes add doctests — the pinned count must be derived
 after they land).
 
+**Category:** bug
+
 **Status:** ready-for-agent
 
 - [ ] Manifest `[[test]]` entry for the integration target with
@@ -21,6 +23,10 @@ after they land).
       documented, not pretended away; the CI assertions are the real guard
 - [ ] `compile_error!` NOT added (rejected: breaks featureless builds and IDE analysis)
 
-**Evidence:** audit §13 F3 (verified: `cargo test --test integration` → `running 0 tests`,
-rc 0); spec §Honesty.
+> Note (count ownership): any ticket that intentionally adds or removes a doctest — 01's probes,
+> 04's regression unit, 08's relocated component test, 10's interrupt unit — updates this pinned
+> count in the same change, itemized.
+
+**Evidence:** audit §13 F3 (bare-run silent green) + §1/§17 (explicit
+`cargo test --test integration` → `running 0 tests`, rc 0); spec §Honesty.
 **Defect class:** silent-green (operational hazard).

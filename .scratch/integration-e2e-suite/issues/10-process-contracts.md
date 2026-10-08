@@ -8,13 +8,15 @@ mapping link gains its missing unit. The PTY/130 question is closed with a recor
 
 **Blocked by:** 08 (new process-contract tests land in an invariant-conformant E2E suite).
 
+**Category:** enhancement
+
 **Status:** ready-for-agent
 
 - [ ] Harness gains numeric code accessor, failure predicate, and exact-stdout/stderr
       assertions — test-crate-internal only, zero `src/` changes (fixture additions to exported
       types are forbidden; harness growth is not a surface change)
-- [ ] Exit codes asserted: success → 0, domain failure → 1, argv failure → 2; `--help` /
-      `--version` → 0 with correct stdout
+- [ ] Exit codes asserted: success → 0, domain failure → 1 (e.g. an untrusted root), argv
+      failure → 2; `--help` / `--version` → 0 with correct stdout
 - [ ] Argv contract via spawn (unknown subcommand, missing required flag e.g. `table` without
       `--column`, invalid value e.g. `completions --shell tcsh`) — each exit 2 + usage on
       stderr; these are unreachable in-crate (`Cli::parse` exits, `try_parse_from` returns)
@@ -28,9 +30,9 @@ mapping link gains its missing unit. The PTY/130 question is closed with a recor
       `stdout == ""` with status on stderr; `index` asserts `indexed N file(s)` on stderr;
       `trust --all` + companion `untrust --all` with the count asserted via a follow-up spawned
       `trust list`
-- [ ] Tests land in the generic process-contract capability file (candidate
-      `process_contract.rs`; final name per ticket 19) — not appended to the legacy dispatch
-      catch-all
+- [ ] Tests land in `tests/e2e/process_contract.rs` (audit §12's first candidate; spec: new gap
+      tests are written directly into their final capability files) — not appended to the legacy
+      dispatch catch-all; ticket 19 relocates **legacy** tests only, never these
 - [ ] In-crate unit: `Cli::run → Aborted(Interrupted)` mapping (today only `Cancelled` is
       tested); the chain `DialogError::UserInterrupted` → `Aborted(Interrupted)` → `main`
       documented in the test doc

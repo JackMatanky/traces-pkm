@@ -7,6 +7,8 @@ every subsequent ticket.
 
 **Blocked by:** None (can start immediately).
 
+**Category:** enhancement
+
 **Status:** ready-for-agent
 
 - [ ] `cargo public-api` baselines committed for both configurations: default features and
@@ -24,10 +26,13 @@ every subsequent ticket.
       needs a method)
 - [ ] Task encodes the sanctioned-delta rules so later tickets don't false-fail: production
       baseline diff always empty; test-utils diff permitted only in ticket 06 (itemized path
-      relocation) and in shrink-only/in-place-rename changes (itemized per freeze rules 2/5)
-- [ ] Compile-fail probes add doctests — the exact count ticket 03 pins is derived after this
-      ticket lands (03 is blocked by this one)
+      relocation) and in shrink-only/in-place-rename changes (itemized per freeze rules 2/5 —
+      which the spec's Verification bullet now states explicitly)
 
-**Evidence:** audit §14 P1.7 (config internals unnameable from `tests/`, `mod config` private)
-and §16b correction; `mise.toml:51`.
+> Note: compile-fail probes add doctests — the exact count ticket 03 pins is derived after this
+> ticket lands (03 is blocked by this one).
+
+**Evidence:** audit §14 P1.7 (config internals unnameable from `tests/`, `mod config` private);
+spec §Visibility freeze (Verification — baselines, token snapshot, compile-fail probes, tripwire,
+mise/hk/CI wiring); `mise.toml:51`.
 **Defect class:** surface-expansion (the failure mode this spec exists to prevent).

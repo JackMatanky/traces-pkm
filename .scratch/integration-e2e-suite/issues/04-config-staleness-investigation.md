@@ -6,16 +6,21 @@ written that might depend on the wrong answer. If the product behavior is wrong,
 a separate spec; this ticket only decides and, where behavior is confirmed correct, adds the
 narrowest regression.
 
-**Blocked by:** None (can start immediately; runs parallel to gap-test tickets per spec ordering).
+**Category:** bug
+
+**Blocked by:** 01 (its possible regression-test AC changes code and must diff against the
+baselines; the repro and reading may start any time — the spec places this investigation at the
+`(gap ∥ investigation)` node, i.e. parallel with the gap-test phase, not before it).
 
 **Status:** ready-for-agent
 
-- [ ] Deterministic repro executed and traced end-to-end: config A → `traces trust` → `traces
+- [ ] Deterministic repro executed and traced end-to-end, with the trace recorded under
+      `## Comments` in this ticket file: config A → `traces trust` → `traces
       index` → edit `class_field` / tag key / task filter → **re-trust** (mandatory — stale
       config blocks all loads until re-trusted) → query untouched notes
-- [ ] Symptom shape documented per selector: class-field changes give false negatives
-      (current-field re-check masks stale rows); tag/task-filter changes give false positives
-      (persisted tags trusted; task parsing bakes config at index time)
+- [ ] Symptom shape documented per selector, recorded under `## Comments`: class-field changes
+      give false negatives (current-field re-check masks stale rows); tag/task-filter changes
+      give false positives (persisted tags trusted; task parsing bakes config at index time)
 - [ ] Intended-behavior decision recorded: agent proposes a disposition with evidence, appended
       under `## Comments` in this ticket file; **the maintainer decides** correct-as-designed vs
       product defect (this is a judgment call, not an agent verdict)

@@ -9,6 +9,8 @@ deleted in the same change so reachability coverage transfers rather than vanish
 **Blocked by:** 06 (frozen facade is the export surface these tests import through),
 08 (spawn-only invariant for the paired CLI test).
 
+**Category:** enhancement
+
 **Status:** ready-for-agent
 
 - [ ] Parity differential: representative selectors (`#tag`, nested tags, paths,
@@ -32,6 +34,11 @@ deleted in the same change so reachability coverage transfers rather than vanish
 - [ ] `schema_field_resolution` integration file deleted in **the same change**; the
       replacement mapping (what the template-class test covers vs what stays with source-local
       field-inheritance twins) is recorded in this ticket and carried into ticket 15's ledger
+- [ ] Each new test carries executes-vs-asserts note + defect class (silent-wrong-answers for
+      the parity differential; reachability-transfer for the class-expansion tests) — spec
+      §Testing Decisions / US62, applied to every new test
+- [ ] File homes: template-class test lands in the integration template-render seam file;
+      paired CLI test in the E2E `query` capability file (final names per ticket 19)
 - [ ] Visibility freeze: api diffs empty (the zero-new-exports claim is verified, not asserted)
 
 **Evidence:** audit §10 G-B2 (route correction: vacuous direct test), I-1 (parity differential,

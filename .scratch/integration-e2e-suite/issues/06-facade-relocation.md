@@ -6,8 +6,12 @@ the set of identifiers exported today (45 by spec-time enumeration; re-derive fr
 baseline) is exactly what `testing` exports afterwards. Zero additions, zero deletions. Because
 the set is frozen, this is independent of pruning and lands before the gap tests.
 
+**Category:** enhancement
+
 **Blocked by:** 01 (visibility-freeze baselines — the frozen-set diff is verified against them),
-02 (spec ordering: honesty lands before the prerequisite slice; both touch E2E docs/harness).
+02 (spec ordering: honesty lands before the prerequisite slice; both touch E2E docs/harness),
+03 (spec ordering: honesty includes the silent-green guard; AC5 presupposes 03's doctest-count
+assertion exists — otherwise it is vacuous).
 
 **Status:** ready-for-agent
 
@@ -25,9 +29,12 @@ the set is frozen, this is independent of pruning and lands before the gap tests
 - [ ] Ticket 03's exact-doctest-count assertion stays green **unchanged**: the re-path drops not
       a single doctest (membership frozen ⇒ count frozen)
 - [ ] Default-features and `--features test-utils` api baselines re-diffed: production baseline
-      empty; test-utils baseline itemized as above
+      empty; test-utils baseline itemized as above, and the refreshed test-utils baseline is
+      committed here as the one sanctioned baseline replacement (07/17's empty-diff ACs read
+      against it)
 - [ ] `mise run test` + `mise run lint` green
 
-**Evidence:** audit §14 P3.25 (facade recommendation) + §16b correction (45 names at
-`src/lib.rs:88-162`); spec §Facade & harness + §Visibility freeze rules 1–3.
+**Evidence:** audit §14 P3.25 (facade recommendation); spec §Facade & harness (45 names by
+direct enumeration — the audit's 44 is off by one; re-derive from ticket 01's baseline) +
+§Visibility freeze rules 1–3.
 **Defect class:** surface-expansion prevention (the one sanctioned path-only change).

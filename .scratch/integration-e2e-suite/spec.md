@@ -275,8 +275,8 @@ whatever survives pruning.
   predicate, and exact-stdout/stderr assertions — harness-side only, zero `src/` changes.
 - Config-TOML-to-behavior goes through spawned processes (production composition path; visibility
   is irrelevant when spawning). **Do not widen the production API** — exporting internal config
-  types for tests was explicitly rejected; a narrow test-only adapter remains the fallback if the
-  E2E route proves insufficient.
+  types for tests was explicitly rejected; the once-proposed narrow test-only adapter fallback
+  is withdrawn — Visibility freeze rule 1 covers such a branch with an in-crate unit or a spawn.
 - Config failures split by pipeline stage, but process-level tests cover **only stages with a
   distinct process-level failure possibility** — four new representatives: discovery (zero
   process coverage today), stale trust (the only genuinely cross-process trust state),
@@ -446,9 +446,10 @@ membership. Everything else is frozen.
   — commit two baselines at T0: default features and `--features test-utils`, plus a sorted
   textual snapshot of all `pub`/`pub(crate)` declaration tokens in `src/` (catches
   `pub(crate)`→`pub` widening and new methods that the api diff can miss).
-- Per ticket: production baseline diff must be **empty**; the test-utils baseline may change
-  **only** in the facade ticket, with an itemized old→new justification; textual token diff
-  empty; `rg 'pub use .*\*' src/` → 0.
+- Per ticket: production baseline diff must be **empty**; test-utils baseline *additions* only
+  in the facade ticket — shrink-only removals and in-place renames (rules 2/5) change the
+  baseline in the ticket that performs them, each with an itemized old→new justification;
+  textual token diff empty; `rg 'pub use .*\*' src/` → 0.
 - Compile-fail probes (rustdoc `compile_fail` doctests on `src/lib.rs`, no new dependency)
   assert the config internals (`ConfigLoadError`, `ConfigBuilder`, `SchemasConfig`,
   `FrontmatterConfig`) remain unnameable from outside, each paired with a positive-control

@@ -8,13 +8,16 @@ now-unused cwd guard is deleted rather than locked, and lint/CI enforce the laye
 
 **Blocked by:** 07 (prerequisite slice: tests/common, fixture, convention).
 
+**Category:** bug
+
 **Status:** ready-for-agent
 
 - [ ] Zero in-process product-command runs remain under `tests/e2e/`: the three `Init.run` calls
       relocate — preset/custom-path dialog assertions become an in-crate component test
       (spawning can't reproduce them: the terminal dialog provider short-circuits on non-TTY);
-      a genuine default-path `traces init` spawn asserts exit code + `initialised traces in …`
-      stderr (first process-level coverage of the Init dispatch arm)
+      a genuine default-path `traces init` spawn **on null stdin** asserts success (exit 0 via
+      the existing predicate) + `initialised traces in …` stderr (first process-level coverage
+      of the Init dispatch arm)
 - [ ] Golden-path first step becomes a spawn; its doc updated (honesty from ticket 02 preserved)
 - [ ] Relocated component test and spawned init test both carry the executes-vs-asserts note and
       a named defect class (layer-discipline / unexecuted-dispatch-arm)

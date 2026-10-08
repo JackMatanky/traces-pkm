@@ -11,6 +11,8 @@ covered via child env. No production API widened.
 opt-in mechanism must exist), 10 (every stage asserts a numeric exit status; today's harness
 has only `is_success()`).
 
+**Category:** enhancement
+
 **Status:** ready-for-agent
 
 - [ ] TOML→behavior through spawned processes: `[tasks] tag_filters`, `[schemas] class_field`,
@@ -26,13 +28,15 @@ has only `is_success()`).
       **in-crate**: assert the existing unit for each, or add one if absent (freeze rule 1
       fallback — never a new export); the unit-owned disposition is recorded in this ticket and
       carried into ticket 15's ledger
-- [ ] Global config via child env, with the global-parse stage folded into this capability
-      (trusted valid local + malformed global → `config_build_config_file_failed`)
+- [ ] Global config via child env, two assertions: (a) positive leg — a global
+      `[templates] directory` written to the child's config home changes what a spawned
+      `template --list` renders (§14 P1.18 / US31's process-level coverage of the global leg);
+      (b) parse leg — trusted valid local + malformed global → `config_build_config_file_failed`
 - [ ] No test-service route taken: production and test-utils public-api diffs empty — the
-      "narrow test-only adapter" fallback is withdrawn per spec; an unreachable branch gets an
-      in-crate unit instead
+      "narrow test-only adapter" fallback is withdrawn per spec §Visibility freeze rule 1; an
+      unreachable branch gets an in-crate unit instead
 - [ ] Each new test carries executes-vs-asserts note + defect class (trust-before-parse
-      confusion, config-TOML-untested)
+      confusion, disk-config-untested)
 - [ ] Arrangements always set config **before** indexing (ticket 04's staleness investigation
       runs in parallel and never gates these tests — none of them depends on the staleness
       answer)
@@ -40,4 +44,4 @@ has only `is_success()`).
 **Evidence:** audit §10 E-8 (stage table, R4 arrangement correction) and G-B4 (no config
 TOML→behavior coverage from `tests/`), §14 P1.7 (routes) + P1.18 (global config via child env,
 gated on the env scrub = ticket 09); spec §Gap tests (four representatives).
-**Defect class:** disk-config-untested; trust-before-parse arrangement error.
+**Defect class:** disk-config-untested; trust-before-parse confusion.
