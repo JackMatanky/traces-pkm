@@ -470,6 +470,8 @@ def gather_metrics(
         graph_nodes_count=graph_nodes,
         graph_edges_count=graph_edges,
         max_file_sloc=scan_res.max_file_sloc,
+        unbounded_channels_count=scan_res.total_unbounded_channels,
+        non_test_unwraps_count=scan_res.total_non_test_unwraps,
     )
 
     return models.ArchitecturalBaselineReport(
@@ -477,7 +479,6 @@ def gather_metrics(
         target=models.TargetDescriptor(
             path=target_path_str,
             crate=crate_ctx.crate_name,
-            manifest_path=str(crate_ctx.manifest_path),
         ),
         baseline_metrics=baseline_metrics,
         files=scan_res.files,

@@ -39,11 +39,11 @@ Scouts inspect source code, documentation, and AST facts. They are **forbidden**
 - **Lens 4: Seam Placement & Knowledge Asymmetry**
   Callers bypassing public abstractions, direct field manipulation, leaked storage or serialization types, and improper visibility declarations.
 - **Lens 5: State & Invariant Ownership**
-  Invariants split across multiple types, mutable state disconnected from enforcing logic, invalid finite states representable in structs, and runtime assertions that could be compile-time typestates.
+  Invariants split across multiple types, mutable state disconnected from enforcing logic, invalid finite states representable in structs, and runtime assertions that could be compile-time typestates. Identifies runtime invariant leakage (defensive `assert!`, `panic!`, unhandled `.unwrap()`) that should be lifted into constructor-validated domain types ("parse, don't validate").
 - **Lens 6: Boundary Crossings & Vertical Leakage**
-  Internal child error types exposed in ancestor APIs, low-level configuration bubbling upward, and circular imports between sibling modules.
+  Internal child error types exposed in ancestor APIs, low-level configuration bubbling upward, and circular imports between sibling modules. Identifies tight coupling to volatile internal representations (raw database/wire schemas leaked across seams) that block safe expand-and-contract migrations.
 - **Lens 7: Concurrency, I/O & Contention**
-  Lock contention, overly coarse `Mutex` scopes, blocking operations on async reactors, serialization round-trips, and missing batching channels.
+  Lock contention, overly coarse `Mutex` scopes, blocking operations on async reactors, serialization round-trips, and missing batching channels. Identifies unbounded resource buffering (`unbounded_channel()`, unbounded in-memory queues) and uncontained panic propagation across thread or task boundaries that risk cascading failure.
 - **Lens 8: Algorithmic Scaling & Hot-Path Complexity**
   $O(n^2)$ lookups, redundant hashing on hot paths, repeated traversals, and opportunities for memoization or early-exit fast paths.
 - **Lens 9: Deletion Dividend & Layer Thinning**

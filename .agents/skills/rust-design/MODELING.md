@@ -147,8 +147,8 @@ Error types are part of the interface because callers must understand and handle
 - Design errors at the abstraction level of the seam.
 - Do not mechanically mirror every child error variant through every parent.
 - Hide child implementation errors behind cohesive domain error classifications.
-
----
+- **Panic-Free Seams:** Public and cross-crate entry points must never expose unhandled `.unwrap()`, `.expect()`, or `panic!` calls. Errors crossing the seam must be structured `Result<T, E>` domain enums (`thiserror`), preserving caller fault isolation.
+- **Panic Boundaries for Untrusted Execution:** Seams hosting worker tasks or plugins must isolate thread panics (`std::panic::catch_unwind` or tokio task join handling) to prevent cascading process failure.
 
 ## Module & File Layout (POLS)
 
@@ -169,5 +169,9 @@ For non-trivial choices, compare candidate representations against:
 3. Caller knowledge and cognitive load ($\text{IKL}$)
 4. Seam depth and parent simplification
 5. Compile-time vs runtime trade-offs
+6. **Reversibility & Evolution (Expand-and-Contract):** For public contracts, evaluate whether changes can be deployed non-destructively:
+   - Use `#[non_exhaustive]` on public enums so variant additions are backward-compatible.
+   - Use builder patterns with defaults for struct parameter expansion.
+   - Employ parallel deprecation (`#[deprecated]`) over immediate breaking signature replacement.
 
-Prefer the least elaborate representation that preserves the needed semantics and recursive depth.
+Prefer the least elaborate representation that preserves the needed semantics, resilience, and recursive depth.

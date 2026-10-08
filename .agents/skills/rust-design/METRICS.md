@@ -11,17 +11,17 @@
 7. [Source Lines of Code (`SLoC`) & Anti-Gaming Guardrails](#source-lines-of-code-sloc--anti-gaming-guardrails)
 8. [Risk & Structural Gauges: CRAP, Public API Footprint, Recursive Depth](#risk--structural-gauges-crap-public-api-footprint-recursive-depth)
 9. [Typestate, States, & Transitions: `ISR` & `ITE`](#typestate-states--transitions-isr--ite)
-10. [Test Reachability (`TR`) & Mutation Acceptance (`MA`)](#test-reachability-tr--mutation-acceptance-ma)
-11. [Isolated Semantic Gauges & Anti-Gaming](#isolated-semantic-gauges--anti-gaming)
-12. [Expected Architectural Value (`EAV`)](#expected-architectural-value-eav)
-13. [Multi-Trial Progression Scoreboard Metrics](#multi-trial-progression-scoreboard-metrics)
+10. [Resilience & Operational Stability: `BBR` & `SPR`](#resilience--operational-stability-bbr--spr)
+11. [Test Reachability (`TR`) & Mutation Acceptance (`MA`)](#test-reachability-tr--mutation-acceptance-ma)
+12. [Isolated Semantic Gauges & Anti-Gaming](#isolated-semantic-gauges--anti-gaming)
+13. [Expected Architectural Value (`EAV`)](#expected-architectural-value-eav)
+14. [Multi-Trial Progression Scoreboard Metrics](#multi-trial-progression-scoreboard-metrics)
 
 ---
 
 ## Overview & Measurement Discipline
 
 Use architectural metrics to make comparisons explicit and repeatable.
-Metrics support design reasoning; they do not define good design. Prefer before/after comparisons over universal targets.
 
 ### Isolated Semantic Gauges
 
@@ -55,7 +55,8 @@ Freeze representative scenarios before comparing alternatives. Use `N/A` for an 
 | Structure made obsolete & simplified | `DD`, `SLoC` delta | Removed types, collapsed modules, `cargo tree -d` |
 | Risk & test fragility | `CRAP`, `TR`, `MA` | `cargo-crap`, test coverage, mutation runs |
 | Invariant & state representation | `ISR`, `ITE` | Typestates, enum state machines, compile-time invariants |
-
+| Fault isolation & runtime backpressure | `BBR`, `SPR`, `CRAP` | AST search for channels/buffers, unwrap scan, `cargo-crap` |
+| Contract reversibility & evolution | `PD(q_rollback)`, `IKL_pub` | Evaluated on frozen rollback/migration change scenario |
 ---
 
 ## Knowledge Atoms & Interface Knowledge Load (`IKL`)
@@ -205,16 +206,41 @@ Total dependency and caller edges divided by node count, gathered via `codegraph
 
 ---
 
+## Resilience & Operational Stability: `BBR` & `SPR`
+
+### Bounded Backpressure Ratio (`BBR`)
+
+$$\text{BBR}(S) = \frac{N_{\text{bounded}}}{N_{\text{total\_queues}}}$$
+
+- $N_{\text{bounded}}$: Count of message channels, thread pools, and buffers
+  in $S$ with explicit capacity limits.
+- $N_{\text{total\_queues}}$: Total message channels and buffering primitives
+  in $S$.
+- Counting basis: Static count. If $N_{\text{total\_queues}} = 0$, record
+  `N/A`. $\text{BBR} = 1.0$ guarantees bounded memory consumption.
+
+### Seam Panic Ratio (`SPR`)
+
+$$\text{SPR}(S) = \frac{N_{\text{unhandled\_panics}}}{N_{\text{public\_fns}}}$$
+
+- $N_{\text{unhandled\_panics}}$: Count of `.unwrap()`, `.expect()`, or
+  `panic!` calls on public paths in $S$.
+- $N_{\text{public\_fns}}$: Total public entry points exposed by $S$.
+- Counting basis: `0` indicates verified panic-free public paths; $>0$ flags
+  crash hazards.
+
+---
+
 ## Test Reachability (`TR`) & Mutation Acceptance (`MA`)
 
-- **Test Reachability (`TR`):** Number of tests exercising behavior through the intended seam rather than internal details.
-- **Mutation Acceptance (`MA`):** Percentage of mutants killed by seam-level tests (`mutarust`).
+- **Test Reachability (`TR`):** Number of tests exercising behavior through
+  the intended seam rather than internal details.
+- **Mutation Acceptance (`MA`):** Percentage of mutants killed by seam-level
+  tests (`mutarust`).
 
 ---
 
 ## Isolated Semantic Gauges & Anti-Gaming
-
-A metric becomes harmful when the implementation is altered to manipulate the number rather than improve domain ownership:
 
 - Replacing semantic operations with an opaque `execute` call does not create depth if callers now need complex payload builders.
 - Merging unrelated responsibilities into one module does not create locality.

@@ -118,6 +118,16 @@ DIFF_METRIC_SCHEMA: tuple[ArchitecturalMetricSpec, ...] = (
         attribute_name="module_count",
         evidence_source="rust_design/measure",
     ),
+    ArchitecturalMetricSpec(
+        label="Unbounded Channels / Queues",
+        attribute_name="unbounded_channels_count",
+        evidence_source="rust_design/measure",
+    ),
+    ArchitecturalMetricSpec(
+        label="Non-Test Unwraps / Panics",
+        attribute_name="non_test_unwraps_count",
+        evidence_source="rust_design/measure",
+    ),
 )
 
 DIFF_TABLE_HEADER: str = (

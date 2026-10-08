@@ -76,6 +76,16 @@ class FileMetrics(StrictSchemaModel):
         ge=0,
         description="Preserved doc comment lines (///, //!, /** ... */)",
     )
+    unbounded_channels: int = Field(
+        default=0,
+        ge=0,
+        description="Count of unbounded channel instantiations",
+    )
+    non_test_unwraps: int = Field(
+        default=0,
+        ge=0,
+        description="Count of .unwrap() or .expect() calls in non-test code",
+    )
     node_count: int = Field(
         default=0, ge=0, description="Knowledge graph node/symbol count"
     )
@@ -148,6 +158,16 @@ class BaselineMetrics(StrictSchemaModel):
         default=0,
         ge=0,
         description="Maximum SLoC in any single file across scanned scope",
+    )
+    unbounded_channels_count: int = Field(
+        default=0,
+        ge=0,
+        description="Total unbounded channel/queue primitives",
+    )
+    non_test_unwraps_count: int = Field(
+        default=0,
+        ge=0,
+        description="Total .unwrap() or .expect() calls outside #[cfg(test)]",
     )
 
 
