@@ -16,13 +16,11 @@ now-unused cwd guard is deleted rather than locked, and lint/CI enforce the laye
       relocate — preset/custom-path dialog assertions become an in-crate component test
       (spawning can't reproduce them: the terminal dialog provider short-circuits on non-TTY);
       a genuine default-path `traces init` spawn **on null stdin** asserts success (exit 0 via
-      the existing predicate) + `initialised traces in …` stderr (first process-level coverage
-      of the Init dispatch arm)
+      the existing predicate; the exact numeric accessor arrives with ticket 10) +
+      `initialised traces in …` stderr (first process-level coverage of the Init dispatch arm)
 - [ ] Golden-path first step becomes a spawn; its doc updated (honesty from ticket 02 preserved)
 - [ ] Relocated component test and spawned init test both carry the executes-vs-asserts note and
       a named defect class (layer-discipline / unexecuted-dispatch-arm)
-- [ ] A spawned init asserts exit status (the existing success/failure predicate suffices here;
-      the exact numeric accessor arrives with ticket 10)
 - [ ] E2E `CwdGuard` deleted (children already set their own cwd); this supersedes any mutex
       proposal — remove the mutator, don't lock it
 - [ ] Layer-enforcement mise task + CI step: `tests/e2e/` has zero `use traces_pkm::` and zero

@@ -9,8 +9,8 @@ unlocked by the env policy. Layer failures become legible in the checks list.
 **Category:** enhancement
 
 **Blocked by:** 03 (per-target and doctest-count assertions are this ticket's acceptance
-backbone). Ticket 09 gates **only** the non-Linux E2E job (AC5) — per spec, runner/CI is
-"otherwise parallel" with the env-policy work.
+backbone). Per spec, runner/CI is otherwise parallel with the env-policy work — AC5 alone
+completes when that ticket lands (no edge recorded here for it).
 
 **Status:** ready-for-agent
 
