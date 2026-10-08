@@ -24,26 +24,36 @@ Work at the scale of the requested scope, traversing upward or downward as evide
 
 ## Multi-Lens Read-Only Scouting
 
-During architectural discovery, the orchestrator dispatches read-only investigations across six distinct lenses.
+During architectural discovery, the orchestrator dispatches read-only investigations across ten distinct lenses.
 
 ### Strict Scout Isolation Rules
 
-Scouts inspect source code, documentation, and AST facts. They are **forbidden** from running builds, tests, or diagnostic scripts. Only the main orchestrator runs CLI tools. Each lens reports at most 4 ranked candidates citing exact `file:line` locations, estimated SLoC deletion dividend, and recursive depth impact.
+Scouts inspect source code, documentation, and AST facts. They are **forbidden** from running builds, tests, or diagnostic scripts. Only the main orchestrator runs CLI tools. Each lens reports up to 5 ranked hypotheses citing exact `file:line` locations, estimated SLoC deletion dividend, and Expected Architectural Value (EAV).
 
-- **Lens 1: Seam Placement & Encapsulation**
-  Callers bypassing public abstractions, direct field manipulation, leaked storage/serialization types, and improper visibility declarations.
-- **Lens 2: Knowledge Asymmetry & Caller Burden**
-  Excessive caller coordination, fixed invocation sequences, orchestration logic scattered across call sites, and shallow wrapper layers.
-- **Lens 3: State & Invariant Ownership**
-  Invariants split across multiple types, mutable state disconnected from enforcing logic, and invalid finite states representable in structs.
-- **Lens 4: Deletion Dividend & Layer Thinning**
-  Forwarding wrappers, redundant facade traits, one-to-one adapters, dead type conversions, and compatibility scaffolding that can be deleted.
-- **Lens 5: Boundary Crossings & Vertical Leakage**
+- **Lens 1: Modern Rust & Upstream Capabilities**
+  Upstream language or standard library features that obsolete hand-rolled machinery (for example: `std::sync::Exclusive`, modern GAT patterns, slice chunking, `portable_simd`, or upstream crate capabilities).
+- **Lens 2: Data-Oriented Layout & Memory Footprint**
+  Memory layout inefficiencies, padding holes, cache-line misses, Struct-of-Arrays opportunities, and unnecessary heap boxing.
+- **Lens 3: Allocation, Lifecycles & Zero-Copy**
+  Defensive `.clone()` calls, unbounded per-item allocations, missing arena or bump allocators for scoped lifetimes, and opportunities for borrowed views or `Cow<'a, T>`.
+- **Lens 4: Seam Placement & Knowledge Asymmetry**
+  Callers bypassing public abstractions, direct field manipulation, leaked storage or serialization types, and improper visibility declarations.
+- **Lens 5: State & Invariant Ownership**
+  Invariants split across multiple types, mutable state disconnected from enforcing logic, invalid finite states representable in structs, and runtime assertions that could be compile-time typestates.
+- **Lens 6: Boundary Crossings & Vertical Leakage**
   Internal child error types exposed in ancestor APIs, low-level configuration bubbling upward, and circular imports between sibling modules.
-- **Lens 6: Enforce, Don't Remind (Type-System Invariants)**
-  Semantic rules currently enforced only via doc comments, runtime panics, or boolean flags that can be enforced at compile time via typestate.
+- **Lens 7: Concurrency, I/O & Contention**
+  Lock contention, overly coarse `Mutex` scopes, blocking operations on async reactors, serialization round-trips, and missing batching channels.
+- **Lens 8: Algorithmic Scaling & Hot-Path Complexity**
+  $O(n^2)$ lookups, redundant hashing on hot paths, repeated traversals, and opportunities for memoization or early-exit fast paths.
+- **Lens 9: Deletion Dividend & Layer Thinning**
+  Forwarding wrappers, redundant facade traits, one-to-one adapters, dead type conversions, and compatibility scaffolding that can be deleted.
+- **Lens 10: Checks That Can't Fail & Test Ergonomics**
+  Tautological tests, over-mocked boundaries that hide implementation regressions, tests asserting default states, and unasserted error pathways.
 
----
+### Scout Synthesis & Cross-Examination
+
+Before hypotheses are committed to the Hypothesis Ledger, the orchestrator synthesizes scout reports to identify compounding transformations. For example, a Lens 2 data-layout reorganization may directly enable a Lens 3 zero-copy parser. Conflicting hypotheses are reconciled by prioritizing higher Expected Architectural Value.
 
 ## Predictability, Cohesion, & Layout Indicators
 
@@ -145,15 +155,19 @@ many tiny modules   -> do they hide distinct knowledge, or fragment one responsi
 
 ## Candidate Output Expectations
 
-For each candidate, record:
+For each candidate hypothesis, record:
 
 ```text
+id: HYP-###
+lens: [Lens Name]
+thesis: [Transformational thesis]
 current seam and caller knowledge at issue:
-proposed direction and parent effect (if a parent exists):
-what could become removable (if anything):
-selected gauges, raw evidence, and counting basis:
-plausible inapplicable or not-measured gauges and reasons:
+proposed direction and parent effect:
+what becomes removable (Deletion Dividend):
+estimated EAV (Gain * Confidence / (Blast Radius + Friction)):
+drop condition: [Concrete condition triggering immediate rollback]
+selected gauges and raw evidence:
 uncertainty:
 ```
 
-A review records expected effects as predictions. An implementation later adds observations using the same comparison basis.
+A review records expected effects as predictions in `ledger.json`. An implementation later adds observations using the same comparison basis.

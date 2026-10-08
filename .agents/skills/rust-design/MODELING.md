@@ -6,12 +6,14 @@
 2. [Ordinary Functions & Newtypes](#ordinary-functions--newtypes)
 3. [Validated Types: Parse, Don't Validate](#validated-types-parse-dont-validate)
 4. [Structs & Enums](#structs--enums)
-5. [Typestate & Compile-Time State Machines](#typestate--compile-time-state-machines)
-6. [Traits, Variation, & Generic Costs](#traits-variation--generic-costs)
-7. [Ownership, Borrowing, & Visibility](#ownership-borrowing--visibility)
-8. [Error Types as Part of the Seam](#error-types-as-part-of-the-seam)
-9. [Module & File Layout (POLS)](#module--file-layout-pols)
-10. [Comparing Candidate Representations](#comparing-candidate-representations)
+5. [Data-Oriented Layout & Cache Locality](#data-oriented-layout--cache-locality)
+6. [Zero-Copy Memory Models & Lifecycles](#zero-copy-memory-models--lifecycles)
+7. [Typestate & Compile-Time State Machines](#typestate--compile-time-state-machines)
+8. [Traits, Variation, & Generic Costs](#traits-variation--generic-costs)
+9. [Ownership, Borrowing, & Visibility](#ownership-borrowing--visibility)
+10. [Error Types as Part of the Seam](#error-types-as-part-of-the-seam)
+11. [Module & File Layout (POLS)](#module--file-layout-pols)
+12. [Comparing Candidate Representations](#comparing-candidate-representations)
 
 ---
 
@@ -78,6 +80,27 @@ Use a struct when several values form one concept and their relationship or inva
 
 Enums replace correlated booleans, incompatible `Option` combinations, and tag-plus-payload structures. Variants must represent semantic alternatives rather than incidental execution steps.
 Where states are enumerable, ensure $\text{ISR} = 0$.
+
+---
+
+## Data-Oriented Layout & Cache Locality
+
+When data structures reside on performance-critical paths or scale with input volume:
+
+- **Hot/Cold Field Segregation:** Group frequently accessed fields in contiguous memory. Move cold metadata (rarely checked flags, debug info, diagnostic names) into secondary structs behind an `Option<Box<ColdMeta>>` or separate array.
+- **Struct-of-Arrays (SoA) vs Array-of-Structs (AoS):** If loops frequently iterate over only a subset of fields, prefer columnar/SoA layouts to maximize CPU cache-line saturation and enable auto-vectorization.
+- **Alignment and Padding:** Order struct fields from largest alignment to smallest to eliminate compiler padding holes.
+- **Avoid Indirection for Small Items:** Prefer contiguous storage (slices, arrays, inline buffers) over pointer-chasing collections of `Box<T>`.
+
+---
+
+## Zero-Copy Memory Models & Lifecycles
+
+Eliminating heap allocation overhead while maintaining clean seams:
+
+- **Borrowing over Defensive Cloning:** Expose borrowed views (`&[T]`, `&str`) or `Cow<'a, T>` instead of eagerly calling `.clone()` or `.to_owned()`.
+- **Scoped Arena Allocation:** For tree or graph structures with bounded lifecycles (such as parsing passes or compiler phases), allocate nodes into a typed arena (`bumpalo`, `typed-arena`). Nodes can freely cross-reference each other via references or lightweight arena indices without per-item `Arc` or heap deallocations.
+- **Small-Vector Optimization:** Use stack-allocated inline buffers (`SmallVec`) for collections that almost always contain fewer than 4 to 8 elements.
 
 ---
 

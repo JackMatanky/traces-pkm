@@ -11,8 +11,8 @@ Gathers SLoC, comments, graph topology, public API items, CRAP scores,
 maintainability hotspots, and duplicate dependencies. Generates condensed JSON.
 
 Usage:
-    .agents/skills/rust-design/scripts/gather.py <target_path> [output_file]
-    uv run .agents/skills/rust-design/scripts/gather.py <target_path> [output_file]
+    .agents/skills/rust-design/scripts/measure.py <target_path> [out]
+    uv run measure.py <target_path> [out]
 """
 
 from __future__ import annotations
@@ -128,9 +128,8 @@ def _gather_graph_topology(
                 gaps.append("Failed to parse rustgraph structure JSON")
     else:
         gaps.append(
-            "Neither codegraph nor rustgraph available for graph topology metrics"
+            "Neither codegraph nor rustgraph available for graph topology"
         )
-
     return graph_nodes, graph_edges, gaps
 
 
@@ -139,13 +138,12 @@ def _gather_dependencies(
     mise_detected: bool,
     probe_tools: dict[str, models.ToolProbeStatus],
 ) -> tuple[models.DependencySummary, list[str]]:
-    """Gather condensed dependency summary (top fan-in/fan-out, edges, cycles)."""
+    """Gather condensed dependency summary (fan-in/out, edges, cycles)."""
     node_set: set[str] = set()
     edge_count: int = 0
     fan_in: dict[str, int] = {}
     fan_out: dict[str, int] = {}
     cycles: list[str] = []
-
     code: int
     out: str
     gaps: list[str]
@@ -183,10 +181,12 @@ def _gather_dependencies(
         total_edges=edge_count,
         cycles=cycles,
         top_fan_in=[
-            models.DependencyDegree(module=m, in_degree=d) for m, d in top_fan_in
+            models.DependencyDegree(module=m, in_degree=d)
+            for m, d in top_fan_in
         ],
         top_fan_out=[
-            models.DependencyDegree(module=m, out_degree=d) for m, d in top_fan_out
+            models.DependencyDegree(module=m, out_degree=d)
+            for m, d in top_fan_out
         ],
     )
     return summary, gaps
@@ -279,7 +279,9 @@ def _gather_hotspots(
         for line in out.splitlines():
             if "high" in line.lower() or "warning" in line.lower():
                 hotspots.append(
-                    models.MaintainabilityHotspot(raw=line.strip(), severity="high")
+                    models.MaintainabilityHotspot(
+                        raw=line.strip(), severity="high"
+                    )
                 )
     return hotspots, gaps
 
@@ -405,7 +407,7 @@ def gather_metrics(
 def main() -> None:
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
         print(
-            "Usage: .agents/skills/rust-design/scripts/gather.py <target_path> [output_file]",
+            "Usage: measure.py <target_path> [output_file]",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -414,7 +416,9 @@ def main() -> None:
     out_file: str | None = sys.argv[2] if len(sys.argv) > 2 else None
     env: models.EnvironmentContext = runner.resolve_environment()
 
-    report: models.ArchitecturalBaselineReport = gather_metrics(target_path, env)
+    report: models.ArchitecturalBaselineReport = gather_metrics(
+        target_path, env
+    )
     report_io.output_report(report, out_file)
 
 

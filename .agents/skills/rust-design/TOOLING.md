@@ -16,11 +16,10 @@
 
 An architecture audit needs independent structural, caller, and test-surface evidence before choosing the cheapest tool for a particular claim. A focused review uses the smallest set that answers its scoped question.
 
-### Resource Isolation Rule
+### Resource & Worktree Isolation Rule
 
-Parallel subagents (e.g. read-only scouting lenses during Step 2) operate strictly in **read-only mode**. Scouts are **forbidden** from running `cargo build`, `cargo test`, or diagnostic scripts, eliminating target directory lock contention. Only the main orchestrator executes CLI tools or test suites.
-
----
+1. **Read-Only Scouts:** Parallel subagents (e.g. read-only scouting lenses during Step 2) operate strictly in **read-only mode**. Scouts are **forbidden** from running `cargo build`, `cargo test`, or diagnostic scripts, eliminating target directory lock contention. Only the main orchestrator executes CLI tools or test suites.
+2. **Sandboxed Prototyping Worktrees:** Run non-trivial implementation trials in an ephemeral Git worktree or clean working tree branch (`improve/<run-id>-<trial-id>`). This prevents incomplete experiments from dirtying the primary development worktree.
 
 ## Three-Tier Fallback Ladder
 
@@ -29,7 +28,7 @@ To ensure deterministic execution across diverse host environments, follow this 
 ```text
 +-------------------------------------------------------------------------------+
 | Tier 1: Automated Script (Preferred)                                          |
-| Run `uv run .agents/skills/rust-design/scripts/gather.py <target> [out]`      |
+| Run `uv run .agents/skills/rust-design/scripts/measure.py <target> [out]`     |
 | Multi-tool execution, SLoC counting, and normalized JSON output               |
 +-------------------------------------------------------------------------------+
                                   | (if script/uv absent)
@@ -51,7 +50,7 @@ To ensure deterministic execution across diverse host environments, follow this 
 +-------------------------------------------------------------------------------+
 ```
 
-1. **Tier 1 (Automated Helper):** Execute `uv run .agents/skills/rust-design/scripts/gather.py <target> [dest]`. The script auto-detects `mise`, probes `PATH`, extracts SLoC and comment counts, executes available analyzers, queries `codegraph` / `rustgraph`, and normalizes output into condensed JSON.
+1. **Tier 1 (Automated Helper):** Execute `uv run .agents/skills/rust-design/scripts/measure.py <target> [dest]`. The script auto-detects `mise`, probes `PATH`, extracts SLoC and comment counts, executes available analyzers, queries `codegraph` / `rustgraph`, and normalizes output into condensed JSON.
 2. **Tier 2 (Environment Task Runners):** If the helper cannot run, inspect project task runners (`mise`, `just`, `cargo make`). Execute configured aliases (e.g. `modules:tree`, `mess`, `crap`) directly.
 3. **Tier 3 (Universal Standard Cargo):** If third-party analyzers are unavailable, fall back to built-in `cargo` commands (`cargo check`, `cargo test`, `cargo clippy`, `cargo tree`). Mark missing analyzer metrics explicitly as `not measured (tool unavailable)` rather than omitting or fabricating them.
 
@@ -91,7 +90,7 @@ Before anything else, resolve external crate semantics through authoritative cra
 
 At module scope and above, obtain these views before declaring a design audit complete:
 
-1. **Structure & Topology:** Run `uv run .agents/skills/rust-design/scripts/gather.py <target> [out]` (or `cargo-modules tree` alongside CodeGraph/rustgraph). Confirm material edges in source.
+1. **Structure & Topology:** Run `uv run .agents/skills/rust-design/scripts/measure.py <target> [out]` (or `cargo-modules tree` alongside CodeGraph/rustgraph). Confirm material edges in source.
 2. **Callers & Ownership:** Use LSP definitions/references and inspect source for intended entry paths, bypasses, visibility, state, and policy. If a tool misses a known caller, use another query rather than treating an empty result as proof.
 3. **Hotspots, Duplication, & Risk:** Inspect CRAP risks, complexity hotspots, and token clones. Classify each material finding by production or test location within the audited scope. Identify tests entering each intended seam.
 
@@ -115,3 +114,14 @@ Screen these families for every consequential candidate; read the applicable def
 ## Verify Changes, Not Proposals
 
 For an implementation, run the project's required checks and exercise the changed behavior through its intended seam. Compare only evidence selected before the redesign, with the same counting basis and frozen scenarios. For a review, state what a future check would distinguish; do not report it as run.
+
+---
+
+## Empirical Benchmark & Measurement Protocol
+
+When a redesign optimizes computational scaling or hot-path latency:
+
+1. **True Performance Baseline:** Run benchmarks before modifying code. Record absolute numbers and store them in the run record.
+2. **Alternating Iterations:** Compare trial performance against the baseline by alternating runs across commits to isolate background noise and thermal throttling.
+3. **Never Hack Benchmarks:** Only iterate library and internal implementation code. Never alter benchmark harness parameters to simulate gains.
+4. **Independent Iterations:** Ensure benchmark runs do not leak state or caches across iterations unless persistent caching is the explicit capability under test.

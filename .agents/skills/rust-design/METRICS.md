@@ -13,6 +13,8 @@
 9. [Typestate, States, & Transitions: `ISR` & `ITE`](#typestate-states--transitions-isr--ite)
 10. [Test Reachability (`TR`) & Mutation Acceptance (`MA`)](#test-reachability-tr--mutation-acceptance-ma)
 11. [Isolated Semantic Gauges & Anti-Gaming](#isolated-semantic-gauges--anti-gaming)
+12. [Expected Architectural Value (`EAV`)](#expected-architectural-value-eav)
+13. [Multi-Trial Progression Scoreboard Metrics](#multi-trial-progression-scoreboard-metrics)
 
 ---
 
@@ -220,3 +222,37 @@ A metric becomes harmful when the implementation is altered to manipulate the nu
 - Hiding child modules behind a forwarding facade does not create a deep seam.
 
 The semantic explanation remains authoritative.
+
+---
+
+## Expected Architectural Value (`EAV`)
+
+To prioritize hypotheses in the Architectural Hypothesis Ledger without relying solely on linter smells:
+
+$$\text{EAV} = \frac{\text{Structural or Computational Gain} \times \text{Confidence}}{\text{Blast Radius} + \text{Implementation Friction}}$$
+
+Where:
+
+- **Structural or Computational Gain (1–5):** Magnitude of positive impact (SLoC deleted, layers collapsed, invalid states eliminated, or runtime scaling improved).
+- **Confidence (0.0–1.0):** Degree of empirical evidence supporting the hypothesis (verified call graph vs speculative idea).
+- **Blast Radius (1–5):** Extent of downstream callers and interfaces affected by the change.
+- **Implementation Friction (1–5):** Risk of lifetime complications, generic viral leakage, or compilation overhead.
+
+Hypotheses with $\text{EAV} \ge 1.0$ represent high-expected-value candidates for empirical trials.
+
+---
+
+## Multi-Trial Progression Scoreboard Metrics
+
+In multi-trial iterative refactorings, track metrics across checkpoints using the Scoreboard format:
+
+| Column | Measurement Definition |
+| :--- | :--- |
+| **Trial / Step** | Identifier of the hypothesis or trial checkpoint |
+| **Commit / Ref** | Git commit hash, worktree branch, or baseline tag |
+| **SLoC** | Total Source Lines of Code across audited scope (`measure.py`) |
+| **Doc Comments** | Total preserved documentation and doc comment lines |
+| **CRAP > 8.0** | Count of functions with elevated risk scores |
+| **Public API** | Publicly exported item footprint (`cargo-public-api`) |
+| **Graph Edges** | Total AST dependency and caller edges (`codegraph`/`rustgraph`) |
+| **Status** | Disposition (`baseline`, `kept`, or `reverted`) |

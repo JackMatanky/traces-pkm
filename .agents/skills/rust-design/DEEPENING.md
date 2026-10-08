@@ -12,6 +12,9 @@
 8. [Replace the Wrong Abstraction & Deletion Dividend](#replace-the-wrong-abstraction--deletion-dividend)
 9. [Protect Sibling Isolation & Contain Vertical Leakage](#protect-sibling-isolation--contain-vertical-leakage)
 10. [Transformations & Trade-Off Accounting](#transformations--trade-off-accounting)
+11. [Empirical Trial-and-Revert Protocol](#empirical-trial-and-revert-protocol)
+12. [The Active Architectural Graveyard](#the-active-architectural-graveyard)
+13. [Search Convergence & Budget Gates](#search-convergence--budget-gates)
 
 ---
 
@@ -30,21 +33,21 @@ A central failure of superficial refactoring is "flat layering": introducing int
 > **A module is recursively deep when its internal decomposition concentrates knowledge behind meaningful seams, and those seams make their parent simpler and deeper rather than merely adding layers.**
 
 ```text
-+-----------------------------------------------------------------------------------+
-| Parent Seam: Unified Domain Concept (Minimal Caller Knowledge Burden)             |
-+-----------------------------------------------------------------------------------+
++------------------------------------------------------------------------------+
+| Parent Seam: Unified Domain Concept (Minimal Caller Knowledge Burden)        |
++------------------------------------------------------------------------------+
                                           |
                                           v
-+-----------------------------------------------------------------------------------+
-| Deep Internal Child A                        | Deep Internal Child B              |
-| - Owns state machine and lifecycle           | - Owns wire encoding and framing   |
-| - Hides all transition validation rules      | - Hides ring-buffer memory pool    |
-+-----------------------------------------------------------------------------------+
++------------------------------------------------------------------------------+
+| Deep Internal Child A                    | Deep Internal Child B             |
+| - Owns state machine and lifecycle       | - Owns wire encoding and framing  |
+| - Hides all transition validation rules  | - Hides ring-buffer memory pool   |
++------------------------------------------------------------------------------+
                                           |
                                           v
-+-----------------------------------------------------------------------------------+
-| Low-Level Leaf Operations: System Calls, Network Drivers, Storage I/O             |
-+-----------------------------------------------------------------------------------+
++------------------------------------------------------------------------------+
+| Low-Level Leaf Operations: System Calls, Network Drivers, Storage I/O        |
++------------------------------------------------------------------------------+
 ```
 
 ### Depth Propagation
@@ -158,6 +161,34 @@ Prevent lower-level knowledge from escaping upward: descendant types in ancestor
 
 Compare current caller knowledge and change paths with the proposed seam:
 
-- For a review, state expected effects as predictions.
-- For an implementation, compare observed results against baseline evidence.
+- For a review, state expected effects as predictions in `ledger.json`.
+- For an implementation, compare observed results against baseline evidence using `diff.py`.
 - Document trade-offs, including any additional caller burden accepted to eliminate invalid transitions.
+
+## Empirical Trial-and-Revert Protocol
+
+Architectural breakthroughs require rapid prototyping without accumulating accidental debt. Execute each trial using strict isolation:
+
+1. **Sandboxed State:** Ensure working tree is clean or create an isolated Git worktree or branch (`improve/<run-id>-<trial-id>`).
+2. **Explicit Drop Conditions:** For Breakthrough mode, state the boundary condition that aborts the trial before editing (for example: "If prototype requires unsafe pointer casts or fails to reduce heap allocations by at least 30%, drop it").
+3. **Time and Attempt Limits:** Cap iterative compilation attempts to at most 3 refinements per candidate.
+4. **Clean Rollback:** If the candidate fails tests, breaks external API stability, or triggers its drop condition, revert immediately with `git reset --hard` or worktree disposal. Do not leave partially broken scaffolding in the workspace.
+
+## The Active Architectural Graveyard
+
+The Architectural Graveyard (`.design/.../graveyard.md`) is an active filter for subsequent discovery, not passive post-run documentation:
+
+- Record every abandoned bet with:
+  - **Hypothesis ID:** ID from `ledger.json`.
+  - **Concept & Intended Gain:** What architectural transformation was attempted.
+  - **Concrete Failure Evidence:** Compiler errors, regression deltas, benchmark timings, or API leakages.
+  - **Rejection Reason:** Why the approach was fundamentally flawed or unviable.
+- Subsequent scout passes consult `graveyard.md` to avoid proposing variants of known dead ends.
+
+## Search Convergence & Budget Gates
+
+The search loop iterates until one of three stopping conditions is met:
+
+1. **Convergence Gate:** All candidate hypotheses with Expected Architectural Value $\text{EAV} \ge 1.0$ have been evaluated and either committed or cleanly rejected.
+2. **Plateau Gate:** Two consecutive trials fail to produce an accepted change. The orchestrator triggers an adversarial 10-lens re-scouting pass. If re-scouting produces no new hypotheses above the EAV threshold, the search terminates.
+3. **Budget Gate:** The allocated run budget (time limit or maximum trial count) is exhausted.

@@ -1,4 +1,4 @@
-"""Execution runner, environment discovery, and external tool probing for rust-design."""
+"""Runner, environment discovery, and external tool probing for rust-design."""
 
 from __future__ import annotations
 
@@ -163,7 +163,7 @@ def run_probed_tool(
     purpose: str,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
 ) -> tuple[int, str, list[str]]:
-    """Execute a probed tool if available, handling failures and producing diagnostic gaps."""
+    """Execute a probed tool, handling failures and recording gaps."""
     if not probe_status.available:
         return 127, "", [f"{tool_key} not available for {purpose}"]
 
@@ -207,7 +207,9 @@ def probe_tool(
             available=(code == 0 or which_cargo is not None),
             source="cargo",
             command="cargo tree",
-            version=VERSION_TAGS["builtin"] if (code == 0 or which_cargo) else None,
+            version=(
+                VERSION_TAGS["builtin"] if (code == 0 or which_cargo) else None
+            ),
         )
 
     which_path: str | None = shutil.which(name)

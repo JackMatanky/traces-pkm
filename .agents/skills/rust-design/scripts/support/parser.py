@@ -19,7 +19,9 @@ FILE_SYSTEM_RULES: dict[str, str] = {
 }
 
 
-def process_line_comments(line: str, in_block_comment: bool) -> tuple[bool, bool, bool]:
+def process_line_comments(
+    line: str, in_block_comment: bool
+) -> tuple[bool, bool, bool]:
     """Evaluate a single line of Rust code.
 
     Returns:
@@ -38,7 +40,9 @@ def process_line_comments(line: str, in_block_comment: bool) -> tuple[bool, bool
             remainder: str = line_trimmed[
                 line_trimmed.find(block_end) + len(block_end) :
             ].strip()
-            has_code: bool = bool(remainder and not remainder.startswith(line_comment))
+            has_code: bool = bool(
+                remainder and not remainder.startswith(line_comment)
+            )
             return has_code, True, False
         return False, True, True
 
@@ -46,9 +50,10 @@ def process_line_comments(line: str, in_block_comment: bool) -> tuple[bool, bool
         return False, True, False
 
     if line_trimmed.startswith(block_start):
-        still_in_block: bool = block_end not in line_trimmed or line_trimmed.find(
-            block_end
-        ) < line_trimmed.rfind(block_start)
+        still_in_block: bool = (
+            block_end not in line_trimmed
+            or line_trimmed.find(block_end) < line_trimmed.rfind(block_start)
+        )
         return False, True, still_in_block
 
     has_block: bool = block_start in line_trimmed
@@ -122,7 +127,9 @@ def scan_source_files(
             rel_parts = file_p.relative_to(scan_root).parts
         except ValueError:
             rel_parts = file_p.parts
-        if target_dir in rel_parts or any(p.startswith(hidden_prefix) for p in rel_parts[:-1]):
+        if target_dir in rel_parts or any(
+            p.startswith(hidden_prefix) for p in rel_parts[:-1]
+        ):
             continue
         sloc: int
         comments: int

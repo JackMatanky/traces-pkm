@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import datetime
 import pathlib
-import sys
 
 from support import models, report_io, runner
 
@@ -38,6 +37,7 @@ def collect_tool_capabilities(
 
 
 def main() -> None:
+    """Probe host environment and print JSON capability report."""
     env: models.EnvironmentContext = runner.resolve_environment()
     workspace_root: pathlib.Path = pathlib.Path(env.workspace_root)
 

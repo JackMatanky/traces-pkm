@@ -150,3 +150,66 @@ class ArchitecturalBaselineReport(StrictSchemaModel):
     hotspots: list[MaintainabilityHotspot] = Field(default_factory=list)
     duplicate_dependencies: list[str] = Field(default_factory=list)
     gaps: list[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Empirical Search, Hypothesis Ledger & Trial Models
+# ---------------------------------------------------------------------------
+class HypothesisRecord(StrictSchemaModel):
+    """An architectural redesign hypothesis with value and drop boundaries."""
+
+    id: str
+    lens: str
+    thesis: str
+    target_files: list[str] = Field(default_factory=list)
+    expected_gain: str
+    estimated_eav: float = Field(
+        default=1.0, ge=0.0, description="Expected Architectural Value"
+    )
+    risk: str = ""
+    status: Literal[
+        "proposed", "active", "tested_and_kept", "reverted", "dropped"
+    ] = "proposed"
+    drop_condition: str = ""
+    baseline_ref: str | None = None
+    trial_ref: str | None = None
+
+
+class TrialResult(StrictSchemaModel):
+    """Outcome and metric deltas of an empirical prototype trial."""
+
+    trial_id: str
+    hypothesis_id: str
+    status: Literal["kept", "reverted", "abandoned"]
+    timestamp: str
+    sloc_delta: int = 0
+    comment_delta: int = 0
+    crap_delta: int = 0
+    api_item_delta: int = 0
+    tests_passed: bool = True
+    public_api_clean: bool = True
+    notes: str = ""
+
+
+class ScoreboardEntry(StrictSchemaModel):
+    """Architectural metric checkpoint in a multi-trial progression."""
+
+    step_or_trial: str
+    commit_or_ref: str
+    sloc: int = Field(ge=0)
+    comment_lines: int = Field(ge=0)
+    crap_elevated: int = Field(default=0, ge=0)
+    public_api_items: int = Field(default=0, ge=0)
+    graph_edges: int = Field(default=0, ge=0)
+    tests_passing: bool = True
+    status: Literal["baseline", "kept", "reverted"] = "kept"
+
+
+class ArchitecturalLedger(StrictSchemaModel):
+    """Ledger tracking hypotheses, trials, and scoreboard progression."""
+
+    target: TargetDescriptor
+    strategy: Literal["steady", "breakthrough", "review", "model"] = "steady"
+    hypotheses: list[HypothesisRecord] = Field(default_factory=list)
+    trials: list[TrialResult] = Field(default_factory=list)
+    scoreboard: list[ScoreboardEntry] = Field(default_factory=list)
